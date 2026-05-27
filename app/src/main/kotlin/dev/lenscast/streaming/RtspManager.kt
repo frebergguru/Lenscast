@@ -7,7 +7,6 @@ import android.view.Surface
 import dev.lenscast.prefs.Lens
 import dev.lenscast.streaming.rtsp.AacEncoder
 import dev.lenscast.streaming.rtsp.AacRtpPacketizer
-import dev.lenscast.streaming.rtsp.GlRotationPipeline
 import dev.lenscast.streaming.rtsp.H264Encoder
 import dev.lenscast.streaming.rtsp.H264RtpPacketizer
 import dev.lenscast.streaming.rtsp.RtpStream
@@ -43,7 +42,6 @@ class RtspManager(
     private var audioEncoder: AacEncoder? = null
     private var camera: RtspCameraDriver? = null
     private var server: RtspServer? = null
-    private var glPipeline: GlRotationPipeline? = null
 
     private val videoStream = RtpStream(payloadType = 96, ssrc = Random.nextInt(), clockHz = 90_000)
     private var audioStream: RtpStream? = null
@@ -124,12 +122,8 @@ class RtspManager(
         activeSink = null
         try { server?.stop() } catch (_: Throwable) {}
         server = null
-        // Camera before GL pipeline — releasing the pipeline destroys the Surface the
-        // camera is still writing to, which can crash the capture session.
         try { camera?.stop() } catch (_: Throwable) {}
         camera = null
-        try { glPipeline?.release() } catch (_: Throwable) {}
-        glPipeline = null
         try { videoEncoder?.stop() } catch (_: Throwable) {}
         try { videoEncoder?.shutdown() } catch (_: Throwable) {}
         videoEncoder = null

@@ -16,7 +16,6 @@ android {
         versionName = "1.0.0"
 
         resourceConfigurations += listOf("en")
-        vectorDrawables.useSupportLibrary = true
     }
 
     buildTypes {

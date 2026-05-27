@@ -55,4 +55,7 @@
     <string name="notif_title_streaming">Lenscast is streaming</string>
     <string name="notif_text_streaming">%1$s on port %2$d</string>
     <string name="notif_action_stop">Stop</string>
+
+    <string name="preview_rtsp_streaming_title">Streaming live</string>
+    <string name="preview_rtsp_streaming_description">Camera feed is going to OBS via RTSP. On-device preview is disabled during streaming to keep rotation stable.</string>
 </resources>

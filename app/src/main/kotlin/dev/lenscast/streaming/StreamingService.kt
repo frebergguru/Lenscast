@@ -10,7 +10,6 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import android.util.Size
-import android.view.Surface
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
@@ -61,7 +60,6 @@ class StreamingService : LifecycleService() {
         val w: Int,
         val h: Int,
         val fps: Int,
-        val withAnalysis: Boolean,
     )
     /** True while a stream is active. Suppresses [unbindCamera] from killing the stream. */
     private var streamingCamera: Boolean = false
@@ -114,7 +112,7 @@ class StreamingService : LifecycleService() {
         // whenever the screen is on. We just need to make sure that's true here in case the
         // user tapped Start while the camera wasn't bound yet (e.g., permission just granted),
         // then start the HTTP server.
-        bindCameraIfNeeded(settings.lens, settings.resolution, settings.fps.value, settings.jpegQuality, withAnalysis = true)
+        bindCameraIfNeeded(settings.lens, settings.resolution, settings.fps.value, settings.jpegQuality)
         val server = MjpegServer(broadcaster, settings.mjpegPort, settings.fps.value).also { it.start() }
         mjpegServer = server
     }
@@ -168,38 +166,21 @@ class StreamingService : LifecycleService() {
     private fun recommendedVideoBitrate(w: Int, h: Int, fps: Int): Int =
         (w.toLong() * h * fps * 0.07).toInt().coerceIn(500_000, 16_000_000)
 
-    /** No-op: kept so PreviewSurface can call it during transitions without breaking the API. */
-    @Suppress("UNUSED_PARAMETER")
-    fun setRtspPreviewSurface(surface: Surface?) {
-        // Intentionally empty — on-device preview is disabled during RTSP streaming.
-    }
-
-    /**
-     * Binds the camera to the requested lens/resolution/fps. Routes to either:
-     *   - CameraX (≤30 fps target, standard preview/analysis use cases), or
-     *   - Camera2 ConstrainedHighSpeed session (>30 fps target).
-     *
-     * If [withAnalysis] is false the high-speed path is skipped — we use CameraX for
-     * preview-only mode regardless of fps, because high-speed sessions don't help when
-     * we're not consuming frames.
-     */
     @Volatile private var currentRotation: Int = android.view.Surface.ROTATION_0
 
     /**
-     * Binds the camera. ImageAnalysis is **always** included so JPEG frames stream into
-     * [broadcaster] continuously — that lets the MJPEG server start/stop without forcing
-     * a CameraX rebind (which briefly closes the camera and shows a black frame). The
-     * `withAnalysis` parameter is kept for API stability but currently ignored.
+     * Binds the camera with preview + ImageAnalysis. The analysis stream feeds the MJPEG
+     * broadcaster continuously, so the MJPEG server can start/stop without a CameraX
+     * rebind (which would briefly close the camera and show a black frame). RTSP mode
+     * skips this path entirely — see [startRtsp].
      */
-    @Suppress("UNUSED_PARAMETER")
     suspend fun bindCameraIfNeeded(
         lens: dev.lenscast.prefs.Lens,
         resolution: dev.lenscast.prefs.Resolution,
         fps: Int,
         jpegQuality: Int,
-        withAnalysis: Boolean,
     ) {
-        val key = BindKey(lens, resolution.width, resolution.height, fps, withAnalysis = true)
+        val key = BindKey(lens, resolution.width, resolution.height, fps)
         if (key == previewBoundKey && cameraController != null) {
             cameraController?.jpegQuality = jpegQuality
             cameraController?.setTargetRotation(currentRotation)

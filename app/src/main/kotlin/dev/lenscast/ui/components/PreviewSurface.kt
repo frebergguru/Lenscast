@@ -26,10 +26,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import dev.lenscast.R
 import dev.lenscast.prefs.Protocol
 import dev.lenscast.streaming.StreamingService
 
@@ -58,14 +60,14 @@ private fun RtspStreamingPlaceholder() {
         }
         Spacer(Modifier.size(16.dp))
         Text(
-            text = "Streaming live",
+            text = stringResource(R.string.preview_rtsp_streaming_title),
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
             color = Color.White,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.size(4.dp))
         Text(
-            text = "Camera feed is going to OBS via RTSP. On-device preview is disabled during streaming to keep rotation stable.",
+            text = stringResource(R.string.preview_rtsp_streaming_description),
             style = MaterialTheme.typography.bodySmall,
             color = Color.White.copy(alpha = 0.7f),
             textAlign = TextAlign.Center,

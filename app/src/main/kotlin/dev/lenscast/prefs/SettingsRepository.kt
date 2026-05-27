@@ -14,34 +14,11 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
 
 class SettingsRepository(private val context: Context) {
 
-    val flow: Flow<Settings> = context.dataStore.data.map { p ->
-        Settings(
-            protocol = Protocol.entries.getOrNull(p[K_PROTOCOL] ?: 0) ?: Protocol.MJPEG,
-            resolution = Resolution.fromOrdinal(p[K_RESOLUTION] ?: Resolution.P720.ordinal),
-            fps = Fps.fromValue(p[K_FPS] ?: Fps.FPS30.value),
-            jpegQuality = (p[K_QUALITY] ?: 80).coerceIn(10, 100),
-            lens = Lens.entries.getOrNull(p[K_LENS] ?: 0) ?: Lens.BACK,
-            audioEnabled = p[K_AUDIO] ?: false,
-            keepScreenOn = p[K_KEEP_ON] ?: true,
-            mjpegPort = (p[K_MJPEG_PORT] ?: 4747).coerceIn(1024, 65535),
-            rtspPort = (p[K_RTSP_PORT] ?: 5540).coerceIn(1024, 65535),
-        )
-    }
+    val flow: Flow<Settings> = context.dataStore.data.map { readSettings(it) }
 
     suspend fun update(transform: (Settings) -> Settings) {
         context.dataStore.edit { prefs ->
-            val current = Settings(
-                protocol = Protocol.entries.getOrNull(prefs[K_PROTOCOL] ?: 0) ?: Protocol.MJPEG,
-                resolution = Resolution.fromOrdinal(prefs[K_RESOLUTION] ?: Resolution.P720.ordinal),
-                fps = Fps.fromValue(prefs[K_FPS] ?: Fps.FPS30.value),
-                jpegQuality = prefs[K_QUALITY] ?: 80,
-                lens = Lens.entries.getOrNull(prefs[K_LENS] ?: 0) ?: Lens.BACK,
-                audioEnabled = prefs[K_AUDIO] ?: false,
-                keepScreenOn = prefs[K_KEEP_ON] ?: true,
-                mjpegPort = prefs[K_MJPEG_PORT] ?: 4747,
-                rtspPort = prefs[K_RTSP_PORT] ?: 5540,
-            )
-            val next = transform(current)
+            val next = transform(readSettings(prefs))
             prefs[K_PROTOCOL] = next.protocol.ordinal
             prefs[K_RESOLUTION] = next.resolution.ordinal
             prefs[K_FPS] = next.fps.value
@@ -53,6 +30,18 @@ class SettingsRepository(private val context: Context) {
             prefs[K_RTSP_PORT] = next.rtspPort.coerceIn(1024, 65535)
         }
     }
+
+    private fun readSettings(p: Preferences): Settings = Settings(
+        protocol = Protocol.entries.getOrNull(p[K_PROTOCOL] ?: 0) ?: Protocol.MJPEG,
+        resolution = Resolution.fromOrdinal(p[K_RESOLUTION] ?: Resolution.P720.ordinal),
+        fps = Fps.fromValue(p[K_FPS] ?: Fps.FPS30.value),
+        jpegQuality = (p[K_QUALITY] ?: 80).coerceIn(10, 100),
+        lens = Lens.entries.getOrNull(p[K_LENS] ?: 0) ?: Lens.BACK,
+        audioEnabled = p[K_AUDIO] ?: false,
+        keepScreenOn = p[K_KEEP_ON] ?: true,
+        mjpegPort = (p[K_MJPEG_PORT] ?: 4747).coerceIn(1024, 65535),
+        rtspPort = (p[K_RTSP_PORT] ?: 5540).coerceIn(1024, 65535),
+    )
 
     private companion object {
         val K_PROTOCOL = intPreferencesKey("protocol")

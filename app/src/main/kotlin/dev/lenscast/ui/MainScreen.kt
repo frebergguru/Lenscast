@@ -187,8 +187,6 @@ fun MainScreen(
                 // CameraX preview never delivers > 30 fps. Clamp to keep the camera config valid.
                 fps = minOf(settings.fps.value, 30),
                 jpegQuality = settings.jpegQuality,
-                // ImageAnalysis only matters for MJPEG streaming. In RTSP mode CameraX is preview-only.
-                withAnalysis = streaming && settings.protocol == dev.lenscast.prefs.Protocol.MJPEG,
             )
         } catch (_: Throwable) {
             // Camera might be transiently unavailable (e.g. another app holding it);
@@ -496,8 +494,8 @@ private fun OverlayIconButton(
 @Composable
 private fun LensChip(lens: Lens, modifier: Modifier = Modifier) {
     val (icon, label) = when (lens) {
-        Lens.BACK -> Icons.Outlined.PhotoCamera to "Back"
-        Lens.FRONT -> Icons.Outlined.PhotoCameraFront to "Front"
+        Lens.BACK -> Icons.Outlined.PhotoCamera to stringResource(R.string.settings_camera_back)
+        Lens.FRONT -> Icons.Outlined.PhotoCameraFront to stringResource(R.string.settings_camera_front)
     }
     Surface(
         modifier = modifier,
