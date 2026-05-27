@@ -98,23 +98,24 @@ object H264RtpPacketizer {
         val origType = nalHeader and 0x1F
         val fuIndicator = (f or nri or 28).toByte()
 
-        val payload = nal.copyOfRange(1, nal.size)
+        // Iterate the original NAL directly starting at offset 1 (the byte after the
+        // header that we've already encoded into fuIndicator). Saves the copyOfRange.
         val fragMax = maxPayload - 2 // FU indicator + FU header
         val out = mutableListOf<ByteArray>()
-        var offset = 0
-        while (offset < payload.size) {
-            val remaining = payload.size - offset
+        var srcOffset = 1
+        while (srcOffset < nal.size) {
+            val remaining = nal.size - srcOffset
             val take = minOf(fragMax, remaining)
-            val isFirst = (offset == 0)
-            val isLast = (offset + take >= payload.size)
+            val isFirst = (srcOffset == 1)
+            val isLast = (srcOffset + take >= nal.size)
             val fuHeader = ((if (isFirst) 0x80 else 0) or (if (isLast) 0x40 else 0) or origType).toByte()
             val pkt = ByteArray(RtpStream.HEADER_SIZE + 2 + take)
             val buf = ByteBuffer.wrap(pkt)
             stream.writeHeader(buf, marker = isLast && markerOnLast, ts = tsRtp)
             buf.put(fuIndicator); buf.put(fuHeader)
-            buf.put(payload, offset, take)
+            buf.put(nal, srcOffset, take)
             out += pkt
-            offset += take
+            srcOffset += take
         }
         return out
     }

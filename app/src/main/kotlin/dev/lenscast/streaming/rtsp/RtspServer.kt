@@ -8,6 +8,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.BufferedOutputStream
 import java.io.BufferedReader
 import java.io.IOException
 import java.io.InputStreamReader
@@ -196,9 +197,16 @@ class RtspSession(
     private var videoTransport: StreamTransport? = null
     private var audioTransport: StreamTransport? = null
     @Volatile private var sink: RtspServer.OutgoingPacketSink? = null
-    private val out = socket.getOutputStream()
+    // Buffer the socket so a stream of small RTP packets coalesces into MTU-sized TCP
+    // segments instead of one syscall + one network frame per RTP packet. We control the
+    // flush cadence below: video frames flush only on the RTP marker bit (end of frame),
+    // RTCP/RTSP responses flush immediately. Sized at 64 KB so one 1080p60 keyframe
+    // (~30–60 KB) fits in a single buffer-flush cycle.
+    private val out = BufferedOutputStream(socket.getOutputStream(), 64 * 1024)
     private val writeLock = Any()
     private val bytesSent = AtomicLong(0)
+    // Reusable 4-byte $<channel><len16> interleave header; mutated under writeLock.
+    private val interleaveHeader = ByteArray(4)
 
     // Per-stream stats for RTCP Sender Reports — incremented on every RTP packet sent.
     // "Octet count" is RTP payload bytes (header stripped), per RFC 3550.
@@ -450,7 +458,7 @@ class RtspSession(
 
     private fun sendRtcp(t: StreamTransport, sr: ByteArray) {
         when (t) {
-            is StreamTransport.Tcp -> sendInterleaved(t.rtcpChannel, sr)
+            is StreamTransport.Tcp -> sendInterleaved(t.rtcpChannel, sr, forceFlush = true)
             is StreamTransport.Udp -> {
                 try {
                     t.rtcpSocket.send(DatagramPacket(sr, sr.size, t.clientHost, t.clientRtcpPort))
@@ -460,17 +468,29 @@ class RtspSession(
     }
 
     private fun sendOnTransport(t: StreamTransport?, rtp: ByteArray): Boolean = when (t) {
-        is StreamTransport.Tcp -> sendInterleaved(t.rtpChannel, rtp)
+        // RTP path: let the buffered stream coalesce packets; flush only when the marker
+        // bit signals end-of-frame so a 1080p60 keyframe ships as a single batched write
+        // rather than ~25 separate syscalls. Audio packets always have marker=1 (one AU
+        // per packet), so audio still flushes immediately.
+        is StreamTransport.Tcp -> sendInterleaved(t.rtpChannel, rtp, forceFlush = false)
         is StreamTransport.Udp -> sendUdp(t, rtp)
         null -> false
     }
 
-    private fun sendInterleaved(channel: Int, payload: ByteArray): Boolean {
+    private fun sendInterleaved(channel: Int, payload: ByteArray, forceFlush: Boolean): Boolean {
         if (payload.size > 0xFFFF) return false
         synchronized(writeLock) {
             try {
-                val hdr = byteArrayOf('$'.code.toByte(), channel.toByte(), (payload.size ushr 8).toByte(), (payload.size and 0xFF).toByte())
-                out.write(hdr); out.write(payload); out.flush()
+                interleaveHeader[0] = '$'.code.toByte()
+                interleaveHeader[1] = channel.toByte()
+                interleaveHeader[2] = (payload.size ushr 8).toByte()
+                interleaveHeader[3] = (payload.size and 0xFF).toByte()
+                out.write(interleaveHeader)
+                out.write(payload)
+                // RTP marker bit lives in byte 1, high bit. Set on the last RTP packet of
+                // a video access unit and on every audio packet.
+                val markerSet = payload.size >= 2 && (payload[1].toInt() and 0x80 != 0)
+                if (forceFlush || markerSet) out.flush()
                 bytesSent.addAndGet((4 + payload.size).toLong())
                 return true
             } catch (_: IOException) {

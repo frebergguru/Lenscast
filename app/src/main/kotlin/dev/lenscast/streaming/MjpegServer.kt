@@ -99,34 +99,34 @@ class MjpegServer(
     }
 
     private suspend fun writeMjpegStream(out: OutputStream) {
-        val header = (
-            "HTTP/1.0 200 OK\r\n" +
-            "Server: Lenscast\r\n" +
-            "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
-            "Pragma: no-cache\r\n" +
-            "Connection: close\r\n" +
-            "Content-Type: multipart/x-mixed-replace; boundary=$BOUNDARY\r\n\r\n"
-        ).toByteArray(Charsets.US_ASCII)
-        out.write(header)
+        out.write(STREAM_RESPONSE_HEADER)
         out.flush()
 
         val frameIntervalMs = (1000L / targetFps.coerceAtLeast(1))
         var lastSeq = -1L
+        val partPrefix = PART_PREFIX
+        // Reusable scratch for building "<size>\r\n\r\n" between the prefix and the JPEG.
+        // Size grows naturally as resolutions change; never per-frame allocation after warmup.
+        val sizeSuffix = StringBuilder(16)
         while (running) {
             val tickStart = System.currentTimeMillis()
             val frame = broadcaster.latest()
             if (frame != null && frame.second != lastSeq) {
                 val (bytes, seq) = frame
                 lastSeq = seq
-                val partHeader = (
-                    "--$BOUNDARY\r\n" +
-                    "Content-Type: image/jpeg\r\n" +
-                    "Content-Length: ${bytes.size}\r\n\r\n"
-                ).toByteArray(Charsets.US_ASCII)
+                sizeSuffix.setLength(0)
+                sizeSuffix.append(bytes.size).append("\r\n\r\n")
+                val sizeBytes = sizeSuffix.toString().toByteArray(Charsets.US_ASCII)
+                // Single coalesced buffer: --boundary\r\nContent-Type: image/jpeg\r\nContent-Length: N\r\n\r\n<JPEG>\r\n
+                val total = partPrefix.size + sizeBytes.size + bytes.size + TRAILER.size
+                val packet = ByteArray(total)
+                var off = 0
+                System.arraycopy(partPrefix, 0, packet, off, partPrefix.size); off += partPrefix.size
+                System.arraycopy(sizeBytes, 0, packet, off, sizeBytes.size); off += sizeBytes.size
+                System.arraycopy(bytes, 0, packet, off, bytes.size); off += bytes.size
+                System.arraycopy(TRAILER, 0, packet, off, TRAILER.size)
                 try {
-                    out.write(partHeader)
-                    out.write(bytes)
-                    out.write(TRAILER)
+                    out.write(packet)
                     out.flush()
                 } catch (_: IOException) {
                     return
@@ -141,43 +141,23 @@ class MjpegServer(
     private fun writeSingleShot(out: OutputStream) {
         val frame = broadcaster.latest()
         if (frame == null) {
-            val body = "No frame yet".toByteArray()
-            out.write(("HTTP/1.0 503 Service Unavailable\r\n" +
-                "Content-Type: text/plain\r\n" +
-                "Content-Length: ${body.size}\r\n\r\n").toByteArray(Charsets.US_ASCII))
-            out.write(body)
+            out.write(SHOT_503_HEADER)
+            out.write(NO_FRAME_BODY)
             out.flush()
             return
         }
         val bytes = frame.first
-        out.write(("HTTP/1.0 200 OK\r\n" +
+        val header = ("HTTP/1.0 200 OK\r\n" +
             "Cache-Control: no-cache, no-store\r\n" +
             "Content-Type: image/jpeg\r\n" +
-            "Content-Length: ${bytes.size}\r\n\r\n").toByteArray(Charsets.US_ASCII))
+            "Content-Length: ${bytes.size}\r\n\r\n").toByteArray(Charsets.US_ASCII)
+        out.write(header)
         out.write(bytes)
         out.flush()
     }
 
     private fun writeLanding(out: OutputStream) {
-        val html = """
-            <!doctype html>
-            <html><head><title>Lenscast</title>
-            <style>
-              body{background:#14121c;color:#eee;font-family:system-ui,sans-serif;margin:0;padding:24px;text-align:center}
-              h1{font-weight:600;margin:0 0 12px}
-              img{max-width:100%;border-radius:12px;box-shadow:0 8px 32px rgba(120,73,242,0.3)}
-              code{background:#262335;padding:2px 8px;border-radius:6px}
-            </style></head>
-            <body>
-              <h1>Lenscast</h1>
-              <p>MJPEG stream at <code>/video</code> · snapshot at <code>/shot.jpg</code></p>
-              <img src="/video" alt="Live preview">
-            </body></html>
-        """.trimIndent().toByteArray()
-        out.write(("HTTP/1.0 200 OK\r\n" +
-            "Content-Type: text/html; charset=utf-8\r\n" +
-            "Content-Length: ${html.size}\r\n\r\n").toByteArray(Charsets.US_ASCII))
-        out.write(html)
+        out.write(LANDING_RESPONSE)
         out.flush()
     }
 
@@ -185,5 +165,51 @@ class MjpegServer(
         private const val TAG = "MjpegServer"
         private const val BOUNDARY = "lenscastframe"
         private val TRAILER = "\r\n".toByteArray(Charsets.US_ASCII)
+
+        private val STREAM_RESPONSE_HEADER = (
+            "HTTP/1.0 200 OK\r\n" +
+            "Server: Lenscast\r\n" +
+            "Cache-Control: no-cache, no-store, must-revalidate\r\n" +
+            "Pragma: no-cache\r\n" +
+            "Connection: close\r\n" +
+            "Content-Type: multipart/x-mixed-replace; boundary=$BOUNDARY\r\n\r\n"
+        ).toByteArray(Charsets.US_ASCII)
+
+        // The fixed prefix of every multipart part: boundary line + image content-type +
+        // "Content-Length: ". The numeric length + CRLF CRLF is appended per-frame.
+        private val PART_PREFIX = (
+            "--$BOUNDARY\r\n" +
+            "Content-Type: image/jpeg\r\n" +
+            "Content-Length: "
+        ).toByteArray(Charsets.US_ASCII)
+
+        private val SHOT_503_HEADER = (
+            "HTTP/1.0 503 Service Unavailable\r\n" +
+            "Content-Type: text/plain\r\n" +
+            "Content-Length: 12\r\n\r\n"
+        ).toByteArray(Charsets.US_ASCII)
+        private val NO_FRAME_BODY = "No frame yet".toByteArray(Charsets.US_ASCII)
+
+        private val LANDING_RESPONSE: ByteArray = run {
+            val html = """
+                <!doctype html>
+                <html><head><title>Lenscast</title>
+                <style>
+                  body{background:#14121c;color:#eee;font-family:system-ui,sans-serif;margin:0;padding:24px;text-align:center}
+                  h1{font-weight:600;margin:0 0 12px}
+                  img{max-width:100%;border-radius:12px;box-shadow:0 8px 32px rgba(120,73,242,0.3)}
+                  code{background:#262335;padding:2px 8px;border-radius:6px}
+                </style></head>
+                <body>
+                  <h1>Lenscast</h1>
+                  <p>MJPEG stream at <code>/video</code> · snapshot at <code>/shot.jpg</code></p>
+                  <img src="/video" alt="Live preview">
+                </body></html>
+            """.trimIndent().toByteArray()
+            val header = ("HTTP/1.0 200 OK\r\n" +
+                "Content-Type: text/html; charset=utf-8\r\n" +
+                "Content-Length: ${html.size}\r\n\r\n").toByteArray(Charsets.US_ASCII)
+            header + html
+        }
     }
 }

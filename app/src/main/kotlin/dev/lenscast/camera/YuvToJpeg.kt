@@ -3,7 +3,6 @@ package dev.lenscast.camera
 import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.graphics.YuvImage
-import android.media.Image
 import androidx.camera.core.ImageProxy
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
@@ -18,8 +17,24 @@ import java.nio.ByteBuffer
  *   2. The buffer is rotated by [ImageProxy.imageInfo.rotationDegrees] so that downstream
  *      consumers (e.g. OBS) always receive an upright frame regardless of how the phone
  *      is physically held.
+ *
+ * **Threading:** the only caller is CameraX's `ImageAnalysis` analyzer, which runs on a
+ * dedicated single-thread executor (see `CameraController.analysisExecutor`). That lets
+ * us hold large reusable scratch buffers as plain object fields — no synchronization,
+ * no per-frame allocations once the resolution stabilises. Re-checking these caller
+ * assumptions matters: a second caller from another thread would corrupt the pool.
  */
 object YuvToJpeg {
+
+    // Scratch buffers reused across frames. Re-allocated only when the requested size
+    // changes (e.g. when the user picks a new resolution). At 1080p this saves ~6 MB
+    // of allocation per frame.
+    private var nv21Buf: ByteArray = ByteArray(0)
+    private var rotatedBuf: ByteArray = ByteArray(0)
+    private var yRowBuf: ByteArray = ByteArray(0)
+    private var uRowBuf: ByteArray = ByteArray(0)
+    private var vRowBuf: ByteArray = ByteArray(0)
+    private val jpegOut = ByteArrayOutputStream(64 * 1024)
 
     fun encode(image: ImageProxy, quality: Int): ByteArray {
         val w = image.width
@@ -34,26 +49,12 @@ object YuvToJpeg {
         return jpegFromNv21(nv21, w, h, image.imageInfo.rotationDegrees, quality)
     }
 
-    /** Camera2 equivalent of [encode] — accepts an [android.media.Image] in YUV_420_888. */
-    fun encodeFromImage(image: Image, quality: Int, rotationDegrees: Int): ByteArray {
-        val w = image.width
-        val h = image.height
-        val yP = image.planes[0]; val uP = image.planes[1]; val vP = image.planes[2]
-        val nv21 = planesToNv21(
-            w, h,
-            yP.buffer, yP.rowStride, yP.pixelStride,
-            uP.buffer, uP.rowStride, uP.pixelStride,
-            vP.buffer, vP.rowStride, vP.pixelStride,
-        )
-        return jpegFromNv21(nv21, w, h, rotationDegrees, quality)
-    }
-
     private fun jpegFromNv21(nv21: ByteArray, w: Int, h: Int, rotationDegrees: Int, quality: Int): ByteArray {
         val (rotated, rw, rh) = if (rotationDegrees == 0) Triple(nv21, w, h) else rotateNv21(nv21, w, h, rotationDegrees)
-        val out = ByteArrayOutputStream(rw * rh / 4)
+        jpegOut.reset()
         YuvImage(rotated, ImageFormat.NV21, rw, rh, null)
-            .compressToJpeg(Rect(0, 0, rw, rh), quality.coerceIn(10, 100), out)
-        return out.toByteArray()
+            .compressToJpeg(Rect(0, 0, rw, rh), quality.coerceIn(10, 100), jpegOut)
+        return jpegOut.toByteArray()
     }
 
     /**
@@ -69,15 +70,18 @@ object YuvToJpeg {
     ): ByteArray {
         val ySize = width * height
         val uvSize = ySize / 2
-        val nv21 = ByteArray(ySize + uvSize)
+        val totalSize = ySize + uvSize
+        if (nv21Buf.size != totalSize) nv21Buf = ByteArray(totalSize)
+        val nv21 = nv21Buf
 
         // Y plane: copy row by row honoring rowStride.
         if (yRowStride == width) {
             yBuffer.position(0)
             yBuffer.get(nv21, 0, ySize)
         } else {
+            if (yRowBuf.size != yRowStride) yRowBuf = ByteArray(yRowStride)
+            val row = yRowBuf
             var pos = 0
-            val row = ByteArray(yRowStride)
             for (r in 0 until height) {
                 yBuffer.position(r * yRowStride)
                 yBuffer.get(row, 0, yRowStride)
@@ -91,9 +95,12 @@ object YuvToJpeg {
         val chromaHeight = height / 2
         val chromaWidth = width / 2
 
+        if (vRowBuf.size != vRowStride) vRowBuf = ByteArray(vRowStride)
+        if (uRowBuf.size != uRowStride) uRowBuf = ByteArray(uRowStride)
+        val vRow = vRowBuf
+        val uRow = uRowBuf
+
         var offset = ySize
-        val vRow = ByteArray(vRowStride)
-        val uRow = ByteArray(uRowStride)
         for (r in 0 until chromaHeight) {
             vBuffer.position(r * vRowStride)
             val vLen = minOf(vRowStride, vBuffer.remaining())
@@ -111,10 +118,12 @@ object YuvToJpeg {
 
     /**
      * In-memory rotation of an NV21 buffer by 90, 180, or 270 degrees clockwise.
-     * Returns (rotatedBuffer, newWidth, newHeight).
+     * Returns (rotatedBuffer, newWidth, newHeight). The destination buffer is the
+     * pooled [rotatedBuf]; the caller must finish using it before the next frame.
      */
     private fun rotateNv21(src: ByteArray, w: Int, h: Int, degrees: Int): Triple<ByteArray, Int, Int> {
-        val out = ByteArray(src.size)
+        if (rotatedBuf.size != src.size) rotatedBuf = ByteArray(src.size)
+        val out = rotatedBuf
         val ySize = w * h
         when (degrees) {
             90 -> {
