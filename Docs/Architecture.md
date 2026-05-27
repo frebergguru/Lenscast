@@ -23,10 +23,13 @@ app/src/main/kotlin/dev/lenscast/
 ├── streaming/
 │   ├── StreamingService.kt   # LifecycleService, foreground service, camera owner
 │   ├── FrameBroadcaster.kt   # Lock-free latest-frame slot (AtomicReference)
-│   └── MjpegServer.kt        # ServerSocket + multipart writer
+│   ├── MjpegServer.kt        # ServerSocket + multipart writer
+│   ├── RtspManager.kt        # Lifecycle wrapper over the RTSP server
+│   └── rtsp/                 # Hand-rolled RTSP: server, Camera2 driver,
+│                             # H.264 + AAC encoders, RTP packetizers, SDP, GL rotation
 ├── prefs/
-│   ├── Settings.kt           # Data classes (Lens, Resolution, Fps, …)
-│   └── SettingsRepository.kt # DataStore Preferences wrapper
+│   ├── Settings.kt           # Data classes (Lens, Resolution, Fps, mjpegPort, rtspPort, …)
+│   └── SettingsRepository.kt # DataStore wrapper; ports validated to 1024–65535
 ├── net/
 │   └── NetworkUtils.kt       # Wi-Fi IPv4 lookup, port-free check
 └── ui/                       # Material 3 + Jetpack Compose

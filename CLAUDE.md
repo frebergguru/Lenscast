@@ -1,8 +1,14 @@
 # Lenscast — Claude orientation
 
 Lenscast turns an Android phone into a network camera that OBS Studio (and any HTTP
-client) can consume directly. Today: MJPEG over HTTP. Planned: USB UVC webcam mode and
-RTSP. The project deliberately has **no PC-side software** — OBS connects via its
+client) can consume directly. Two streaming protocols are live today:
+
+- **MJPEG over HTTP** (default port 4747) — works in any orientation, up to 30 fps.
+- **RTSP** (H.264 + AAC, default port 5540) — locked to the sensor's native landscape
+  orientation, supports 60/120/240 fps via Camera2 high-speed sessions.
+
+Both ports are user-editable in the Settings sheet (range 1024–65535). Planned: USB UVC
+webcam mode. The project deliberately has **no PC-side software** — OBS connects via its
 built-in Media Source.
 
 This was renamed from "OBSCam" in May 2026 (the original name was already taken by
@@ -41,7 +47,12 @@ Build environment quirks (full detail in [Docs/Build.md](Docs/Build.md)):
   JPEG. Lock-free, no per-client queues.
 - **`MjpegServer`** is a hand-rolled `ServerSocket` + coroutine-per-client. Serves
   `/video`, `/shot.jpg`, and `/` (browser-friendly landing page).
+- **`streaming/rtsp/`** is the parallel RTSP path: `RtspServer` (sockets + RTSP verbs),
+  `RtspCameraDriver` (Camera2 high-speed session), `H264Encoder` + `AacEncoder`, RTP
+  packetizers, SDP builder. Owns Camera2 directly while streaming, so CameraX is bypassed
+  and the screen falls back to a `SurfaceView` for preview.
 - **Settings** live in DataStore, exposed as a `Flow<Settings>` via `SettingsRepository`.
+  Includes `mjpegPort` / `rtspPort` (user-editable, validated to 1024–65535 in the repo).
 
 Full breakdown: [Docs/Architecture.md](Docs/Architecture.md).
 
@@ -60,13 +71,16 @@ Full breakdown: [Docs/Architecture.md](Docs/Architecture.md).
 - **`ImageProxy.close()` in a `finally`.** CameraX `ImageAnalysis` has a 1-image queue;
   leaking one stalls the entire pipeline.
 
-## Things that are intentionally cut
+## RTSP path caveats
 
-- **RTSP** and the `RtspManager.kt` file. The `Protocol.RTSP` enum entry still exists and
-  the service's `startStreaming` throws "RTSP path is not wired up" if anyone selects it.
-  See [Docs/Roadmap.md](Docs/Roadmap.md) for re-enabling steps.
-- **Microphone audio.** Belongs to the RTSP path. Permissions and FGS-microphone-type
-  declarations were removed from the manifest.
+- **Landscape only.** The H.264 encoder consumes the camera Surface directly with no
+  per-frame rotation step, so output ships in the sensor's native landscape orientation
+  regardless of how the phone is held. The Settings sheet calls this out under the
+  Protocol picker. Lifting it needs an EGL/GL rotation pipeline — see
+  [Docs/Roadmap.md](Docs/Roadmap.md).
+- **Audio** is optional (off by default), gated behind `RECORD_AUDIO` and the
+  `microphone` foreground-service type. Toggling Audio in Settings changes which
+  permissions are requested.
 
 ## Verification before declaring a change done
 

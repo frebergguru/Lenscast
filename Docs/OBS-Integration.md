@@ -60,8 +60,23 @@ Snapshot endpoint: `/shot.jpg` returns a single JPEG.
 
 ## Port
 
-Default 4747 (same as DroidCam, for muscle-memory). Configurable in the Settings sheet if
-you have a port conflict on the LAN.
+Defaults: **4747** for MJPEG (same as DroidCam, for muscle-memory) and **5540** for RTSP.
+Both are editable in the Settings sheet under *Server port* — pick anything from 1024 to
+65535 if a default collides with another service on the LAN. The field is locked while
+streaming; tap Stop first, then change the port, then tap Start.
+
+## RTSP (optional)
+
+Switch the protocol to **RTSP (H.264 + AAC)** in Settings for an H.264 stream — useful
+when you want >30 fps or a more bandwidth-efficient codec than MJPEG. RTSP is **locked
+to landscape orientation** (the Settings sheet flags this directly); rotate the phone
+before tapping Start.
+
+In OBS, RTSP also goes through Media Source:
+
+```
+rtsp://192.168.1.42:5540/
+```
 
 ## Troubleshooting
 

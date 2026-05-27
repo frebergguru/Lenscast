@@ -3,10 +3,11 @@
 ## Done
 
 - MJPEG-over-HTTP server, Wi-Fi + USB transports
+- RTSP server (H.264 + optional AAC) with Camera2 high-speed sessions for 60/120/240 fps
 - CameraX preview before streaming, switchable lens mid-stream
 - Foreground service that survives screen-lock
 - Tap-to-copy connection URLs, settings sheet, Material 3 UI
-- One-port-conflict-friendly settings (port is configurable)
+- Per-protocol port is user-editable in the Settings sheet (1024–65535)
 
 ## Known architectural cap: MJPEG ≤ 30 fps
 
@@ -38,6 +39,10 @@ There are two ways past it, both significant:
 For now, the FPS picker exposes 15 / 24 / 30 only. Higher rates will arrive with RTSP.
 
 ## Known limitation: RTSP stream is locked to sensor orientation (landscape)
+
+The Settings sheet surfaces this directly under the Protocol picker — selecting RTSP
+shows a note that only landscape orientation is supported, so users know to rotate the
+phone before tapping Start.
 
 The MJPEG path rotates each frame per `imageProxy.imageInfo.rotationDegrees` in
 [`YuvToJpeg`](../app/src/main/kotlin/dev/lenscast/camera/YuvToJpeg.kt), so MJPEG output
@@ -81,31 +86,13 @@ Caveats:
   don't. Detect and gracefully fall back to MJPEG.
 - Requires a real cable that supports OTG and works as data, not just charging.
 
-### RTSP with H.264 + AAC audio
+### RTSP portrait support
 
-The plumbing for a second protocol lives in `StreamingService.startStreaming` — the
-`when` branch on `Protocol.RTSP` currently throws. Re-enabling needs:
-
-1. A working RTSP server library. The pre-rename code used
-   [pedroSG94/RootEncoder](https://github.com/pedroSG94/RootEncoder), but the
-   `rtspserver` submodule wasn't published on JitPack at the version we targeted (2.5.1).
-   Options:
-   - Wait for a version where the `rtspserver` submodule is published.
-   - Use a fork that does publish it.
-   - Hand-roll an RTSP server on top of `MediaCodec` (~2–4 weeks of work — non-trivial RTP
-     packetization for H.264 + AAC).
-
-2. Restore `app/src/main/kotlin/dev/lenscast/streaming/RtspManager.kt` (deleted; the file
-   wrapped `RtspServerCamera2`).
-
-3. Restore the protocol selector in `SettingsSheet.kt`.
-
-4. Add back the manifest entries we removed: `RECORD_AUDIO`,
-   `FOREGROUND_SERVICE_MICROPHONE`, and `android:foregroundServiceType="camera|microphone"`
-   on the service.
-
-5. `StreamingService.startForegroundWithType` already branches port + label per protocol —
-   just put back the FGS type bitmask combination for the microphone case.
+The RTSP server itself is shipped (hand-rolled on top of `MediaCodec`, see
+`streaming/rtsp/`). What's missing is an EGL/GL rotation pass between the camera and the
+H.264 encoder so the stream isn't pinned to the sensor's landscape orientation. Sketch
+above in *Known limitation: RTSP stream is locked to sensor orientation*. Until that
+lands, the Settings sheet shows users a note that RTSP is landscape-only.
 
 ### Minor polish
 

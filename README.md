@@ -3,9 +3,10 @@
 Turn an Android phone into a network camera for OBS Studio (and any other HTTP client).
 Free, no watermark, no PC-side software.
 
-The phone runs a tiny **MJPEG-over-HTTP** server. OBS connects to it directly via its
-built-in **Media Source** — no plugin, no helper app. Wi-Fi and USB (via `adb reverse`)
-are both supported.
+The phone runs a tiny **MJPEG-over-HTTP** server (default port 4747) and an optional
+**RTSP** server (H.264 + AAC, default port 5540, landscape only). OBS connects directly
+via its built-in **Media Source** — no plugin, no helper app. Wi-Fi and USB (via
+`adb forward`) are both supported.
 
 ## Quick start
 
@@ -29,8 +30,10 @@ Full setup, USB tethering, and troubleshooting are in
 - Live preview before you start streaming
 - Front / back camera with mid-stream lens switching
 - Flashlight toggle, configurable resolution (480p / 720p / 1080p), FPS, JPEG quality
+- MJPEG (any orientation) or RTSP H.264 + AAC (landscape only, up to 240 fps)
+- Manually configurable server port per protocol (1024–65535)
 - Foreground service that survives screen lock
-- One tap to copy the stream URL or the `adb reverse` command
+- One tap to copy the stream URL or the `adb forward` command
 - Browser-friendly landing page at `/` for quick sanity checks
 - Snapshot endpoint at `/shot.jpg`
 
@@ -49,8 +52,9 @@ if you're a human reader.
 ## Status
 
 This is a working hobby project. Tested on the developer's own Android phone, used as a
-free DroidCam replacement. RTSP support is scaffolded but currently disabled — the
-streaming protocol exposed today is MJPEG only. See [Docs/Roadmap.md](Docs/Roadmap.md).
+free DroidCam replacement. MJPEG works in any orientation; RTSP currently streams in the
+sensor's native landscape orientation only (see
+[Docs/Roadmap.md](Docs/Roadmap.md) for the GL pipeline that would lift this).
 
 ## License
 

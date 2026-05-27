@@ -8,9 +8,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -26,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import dev.lenscast.R
 import dev.lenscast.prefs.Fps
@@ -73,6 +76,14 @@ fun SettingsSheet(
                 },
                 onSelect = { onChange(settings.copy(protocol = it)) },
             )
+            if (settings.protocol == Protocol.RTSP) {
+                Text(
+                    text = stringResource(R.string.settings_rtsp_landscape_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
 
             Spacer(Modifier.height(16.dp))
             HorizontalDivider()
@@ -150,6 +161,27 @@ fun SettingsSheet(
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
 
+            // Server port — editable per active protocol. Disabled while streaming since the
+            // server is already bound; user has to Stop first.
+            SectionLabel(stringResource(R.string.settings_port_section))
+            val portLabel = stringResource(
+                if (settings.protocol == Protocol.MJPEG) R.string.settings_mjpeg_port
+                else R.string.settings_rtsp_port
+            )
+            PortField(
+                label = portLabel,
+                port = if (settings.protocol == Protocol.MJPEG) settings.mjpegPort else settings.rtspPort,
+                enabled = !streaming,
+                onPortChange = { newPort ->
+                    onChange(
+                        if (settings.protocol == Protocol.MJPEG) settings.copy(mjpegPort = newPort)
+                        else settings.copy(rtspPort = newPort)
+                    )
+                },
+            )
+
+            Spacer(Modifier.height(16.dp))
+
             if (settings.protocol == Protocol.RTSP) {
                 ToggleRow(
                     title = stringResource(R.string.settings_audio),
@@ -198,6 +230,40 @@ private fun <T> SegmentedRow(
             }
         }
     }
+}
+
+@Composable
+private fun PortField(
+    label: String,
+    port: Int,
+    enabled: Boolean,
+    onPortChange: (Int) -> Unit,
+) {
+    // Local string state lets the user clear the field and retype without the int model
+    // snapping it back. `remember(port)` resyncs when the upstream value changes (e.g.
+    // protocol switch swaps which port we're displaying).
+    var text by remember(port) { mutableStateOf(port.toString()) }
+    val parsed = text.toIntOrNull()
+    val isValid = parsed != null && parsed in 1024..65535
+    OutlinedTextField(
+        value = text,
+        onValueChange = { new ->
+            val cleaned = new.filter { it.isDigit() }.take(5)
+            text = cleaned
+            cleaned.toIntOrNull()?.takeIf { it in 1024..65535 }?.let {
+                if (it != port) onPortChange(it)
+            }
+        },
+        label = { Text(label) },
+        singleLine = true,
+        enabled = enabled,
+        isError = !isValid,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        supportingText = if (!isValid) {
+            { Text(stringResource(R.string.settings_port_range_hint)) }
+        } else null,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
 
 @Composable
