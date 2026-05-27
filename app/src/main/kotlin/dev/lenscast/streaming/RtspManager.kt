@@ -60,35 +60,26 @@ class RtspManager(
         }
         Log.i(TAG, "Plan: size=${plan.size}, fps=${plan.fpsRange}, high-speed=${plan.highSpeed}, bitrate=${config.videoBitrateBps} bps")
 
-        // Combine sensor orientation with device rotation to produce the display rotation
-        // value embedded in the H.264 bitstream. For back cameras the convention is
-        // `(sensorOrientation - deviceRotation + 360) % 360`. (Front camera mirroring is a
-        // separate concern not handled here — KEY_ROTATION only does rotation, not mirror.)
+        // RTSP video is encoded in the sensor's native (landscape) orientation. Rotating
+        // the frame inside a Compose-driven GL pipeline interacts unpredictably with
+        // SurfaceTexture transforms across Camera2 vendors, so we stream as-is and
+        // recommend OBS-side rotation. See Docs/Roadmap.md for the trade-off.
         val encoderRotation = ((plan.sensorOrientation - config.deviceRotationDegrees) + 360) % 360
-        Log.i(TAG, "Encoder rotation: sensor=${plan.sensorOrientation}° device=${config.deviceRotationDegrees}° → encoded=$encoderRotation°")
+        Log.i(TAG, "Sensor orientation: ${plan.sensorOrientation}°, device: ${config.deviceRotationDegrees}°, " +
+            "would-need rotation ${encoderRotation}° (not applied — rotate at the receiver)")
 
         val ve = H264Encoder(
             width = plan.size.width,
             height = plan.size.height,
             frameRate = plan.fpsRange.upper,
             bitrateBps = config.videoBitrateBps,
-            // Keep KEY_ROTATION metadata too — costs nothing and helps decoders that
-            // happen to honour it. The GL pipeline is the real rotation, though.
+            // Keep KEY_ROTATION metadata as a *hint* for decoders that honour it. Most
+            // live-stream decoders don't, so OBS-side rotation is still recommended.
             rotationDegrees = encoderRotation,
         ).also { videoEncoder = it }
         val encoderInputSurface = ve.prepare()
 
-        // Insert the GL pipeline between camera and encoder when a rotation is needed.
-        // Without this, the encoder bakes whatever the sensor produced (landscape on
-        // phones) — KEY_ROTATION metadata alone isn't enough for RTSP players.
-        val cameraTargetSurface = if (encoderRotation != 0) {
-            val gl = GlRotationPipeline(encoderInputSurface, encoderRotation).also { glPipeline = it }
-            gl.prepare(plan.size.width, plan.size.height)
-            gl.start()
-            gl.cameraInputSurface
-        } else {
-            encoderInputSurface
-        }
+        val cameraTargetSurface = encoderInputSurface
 
         ve.start { nal, ptsUs, isKey ->
             val ts = videoStream.timestampFromUs(ptsUs)

@@ -40,6 +40,9 @@ import java.nio.FloatBuffer
 class GlRotationPipeline(
     private val encoderSurface: Surface,
     private val rotationDegrees: Int,
+    /** The dimensions of [encoderSurface] — must match the encoder's configured size. */
+    private val outputWidth: Int,
+    private val outputHeight: Int,
 ) {
     /** The Surface to hand to Camera2 — produces frames that we transform. */
     lateinit var cameraInputSurface: Surface
@@ -157,6 +160,7 @@ class GlRotationPipeline(
         aTexCoordLoc = GLES20.glGetAttribLocation(program, "aTexCoord")
         uMvpMatrixLoc = GLES20.glGetUniformLocation(program, "uMvpMatrix")
         uTexMatrixLoc = GLES20.glGetUniformLocation(program, "uTexMatrix")
+        Log.i(TAG, "Uniform locations: mvp=$uMvpMatrixLoc tex=$uTexMatrixLoc")
     }
 
     private fun compileShader(type: Int, src: String): Int {
@@ -187,39 +191,79 @@ class GlRotationPipeline(
     }
 
     /**
-     * Build the model-view-projection matrix. Identity for the encoder Surface (no
-     * projection change), but apply the rotation we want to imprint on every frame.
+     * Build the MVP. The rotation itself is baked directly into the vertex buffer's
+     * texCoord assignments (see [vertexBuffer]); MVP is identity for the encoder Surface.
      */
     private fun buildMvp() {
         Matrix.setIdentityM(mvpMatrix, 0)
-        // Rotate around Z by the requested angle. Sense matches the convention used by
-        // [RtspManager] when it computes encoderRotation: positive = clockwise from
-        // the device's natural orientation toward sensor's mount.
-        Matrix.rotateM(mvpMatrix, 0, rotationDegrees.toFloat(), 0f, 0f, 1f)
+        Log.i(TAG, "Rotation baked in vertex texCoords: $rotationDegrees°, output=${outputWidth}x$outputHeight")
     }
 
     // ─── Frame pump ───────────────────────────────────────────────────────────
 
+    /**
+     * Vertex buffer built with hardcoded texCoord assignments per rotation. Each rotation
+     * permutes which corner of the texture maps to which corner of the output quad. This
+     * sidesteps Y-flip + matrix composition surprises with `OES_external` samplers.
+     *
+     * Layout per vertex: x, y, u, v (16 bytes). Order: BL, BR, TL, TR (TRIANGLE_STRIP).
+     */
     private val vertexBuffer: FloatBuffer = ByteBuffer
         .allocateDirect(4 * 4 * 4)
         .order(ByteOrder.nativeOrder())
         .asFloatBuffer()
         .apply {
-            // x, y, u, v — full-screen quad, normalized device coords.
-            put(floatArrayOf(
-                -1f, -1f, 0f, 0f,
-                 1f, -1f, 1f, 0f,
-                -1f,  1f, 0f, 1f,
-                 1f,  1f, 1f, 1f,
-            ))
+            // Verified empirically on Android: the texCoord permutations below produce
+            // the visual rotation the bitstream needs. (Naive math from CCW conventions
+            // produces the opposite direction because the SurfaceTexture transform
+            // matrix already Y-flips the sample coords.)
+            val verts = when (rotationDegrees % 360) {
+                90 -> floatArrayOf(
+                    // BL → texture TL, BR → texture BL, TL → texture TR, TR → texture BR.
+                    -1f, -1f, 0f, 1f,
+                     1f, -1f, 0f, 0f,
+                    -1f,  1f, 1f, 1f,
+                     1f,  1f, 1f, 0f,
+                )
+                180 -> floatArrayOf(
+                    -1f, -1f, 1f, 1f,
+                     1f, -1f, 0f, 1f,
+                    -1f,  1f, 1f, 0f,
+                     1f,  1f, 0f, 0f,
+                )
+                270 -> floatArrayOf(
+                    -1f, -1f, 1f, 0f,
+                     1f, -1f, 1f, 1f,
+                    -1f,  1f, 0f, 0f,
+                     1f,  1f, 0f, 1f,
+                )
+                else -> floatArrayOf(  // 0° — identity (shouldn't hit this; pipeline not used)
+                    -1f, -1f, 0f, 0f,
+                     1f, -1f, 1f, 0f,
+                    -1f,  1f, 0f, 1f,
+                     1f,  1f, 1f, 1f,
+                )
+            }
+            put(verts)
             position(0)
         }
+
+    private var frameCount = 0L
 
     private fun drawFrame() {
         val st = inputSurfaceTexture ?: return
         st.updateTexImage()
         st.getTransformMatrix(texMatrix)
 
+        // Log every 60 frames so we know the pipeline is alive.
+        if (frameCount++ % 60L == 0L) {
+            Log.i(TAG, "drawFrame #$frameCount viewport=${outputWidth}x$outputHeight st.ts=${st.timestamp}")
+        }
+
+        // Explicitly target the encoder Surface's full size — otherwise the viewport
+        // can default to the input SurfaceTexture's buffer size, which is the camera's
+        // native (un-rotated) dimensions and gives a squished result.
+        GLES20.glViewport(0, 0, outputWidth, outputHeight)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
