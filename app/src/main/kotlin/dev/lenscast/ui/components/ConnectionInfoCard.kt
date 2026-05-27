@@ -1,0 +1,211 @@
+package dev.lenscast.ui.components
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Done
+import androidx.compose.material.icons.outlined.Usb
+import androidx.compose.material.icons.outlined.Wifi
+import androidx.compose.material.icons.outlined.WifiOff
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import dev.lenscast.R
+import dev.lenscast.prefs.Protocol
+import kotlinx.coroutines.delay
+
+@Composable
+fun ConnectionInfoCard(
+    wifiIp: String?,
+    protocol: Protocol,
+    mjpegPort: Int,
+    rtspPort: Int,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 2.dp,
+    ) {
+        Column(modifier = Modifier.padding(20.dp)) {
+            Text(
+                stringResource(R.string.card_connection_title).uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            // Wi-Fi row
+            val port = if (protocol == Protocol.MJPEG) mjpegPort else rtspPort
+            val scheme = if (protocol == Protocol.MJPEG) "http" else "rtsp"
+            val path = if (protocol == Protocol.MJPEG) "/video" else ""
+            val wifiUrl = wifiIp?.let { "$scheme://$it:$port$path" }
+            UrlRow(
+                icon = if (wifiIp != null) Icons.Outlined.Wifi else Icons.Outlined.WifiOff,
+                label = stringResource(R.string.card_connection_wifi),
+                value = wifiUrl ?: stringResource(R.string.card_connection_no_wifi),
+                copyable = wifiUrl != null,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            // USB row
+            val usbUrl = "$scheme://localhost:$port$path"
+            UrlRow(
+                icon = Icons.Outlined.Usb,
+                label = stringResource(R.string.card_connection_usb),
+                value = usbUrl,
+                copyable = true,
+            )
+            Spacer(Modifier.height(8.dp))
+
+            // adb forward hint — `forward` tunnels PC→phone, which is what OBS/VLC/etc need.
+            Surface(
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        stringResource(R.string.card_connection_usb_hint),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    val cmd = "adb forward tcp:$port tcp:$port"
+                    CopyableInline(text = cmd)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+
+            Text(
+                stringResource(R.string.card_connection_obs_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun UrlRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    value: String,
+    copyable: Boolean,
+) {
+    val ctx = LocalContext.current
+    var justCopied by remember { mutableStateOf(false) }
+    LaunchedEffect(justCopied) {
+        if (justCopied) {
+            delay(1500)
+            justCopied = false
+        }
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .let { if (copyable) it.clickable {
+                copy(ctx, value); justCopied = true
+            } else it }
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.size(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                value,
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        if (copyable) {
+            AnimatedVisibility(visible = !justCopied) {
+                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(18.dp))
+            }
+            AnimatedVisibility(visible = justCopied) {
+                Icon(Icons.Outlined.Done, contentDescription = "Copied", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CopyableInline(text: String) {
+    val ctx = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) { delay(1200); copied = false }
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable { copy(ctx, text); copied = true }
+            .padding(vertical = 6.dp, horizontal = 4.dp),
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+        )
+        Icon(
+            imageVector = if (copied) Icons.Outlined.Done else Icons.Outlined.ContentCopy,
+            contentDescription = null,
+            modifier = Modifier.size(16.dp),
+            tint = if (copied) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun copy(ctx: Context, value: String) {
+    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+    cm.setPrimaryClip(ClipData.newPlainText("Lenscast", value))
+    Toast.makeText(ctx, ctx.getString(R.string.action_copied), Toast.LENGTH_SHORT).show()
+}
