@@ -138,7 +138,12 @@ while true; do
   # for every yuvj420p frame it touches — that's just the deprecated-format name
   # being flagged, nothing the user can act on. Real errors (stream gone, device
   # busy, etc.) still print, and our outer reconnect loop handles stream drops.
-  ffmpeg -hide_banner -loglevel error \
+  #
+  # -nostdin / -nostats so the process survives being put in the background (`&`).
+  # Without -nostdin ffmpeg tries to read interactive keys from the tty and gets
+  # SIGTTIN'd; without -nostats it prints a periodic progress line and gets
+  # SIGTTOU'd. Either suspends the job and starves v4l2loopback of frames.
+  ffmpeg -hide_banner -loglevel error -nostdin -nostats \
     -fflags nobuffer -flags low_delay \
     -f mjpeg -i "$URL" \
     "${FPS_FLAG[@]}" \
