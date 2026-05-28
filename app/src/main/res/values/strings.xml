@@ -49,6 +49,7 @@
     <string name="settings_system_webcam_title">Use as USB webcam (system)</string>
     <string name="settings_system_webcam_explainer">Your device supports the system DeviceAsWebcam mode. Plug in via USB, then enable \"Webcam\" in USB preferences — the phone appears as a regular webcam in Zoom, Chrome, etc. Note: the video comes from Android, not from Lenscast.</string>
     <string name="settings_system_webcam_open">Open USB preferences</string>
+    <string name="settings_version">Lenscast v%1$s</string>
 
     <string name="permission_camera_title">Camera permission required</string>
     <string name="permission_camera_message">Lenscast needs camera access to capture and stream video. Grant the permission to continue.</string>

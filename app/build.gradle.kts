@@ -12,8 +12,8 @@ android {
         applicationId = "dev.lenscast"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
 
         resourceConfigurations += listOf("en")
     }
@@ -25,6 +25,11 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
+            // Sign with the auto-generated debug keystore. This is *not* a production
+            // signing key — it's a hobby-project convenience so sideloaded GitHub-release
+            // APKs install without "unsigned" prompts. If we ever go Play Store, swap in
+            // a real keystore via a credentials gradle file kept out of git.
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(

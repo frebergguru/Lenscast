@@ -252,6 +252,25 @@ fun SettingsSheet(
                     Text(stringResource(R.string.settings_system_webcam_open))
                 }
             }
+
+            // Read versionName at runtime from PackageManager so the footer always
+            // matches whatever Gradle compiled — no risk of the string drifting from
+            // the apk metadata that updates / Play Store / Android Settings rely on.
+            val versionName = remember(context) {
+                runCatching {
+                    context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                }.getOrNull().orEmpty()
+            }
+            if (versionName.isNotEmpty()) {
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    text = stringResource(R.string.settings_version, versionName),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+            }
         }
     }
 }
