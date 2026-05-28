@@ -14,7 +14,7 @@
     <string name="action_switch_camera">Switch camera</string>
     <string name="action_toggle_flash">Toggle flash</string>
 
-    <string name="card_connection_title">Connect OBS to this URL</string>
+    <string name="card_connection_title">Connect your receiver to this URL</string>
     <string name="card_connection_wifi">Wi-Fi (LAN)</string>
     <string name="card_connection_usb">USB (adb forward)</string>
     <string name="card_connection_usb_hint">Run on your PC first:</string>
@@ -41,7 +41,7 @@
     <string name="settings_srt_mode_caller">Caller (dial out)</string>
     <string name="settings_srt_mode_listener">Listener (receivers pull)</string>
     <string name="settings_srt_mode_caller_hint">Phone dials out to a remote SRT listener. Easiest path through NAT — the receiver needs a public listener address.</string>
-    <string name="settings_srt_mode_listener_hint">Phone listens on the port below. Receivers (OBS, ffmpeg) pull via srt://&lt;phone-ip&gt;:&lt;port&gt;.</string>
+    <string name="settings_srt_mode_listener_hint">Phone listens on the port below. Receivers (VLC, ffmpeg, broadcast software) pull via srt://&lt;phone-ip&gt;:&lt;port&gt;.</string>
     <string name="settings_srt_host">Remote host</string>
     <string name="settings_srt_port">Port</string>
     <string name="settings_srt_passphrase">Encryption passphrase</string>
@@ -87,7 +87,7 @@
     <string name="notif_action_stop">Stop</string>
 
     <string name="preview_rtsp_streaming_title">Streaming live</string>
-    <string name="preview_rtsp_streaming_description">Camera feed is going to OBS via RTSP. On-device preview is disabled during streaming to keep rotation stable.</string>
+    <string name="preview_rtsp_streaming_description">Camera feed is being sent to your receivers. On-device preview is disabled during streaming to keep rotation stable.</string>
 
     <string name="settings_image_section">Image</string>
     <string name="settings_mirror">Mirror horizontally</string>
@@ -214,7 +214,7 @@
     <string name="settings_preset_lens_front">front</string>
 
     <string name="settings_mjpeg_sidecar">MJPEG sidecar (browser preview)</string>
-    <string name="settings_mjpeg_sidecar_hint">Adds /video on the MJPEG port so a browser &lt;img&gt; works alongside the OBS RTSP feed. Same camera; ≤15 fps for the sidecar to keep the encoder cool.</string>
+    <string name="settings_mjpeg_sidecar_hint">Adds /video on the MJPEG port so a browser &lt;img&gt; works alongside the RTSP feed. Same camera; ≤15 fps for the sidecar to keep the encoder cool.</string>
     <string name="settings_mjpeg_sidecar_highspeed_note">Available at ≤30 fps only — high-speed Camera2 sessions reject extra outputs.</string>
     <string name="settings_record_locally">Record to MP4 while streaming (RTSP only)</string>
     <string name="settings_record_locally_hint">Saves to Movies/Lenscast/. Encoded once; no extra battery cost beyond the file write.</string>
@@ -246,12 +246,12 @@
     <string name="web_state_idle">idle</string>
     <string name="web_hero_title">Live preview</string>
     <string name="web_idle_pick">Pick a streaming protocol and tap Start.</string>
-    <string name="web_proto_mjpeg_desc">Universal: browser &lt;img&gt;, OBS, VLC. PCM audio sidecar. ≤30 fps.</string>
-    <string name="web_proto_rtsp_desc">H.264 + AAC. OBS / VLC / ffmpeg. Up to 240 fps. Landscape only.</string>
+    <string name="web_proto_mjpeg_desc">Universal: browser &lt;img&gt;, broadcast software, VLC. PCM audio sidecar. ≤30 fps.</string>
+    <string name="web_proto_rtsp_desc">H.264 + AAC. VLC / ffmpeg / any RTSP-capable receiver. Up to 240 fps. Landscape only.</string>
     <string name="web_proto_webrtc_desc">Sub-100 ms latency in the browser. Open /webrtc/view after Start. No audio yet.</string>
     <string name="web_start">Start streaming</string>
     <string name="web_rtsp_live_title">RTSP is live</string>
-    <string name="web_rtsp_live_note">Open in OBS / VLC / ffmpeg — browsers can\'t render RTSP natively.</string>
+    <string name="web_rtsp_live_note">Open in VLC / ffmpeg / any RTSP-capable receiver — browsers can\'t render RTSP natively.</string>
     <string name="web_webrtc_view_link">Open the standalone viewer →</string>
     <string name="web_status_h">Status</string>
     <string name="web_stat_audio_peak">Audio peak</string>
@@ -442,7 +442,7 @@
     <string name="web_help_echo_cancel">Lets Android\'s built-in echo canceller remove playback echo from the mic. Mostly useful in two-way calls.</string>
     <string name="web_help_jpeg_quality">JPEG compression level for the MJPEG stream. Higher = sharper picture, larger frames, more bandwidth. 80 is a good default.</string>
     <string name="web_help_rtsp_bitrate">Target bitrate for the H.264 encoder. 0 lets Lenscast pick from resolution × FPS. Lower it for slow Wi-Fi.</string>
-    <string name="web_help_mjpeg_sidecar">When on, the MJPEG /video endpoint runs alongside RTSP using the same camera capture. Lets a browser preview while OBS pulls RTSP. Capped at ≤30 fps.</string>
+    <string name="web_help_mjpeg_sidecar">When on, the MJPEG /video endpoint runs alongside RTSP using the same camera capture. Lets a browser preview while the RTSP receiver pulls H.264. Capped at ≤30 fps.</string>
     <string name="web_help_record_mp4">Saves the RTSP stream to an MP4 file in Movies/Lenscast/ while streaming. Encoded once, no extra battery cost.</string>
     <string name="web_help_sftp_auto_upload">When the recording finishes, queue it for SFTP upload to the server you configure below.</string>
     <string name="web_help_sftp_host">Hostname or IP of the SSH/SFTP server.</string>
@@ -456,7 +456,7 @@
     <string name="web_help_auto_start">Start streaming immediately whenever the app is opened, with the last-used settings.</string>
     <string name="web_help_start_on_boot">Start streaming automatically when the phone finishes booting. Requires the app to be excluded from battery optimisation.</string>
     <string name="web_help_mjpeg_port">TCP port the MJPEG server listens on. Receivers connect to <code>&lt;phone-ip&gt;:&lt;this-port&gt;/video</code>.</string>
-    <string name="web_help_rtsp_port">TCP port the RTSP server listens on. OBS / VLC / ffmpeg connect to <code>rtsp://&lt;phone-ip&gt;:&lt;this-port&gt;/lenscast</code>.</string>
+    <string name="web_help_rtsp_port">TCP port the RTSP server listens on. VLC / ffmpeg / any RTSP-capable receiver connects to <code>rtsp://&lt;phone-ip&gt;:&lt;this-port&gt;/lenscast</code>.</string>
     <string name="web_help_https">Wraps the MJPEG and web-control ports in TLS. Receivers will see a self-signed-cert warning the first time.</string>
     <string name="web_help_stream_user">Username the receiver will be asked for. Defaults to \"Lenscast\" when blank.</string>
     <string name="web_help_stream_pass">Password the receiver will be asked for. Blank = open access to anyone on your network.</string>

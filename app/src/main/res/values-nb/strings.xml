@@ -14,7 +14,7 @@
     <string name="action_switch_camera">Bytt kamera</string>
     <string name="action_toggle_flash">Lommelykt</string>
 
-    <string name="card_connection_title">Koble OBS til denne URL-en</string>
+    <string name="card_connection_title">Koble mottakeren til denne URL-en</string>
     <string name="card_connection_wifi">Wi-Fi (LAN)</string>
     <string name="card_connection_usb">USB (adb forward)</string>
     <string name="card_connection_usb_hint">Kjør på PC-en først:</string>
@@ -41,7 +41,7 @@
     <string name="settings_srt_mode_caller">Caller (ring ut)</string>
     <string name="settings_srt_mode_listener">Listener (mottakere henter)</string>
     <string name="settings_srt_mode_caller_hint">Telefonen ringer ut til en ekstern SRT-listener. Enkleste vei gjennom NAT — mottakeren må ha en offentlig listener-adresse.</string>
-    <string name="settings_srt_mode_listener_hint">Telefonen lytter på porten under. Mottakere (OBS, ffmpeg) henter via srt://&lt;telefon-ip&gt;:&lt;port&gt;.</string>
+    <string name="settings_srt_mode_listener_hint">Telefonen lytter på porten under. Mottakere (VLC, ffmpeg, sendeprogramvare) henter via srt://&lt;telefon-ip&gt;:&lt;port&gt;.</string>
     <string name="settings_srt_host">Ekstern vert</string>
     <string name="settings_srt_port">Port</string>
     <string name="settings_srt_passphrase">Krypteringspassord</string>
@@ -87,7 +87,7 @@
     <string name="notif_action_stop">Stopp</string>
 
     <string name="preview_rtsp_streaming_title">Strømmer direkte</string>
-    <string name="preview_rtsp_streaming_description">Kamerasignalet går til OBS via RTSP. Forhåndsvisning på enheten er deaktivert mens strømmen er aktiv for å holde rotasjonen stabil.</string>
+    <string name="preview_rtsp_streaming_description">Kamerasignalet sendes til mottakerne dine. Forhåndsvisning på enheten er deaktivert mens strømmen er aktiv for å holde rotasjonen stabil.</string>
 
     <string name="settings_image_section">Bilde</string>
     <string name="settings_mirror">Speil horisontalt</string>
@@ -244,12 +244,12 @@
     <string name="web_state_idle">inaktiv</string>
     <string name="web_hero_title">Direkte forhåndsvisning</string>
     <string name="web_idle_pick">Velg en strømmeprotokoll og trykk Start.</string>
-    <string name="web_proto_mjpeg_desc">Universell: nettleser-&lt;img&gt;, OBS, VLC. PCM-lyd-sidekanal. ≤30 fps.</string>
-    <string name="web_proto_rtsp_desc">H.264 + AAC. OBS / VLC / ffmpeg. Opptil 240 fps. Kun liggende retning.</string>
+    <string name="web_proto_mjpeg_desc">Universell: nettleser-&lt;img&gt;, sendeprogramvare, VLC. PCM-lyd-sidekanal. ≤30 fps.</string>
+    <string name="web_proto_rtsp_desc">H.264 + AAC. VLC / ffmpeg / hvilken som helst RTSP-mottaker. Opptil 240 fps. Kun liggende retning.</string>
     <string name="web_proto_webrtc_desc">Under 100 ms forsinkelse i nettleseren. Åpne /webrtc/view etter Start. Ingen lyd ennå.</string>
     <string name="web_start">Start strømming</string>
     <string name="web_rtsp_live_title">RTSP er aktiv</string>
-    <string name="web_rtsp_live_note">Åpne i OBS / VLC / ffmpeg — nettlesere kan ikke vise RTSP direkte.</string>
+    <string name="web_rtsp_live_note">Åpne i VLC / ffmpeg / hvilken som helst RTSP-mottaker — nettlesere kan ikke vise RTSP direkte.</string>
     <string name="web_webrtc_view_link">Åpne den frittstående visningen →</string>
     <string name="web_status_h">Status</string>
     <string name="web_stat_audio_peak">Lydtopp</string>
@@ -433,7 +433,7 @@
     <string name="web_help_echo_cancel">Lar Androids innebygde ekkokansellerer fjerne avspillingsekko fra mikrofonen. Mest nyttig i toveis samtaler.</string>
     <string name="web_help_jpeg_quality">JPEG-komprimeringsnivå for MJPEG-strømmen. Høyere = skarpere bilde, større rammer, mer båndbredde. 80 er et godt utgangspunkt.</string>
     <string name="web_help_rtsp_bitrate">Mål-bitrate for H.264-koderen. 0 lar Lenscast velge ut fra oppløsning × FPS. Senk den for treg Wi-Fi.</string>
-    <string name="web_help_mjpeg_sidecar">Når på, kjøres MJPEG /video-endepunktet parallelt med RTSP og deler samme kamera. Lar nettleser forhåndsvise mens OBS henter RTSP. Begrenset til ≤30 fps.</string>
+    <string name="web_help_mjpeg_sidecar">Når på, kjøres MJPEG /video-endepunktet parallelt med RTSP og deler samme kamera. Lar nettleser forhåndsvise mens RTSP-mottakeren henter H.264. Begrenset til ≤30 fps.</string>
     <string name="web_help_record_mp4">Lagrer RTSP-strømmen som en MP4-fil i Movies/Lenscast/ mens du strømmer. Kodes én gang, ingen ekstra batterikostnad.</string>
     <string name="web_help_sftp_auto_upload">Når opptaket er ferdig, settes det i kø for SFTP-opplasting til serveren du konfigurerer under.</string>
     <string name="web_help_sftp_host">Vertsnavn eller IP til SSH/SFTP-serveren.</string>
@@ -447,7 +447,7 @@
     <string name="web_help_auto_start">Start strømming umiddelbart hver gang appen åpnes, med sist brukte innstillinger.</string>
     <string name="web_help_start_on_boot">Start strømming automatisk når telefonen er ferdig å starte opp. Krever at appen er ekskludert fra batterioptimalisering.</string>
     <string name="web_help_mjpeg_port">TCP-port MJPEG-tjeneren lytter på. Mottakere kobler til <code>&lt;telefon-ip&gt;:&lt;denne-porten&gt;/video</code>.</string>
-    <string name="web_help_rtsp_port">TCP-port RTSP-tjeneren lytter på. OBS / VLC / ffmpeg kobler til <code>rtsp://&lt;telefon-ip&gt;:&lt;denne-porten&gt;/lenscast</code>.</string>
+    <string name="web_help_rtsp_port">TCP-port RTSP-tjeneren lytter på. VLC / ffmpeg / hvilken som helst RTSP-mottaker kobler til <code>rtsp://&lt;telefon-ip&gt;:&lt;denne-porten&gt;/lenscast</code>.</string>
     <string name="web_help_https">Pakker MJPEG- og webkontroll-portene inn i TLS. Mottakere ser en advarsel om selvsignert sertifikat første gang.</string>
     <string name="web_help_stream_user">Brukernavn mottakeren spørres om. Standard \"Lenscast\" når tomt.</string>
     <string name="web_help_stream_pass">Passord mottakeren spørres om. Tomt = åpen tilgang for alle på nettverket.</string>

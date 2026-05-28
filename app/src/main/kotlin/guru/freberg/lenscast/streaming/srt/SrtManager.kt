@@ -76,6 +76,23 @@ class SrtManager(private val context: Context) {
 
         val tsMuxer = MpegTsMuxer { pkt -> pub.send(pkt) }.also { muxer = it }
 
+        // The H.264 and AAC encoders deliver PTS values in DIFFERENT clock domains:
+        //   - H.264 PTS comes from the Camera2 input surface — elapsedRealtimeNanos / 1000,
+        //     which is microseconds since boot (can be 70 000 s+ on a phone that's been up
+        //     a while).
+        //   - AAC PTS comes from AudioRecord — microseconds since AudioRecord.startRecording,
+        //     so much smaller absolute values.
+        // ffplay saw `A-V:-70832 s` on first connect — totally unplayable. Both streams need
+        // a single shared wall-clock origin. We capture the first PTS each encoder emits and
+        // anchor it to the wall-clock interval since stream start, preserving frame-to-frame
+        // deltas inside each stream and aligning audio + video at receipt time.
+        val streamStartNs = System.nanoTime()
+        // AtomicLong instead of @Volatile vars — @Volatile only applies to fields, not
+        // captured locals. AtomicLong gives us the same volatile-write semantics inside
+        // the encoder callbacks, which run on a MediaCodec worker thread.
+        val videoPtsOffsetUs = java.util.concurrent.atomic.AtomicLong(Long.MIN_VALUE)
+        val audioPtsOffsetUs = java.util.concurrent.atomic.AtomicLong(Long.MIN_VALUE)
+
         // Video pipeline — pump every NAL into the muxer.
         val ve = H264Encoder(
             width = plan.size.width,
@@ -95,7 +112,11 @@ class SrtManager(private val context: Context) {
             // SPS/PPS NALs themselves don't need to be in PES — we prepend them in the
             // muxer on each keyframe — so skip them here. Everything else is a VCL NAL.
             if (nalType in 1..5) {
-                tsMuxer.writeVideoAu(listOf(nal), ptsUs, isKey)
+                videoPtsOffsetUs.compareAndSet(
+                    Long.MIN_VALUE,
+                    (System.nanoTime() - streamStartNs) / 1000L - ptsUs,
+                )
+                tsMuxer.writeVideoAu(listOf(nal), ptsUs + videoPtsOffsetUs.get(), isKey)
             }
         }
 
@@ -112,11 +133,20 @@ class SrtManager(private val context: Context) {
                     tsMuxer.audioSampleRate = ae.sampleRate
                     tsMuxer.audioChannels = ae.channelCount
                 }
-                tsMuxer.writeAudioAu(au, ptsUs)
+                audioPtsOffsetUs.compareAndSet(
+                    Long.MIN_VALUE,
+                    (System.nanoTime() - streamStartNs) / 1000L - ptsUs,
+                )
+                tsMuxer.writeAudioAu(au, ptsUs + audioPtsOffsetUs.get())
             }
         }
 
         camDriver.start(plan, encoderSurface, previewSurface)
+        // Force an IDR ~immediately so receivers don't have to wait for the encoder's
+        // natural GOP boundary (usually 2–5 s). VLC's TSBPD window otherwise starts ticking
+        // before the first decodable frame arrives, and the "non-existing PPS 0 referenced"
+        // warnings flood the receiver log.
+        try { videoEncoder?.requestKeyframe() } catch (_: Throwable) {}
         return plan
     }
 
