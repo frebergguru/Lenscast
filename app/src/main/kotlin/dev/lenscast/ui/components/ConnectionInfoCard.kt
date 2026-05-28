@@ -50,6 +50,10 @@ fun ConnectionInfoCard(
     protocol: Protocol,
     mjpegPort: Int,
     rtspPort: Int,
+    audioEnabled: Boolean = false,
+    webControlEnabled: Boolean = false,
+    webControlPort: Int = 8080,
+    httpsEnabled: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -68,7 +72,8 @@ fun ConnectionInfoCard(
 
             // Wi-Fi row
             val port = if (protocol == Protocol.MJPEG) mjpegPort else rtspPort
-            val scheme = if (protocol == Protocol.MJPEG) "http" else "rtsp"
+            // RTSP is plain RTSP for now (no RTSPS); HTTPS only affects MJPEG.
+            val scheme = if (protocol == Protocol.MJPEG) (if (httpsEnabled) "https" else "http") else "rtsp"
             val path = if (protocol == Protocol.MJPEG) "/video" else ""
             val wifiUrl = wifiIp?.let { "$scheme://$it:$port$path" }
             UrlRow(
@@ -87,6 +92,30 @@ fun ConnectionInfoCard(
                 value = usbUrl,
                 copyable = true,
             )
+
+            // MJPEG audio sidecar URL — only meaningful when MJPEG protocol + audio toggle
+            // are both on. Surfaced here so the user knows to point ffplay / VLC / a
+            // browser <audio> at /audio for the WAV stream.
+            if (protocol == Protocol.MJPEG && audioEnabled && wifiIp != null) {
+                Spacer(Modifier.height(8.dp))
+                UrlRow(
+                    icon = Icons.Outlined.Wifi,
+                    label = stringResource(R.string.card_connection_audio),
+                    value = "$scheme://$wifiIp:$mjpegPort/audio",
+                    copyable = true,
+                )
+            }
+
+            if (webControlEnabled && wifiIp != null) {
+                Spacer(Modifier.height(8.dp))
+                val webScheme = if (httpsEnabled) "https" else "http"
+                UrlRow(
+                    icon = Icons.Outlined.Wifi,
+                    label = stringResource(R.string.card_connection_web_control),
+                    value = "$webScheme://$wifiIp:$webControlPort/",
+                    copyable = true,
+                )
+            }
             Spacer(Modifier.height(8.dp))
 
             // adb forward hint — `forward` tunnels PC→phone, which is what OBS/VLC/etc need.

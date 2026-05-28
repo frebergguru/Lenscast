@@ -19,17 +19,27 @@ import androidx.lifecycle.lifecycleScope
 import dev.lenscast.MainActivity
 import dev.lenscast.LenscastApp
 import dev.lenscast.R
+import android.media.MediaRecorder
+import dev.lenscast.camera.CameraCapabilities
 import dev.lenscast.camera.CameraController
 import dev.lenscast.net.NsdAdvertiser
+import dev.lenscast.net.TlsManager
 import dev.lenscast.prefs.AntiBanding
+import dev.lenscast.prefs.CameraEffect
+import dev.lenscast.prefs.MicSource
 import dev.lenscast.prefs.Protocol
+import dev.lenscast.prefs.SceneMode
 import dev.lenscast.prefs.Settings
+import dev.lenscast.prefs.SettingsCodec
 import dev.lenscast.prefs.SettingsRepository
 import dev.lenscast.prefs.WhiteBalance
+import dev.lenscast.streaming.rtsp.AacEncoder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 /**
@@ -56,8 +66,12 @@ class StreamingService : LifecycleService() {
     val broadcaster = FrameBroadcaster()
     private var cameraController: CameraController? = null
     private var mjpegServer: MjpegServer? = null
+    private var mjpegAudioBroadcaster: AudioBroadcaster? = null
+    private var mjpegAudioCapture: PcmCapture? = null
     private var rtspManager: RtspManager? = null
     private var nsd: NsdAdvertiser? = null
+    private var webControlServer: WebControlServer? = null
+    private var webControlSettings: Triple<Boolean, Int, Boolean>? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var pendingPreviewProvider: androidx.camera.core.Preview.SurfaceProvider? = null
     // (RTSP path runs without an on-device preview; see startRtsp for the reasoning.)
@@ -69,11 +83,18 @@ class StreamingService : LifecycleService() {
         val w: Int,
         val h: Int,
         val fps: Int,
-        // These three flow through Camera2Interop at build time, so changing them requires
+        // These flow through Camera2Interop at build time, so changing them requires
         // a CameraX rebind. Mirror, EV, zoom and focus are live and not part of the key.
         val whiteBalance: WhiteBalance,
         val antiBanding: AntiBanding,
         val continuousAf: Boolean,
+        val effect: CameraEffect,
+        val sceneMode: SceneMode,
+        val manualFocus: Boolean,
+        val manualFocusCd: Int,
+        val manualExposure: Boolean,
+        val iso: Int,
+        val shutterUs: Long,
     )
     /** True while a stream is active. Suppresses [unbindCamera] from killing the stream. */
     private var streamingCamera: Boolean = false
@@ -86,6 +107,42 @@ class StreamingService : LifecycleService() {
     override fun onBind(intent: Intent): IBinder {
         super.onBind(intent)
         return binder
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        // Track the web-control setting flow for the lifetime of the service so the user
+        // can toggle it on/off (or change the port) without having to restart anything.
+        val repo = SettingsRepository(this)
+        lifecycleScope.launch {
+            repo.flow
+                .map { Triple(it.webControlEnabled, it.webControlPort, it.httpsEnabled) }
+                .distinctUntilChanged()
+                .collect { (enabled, port, https) ->
+                    reconfigureWebControl(enabled, port, https)
+                }
+        }
+    }
+
+    private fun reconfigureWebControl(enabled: Boolean, port: Int, httpsEnabled: Boolean) {
+        val previous = webControlSettings
+        if (previous == Triple(enabled, port, httpsEnabled) && webControlServer != null) return
+        try { webControlServer?.stop() } catch (_: Throwable) {}
+        webControlServer = null
+        if (enabled) {
+            val srv = WebControlServer(
+                port = port,
+                control = mjpegControl,
+                mjpegPort = { _status.value.settings.mjpegPort },
+                rtspPort = { _status.value.settings.rtspPort },
+                sslContext = if (httpsEnabled) TlsManager.sslContext() else null,
+                mjpegIsHttps = { _status.value.settings.httpsEnabled },
+            )
+            try { srv.start(); webControlServer = srv } catch (t: Throwable) {
+                Log.w(TAG, "WebControlServer start failed on port $port: ${t.message}")
+            }
+        }
+        webControlSettings = Triple(enabled, port, httpsEnabled)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -153,13 +210,501 @@ class StreamingService : LifecycleService() {
             antiBanding = settings.antiBanding,
             continuousAf = settings.continuousAf,
             exposureEv = settings.exposureEv,
+            effect = settings.effect,
+            sceneMode = settings.sceneMode,
+            manualFocus = settings.manualFocus,
+            manualFocusCentidiopters = settings.manualFocusCentidiopters,
+            manualExposure = settings.manualExposure,
+            iso = settings.iso,
+            shutterUs = settings.shutterUs,
         )
+        // Optional audio sidecar for the MJPEG path — raw PCM-16LE via PcmCapture, served
+        // by MjpegServer as a streaming WAV. Skipping AAC removes ~20 ms of codec
+        // lookahead and dodges receiver-side AAC buffering (browsers/VLC pile up half a
+        // second of AUs before playing). Bandwidth is ~88 KB/s mono — trivial.
+        val audioBroadcaster = if (settings.audioEnabled) {
+            val ab = AudioBroadcaster()
+            ab.sampleRate = 44_100
+            ab.channels = 1
+            val pcm = PcmCapture(
+                sampleRateHz = ab.sampleRate,
+                channels = ab.channels,
+                audioSource = micAudioSourceFor(settings.micSource),
+                gainLinear = micDbToLinear(settings.audioGainDb),
+                enableNoiseSuppress = settings.noiseSuppress,
+                enableEchoCancel = settings.echoCancel,
+            )
+            pcm.start { chunk -> ab.publish(chunk) }
+            mjpegAudioCapture = pcm
+            mjpegAudioBroadcaster = ab
+            ab
+        } else null
+
         val server = MjpegServer(
             broadcaster, settings.mjpegPort, settings.fps.value,
             password = settings.streamPassword,
+            audioBroadcaster = audioBroadcaster,
+            sslContext = if (settings.httpsEnabled) TlsManager.sslContext() else null,
         ).also { it.start() }
         mjpegServer = server
         startNsd(NsdAdvertiser.TYPE_MJPEG, settings.mjpegPort)
+    }
+
+    private fun micAudioSourceFor(src: MicSource): Int = when (src) {
+        MicSource.CAMCORDER           -> MediaRecorder.AudioSource.CAMCORDER
+        MicSource.MIC                 -> MediaRecorder.AudioSource.MIC
+        MicSource.VOICE_RECOGNITION   -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+        MicSource.VOICE_COMMUNICATION -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
+        MicSource.UNPROCESSED         -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            MediaRecorder.AudioSource.UNPROCESSED
+        } else {
+            MediaRecorder.AudioSource.MIC
+        }
+    }
+
+    private fun micDbToLinear(db: Int): Float =
+        Math.pow(10.0, db / 20.0).toFloat()
+
+    /**
+     * Bridge handed to [MjpegServer] for the browser control page. Keeps the server
+     * decoupled from the service's full API surface — only the four buttons reach back.
+     */
+    private val mjpegControl: MjpegControl = object : MjpegControl {
+        override fun lensIsBack(): Boolean =
+            _status.value.settings.lens == dev.lenscast.prefs.Lens.BACK
+        override fun torchIsOn(): Boolean = cameraController?.torchOn == true
+        override fun toggleTorch() { setTorch(!torchIsOn()) }
+        override fun switchLens() {
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                repo.update {
+                    val newLens = if (it.lens == dev.lenscast.prefs.Lens.BACK)
+                        dev.lenscast.prefs.Lens.FRONT
+                    else dev.lenscast.prefs.Lens.BACK
+                    it.copy(lens = newLens)
+                }
+                // Rebind to the new lens with the current settings, including newLens.
+                val s = repo.flow.first()
+                bindCameraIfNeeded(
+                    s.lens, s.resolution, s.fps.value, s.jpegQuality,
+                    mirror = s.mirror,
+                    whiteBalance = s.whiteBalance,
+                    antiBanding = s.antiBanding,
+                    continuousAf = s.continuousAf,
+                    exposureEv = s.exposureEv,
+                    effect = s.effect,
+                    sceneMode = s.sceneMode,
+                    manualFocus = s.manualFocus,
+                    manualFocusCentidiopters = s.manualFocusCentidiopters,
+                )
+                _status.value = _status.value.copy(settings = s)
+            }
+        }
+        override fun snapshot(): Boolean = saveSnapshot() != null
+        override fun stopStream() {
+            stopStreaming()
+            stopSelf()
+        }
+        override fun zoomBy(factor: Float) {
+            val current = currentZoomRatio()
+            setZoomRatio(current * factor)
+        }
+        override fun nudgeExposure(delta: Int) {
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                var newEv = 0
+                repo.update {
+                    newEv = it.exposureEv + delta
+                    it.copy(exposureEv = newEv)
+                }
+                setExposureEv(newEv)
+                _status.value = _status.value.copy(settings = repo.flow.first())
+            }
+        }
+        override fun toggleMirror() {
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                var nextMirror = false
+                repo.update {
+                    nextMirror = !it.mirror
+                    it.copy(mirror = nextMirror)
+                }
+                cameraController?.mirror = nextMirror
+                _status.value = _status.value.copy(settings = repo.flow.first())
+            }
+        }
+        override fun toggleContinuousAf() {
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                repo.update { it.copy(continuousAf = !it.continuousAf) }
+                val s = repo.flow.first()
+                // Continuous-AF is in BindKey → rebind to swap the AF_MODE.
+                bindCameraIfNeeded(
+                    s.lens, s.resolution, s.fps.value, s.jpegQuality,
+                    mirror = s.mirror,
+                    whiteBalance = s.whiteBalance,
+                    antiBanding = s.antiBanding,
+                    continuousAf = s.continuousAf,
+                    exposureEv = s.exposureEv,
+                    effect = s.effect,
+                    sceneMode = s.sceneMode,
+                    manualFocus = s.manualFocus,
+                    manualFocusCentidiopters = s.manualFocusCentidiopters,
+                )
+                _status.value = _status.value.copy(settings = s)
+            }
+        }
+        override fun setJpegQuality(value: Int) {
+            val clamped = value.coerceIn(10, 95)
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                repo.update { it.copy(jpegQuality = clamped) }
+                cameraController?.jpegQuality = clamped
+                _status.value = _status.value.copy(settings = repo.flow.first())
+            }
+        }
+        override fun jpegQuality(): Int = _status.value.settings.jpegQuality
+
+        override fun setResolutionLabel(label: String): Boolean {
+            val target = dev.lenscast.prefs.Resolution.entries.firstOrNull { it.label == label }
+                ?: return false
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                repo.update { current ->
+                    val supportedRes = CameraCapabilities.supportedResolutions(
+                        this@StreamingService, current.lens,
+                    )
+                    val newRes = if (target in supportedRes) target
+                                 else CameraCapabilities.nextBestResolution(supportedRes, target)
+                    val supportedFps = CameraCapabilities.supportedFps(
+                        this@StreamingService, current.lens, newRes, current.protocol,
+                    )
+                    val newFps = CameraCapabilities.nextBestFps(supportedFps, current.fps)
+                    current.copy(resolution = newRes, fps = newFps)
+                }
+                val s = repo.flow.first()
+                rebindCameraFor(s)
+                _status.value = _status.value.copy(settings = s)
+            }
+            return true
+        }
+
+        override fun setFpsValue(value: Int): Boolean {
+            val target = dev.lenscast.prefs.Fps.entries.firstOrNull { it.value == value } ?: return false
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                repo.update { current ->
+                    val supportedFps = CameraCapabilities.supportedFps(
+                        this@StreamingService, current.lens, current.resolution, current.protocol,
+                    )
+                    val newFps = if (target.value in supportedFps) target
+                                 else CameraCapabilities.nextBestFps(supportedFps, target)
+                    current.copy(fps = newFps)
+                }
+                val s = repo.flow.first()
+                rebindCameraFor(s)
+                _status.value = _status.value.copy(settings = s)
+            }
+            return true
+        }
+
+        override fun setProtocol(value: String): Boolean {
+            val target = when (value.lowercase()) {
+                "mjpeg" -> Protocol.MJPEG
+                "rtsp"  -> Protocol.RTSP
+                else    -> return false
+            }
+            // Can't swap protocols mid-stream — the encoders and server differ.
+            if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                repo.update { current ->
+                    if (current.protocol == target) return@update current
+                    // FPS ranges differ across protocols (RTSP unlocks 60/120/240 via
+                    // high-speed sessions, MJPEG caps at 30). Clamp to a value the new
+                    // (lens × resolution × protocol) triple actually supports.
+                    val supportedFps = CameraCapabilities.supportedFps(
+                        this@StreamingService, current.lens, current.resolution, target,
+                    )
+                    val newFps = CameraCapabilities.nextBestFps(supportedFps, current.fps)
+                    current.copy(protocol = target, fps = newFps)
+                }
+                val s = repo.flow.first()
+                _status.value = _status.value.copy(settings = s)
+            }
+            return true
+        }
+
+        override fun updateSetting(key: String, value: String): Boolean {
+            val streaming = _status.value.state == State.STREAMING || _status.value.state == State.STARTING
+            // Some keys require special-case handling (recompute FPS, rebind, etc.); fall
+            // through to a plain Settings.copy for the rest.
+            val repo = SettingsRepository(this@StreamingService)
+            val (updater, requiresRebind) = updaterFor(key, value, streaming) ?: return false
+            lifecycleScope.launch {
+                repo.update(updater)
+                val s = repo.flow.first()
+                if (requiresRebind) rebindCameraFor(s)
+                // Live tweakables (mirror, EV, JPEG quality, audio gain) also need a side
+                // effect on the running controller — apply them here.
+                applyLiveTweakables(key, s)
+                _status.value = _status.value.copy(settings = s)
+            }
+            return true
+        }
+
+        private fun applyLiveTweakables(key: String, s: Settings) {
+            when (key) {
+                "mirror"        -> cameraController?.mirror = s.mirror
+                "exposureEv"    -> cameraController?.applyExposureEv(s.exposureEv)
+                "jpegQuality"   -> cameraController?.jpegQuality = s.jpegQuality
+                "audioGainDb"   -> {
+                    mjpegAudioCapture?.setGainDb(s.audioGainDb)
+                    rtspManager?.setAudioGainDb(s.audioGainDb)
+                }
+            }
+        }
+
+        /**
+         * Returns the (Settings -> Settings) transform for a given key/value pair, plus a
+         * flag for whether a CameraX rebind is needed afterwards. Returns null on unknown
+         * key or invalid value so the caller can surface a 503 to the browser.
+         */
+        private fun updaterFor(
+            key: String, value: String, streaming: Boolean,
+        ): Pair<(Settings) -> Settings, Boolean>? {
+            val b = value.equals("true", ignoreCase = true) ||
+                    value.equals("1", ignoreCase = true) ||
+                    value.equals("on", ignoreCase = true)
+            val v = value.lowercase()
+            return when (key) {
+                "lens" -> {
+                    val lens = when (v) { "back" -> dev.lenscast.prefs.Lens.BACK
+                                          "front" -> dev.lenscast.prefs.Lens.FRONT
+                                          else -> return null }
+                    Pair({ it.copy(lens = lens) }, true)
+                }
+                "mirror"        -> Pair({ it.copy(mirror = b) }, false)
+                "continuousAf"  -> Pair({ it.copy(continuousAf = b) }, true)
+                "exposureEv"    -> {
+                    val ev = value.toIntOrNull() ?: return null
+                    Pair({ it.copy(exposureEv = ev) }, false)
+                }
+                "whiteBalance" -> {
+                    val wb = dev.lenscast.prefs.WhiteBalance.entries
+                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    Pair({ it.copy(whiteBalance = wb) }, true)
+                }
+                "antiBanding" -> {
+                    val ab = dev.lenscast.prefs.AntiBanding.entries
+                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    Pair({ it.copy(antiBanding = ab) }, true)
+                }
+                "effect" -> {
+                    val e = dev.lenscast.prefs.CameraEffect.entries
+                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    Pair({ it.copy(effect = e) }, true)
+                }
+                "sceneMode" -> {
+                    val sm = dev.lenscast.prefs.SceneMode.entries
+                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    Pair({ it.copy(sceneMode = sm) }, true)
+                }
+                "manualFocus" -> Pair({ it.copy(manualFocus = b) }, true)
+                "manualFocusCentidiopters" -> {
+                    val cd = value.toIntOrNull()?.coerceIn(0, 1000) ?: return null
+                    Pair({ it.copy(manualFocusCentidiopters = cd) }, true)
+                }
+                "httpsEnabled" -> {
+                    if (streaming) return null
+                    Pair({ it.copy(httpsEnabled = b) }, false)
+                }
+                "manualExposure" -> Pair({ it.copy(manualExposure = b) }, true)
+                "iso" -> {
+                    val n = value.toIntOrNull() ?: return null
+                    Pair({ it.copy(iso = n) }, true)
+                }
+                "shutterUs" -> {
+                    val n = value.toLongOrNull() ?: return null
+                    Pair({ it.copy(shutterUs = n) }, true)
+                }
+                "audioEnabled" -> {
+                    if (streaming) return null
+                    Pair({ it.copy(audioEnabled = b) }, false)
+                }
+                "micSource" -> {
+                    if (streaming) return null
+                    val src = dev.lenscast.prefs.MicSource.entries
+                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    Pair({ it.copy(micSource = src) }, false)
+                }
+                "audioGainDb" -> {
+                    val g = value.toIntOrNull()?.coerceIn(-24, 24) ?: return null
+                    Pair({ it.copy(audioGainDb = g) }, false)
+                }
+                "noiseSuppress" -> {
+                    if (streaming) return null
+                    Pair({ it.copy(noiseSuppress = b) }, false)
+                }
+                "echoCancel" -> {
+                    if (streaming) return null
+                    Pair({ it.copy(echoCancel = b) }, false)
+                }
+                "jpegQuality" -> {
+                    val q = value.toIntOrNull()?.coerceIn(10, 95) ?: return null
+                    Pair({ it.copy(jpegQuality = q) }, false)
+                }
+                "rtspBitrateKbps" -> {
+                    if (streaming) return null
+                    val br = value.toIntOrNull()?.coerceIn(0, 50_000) ?: return null
+                    Pair({ it.copy(rtspBitrateKbps = br) }, false)
+                }
+                "keepScreenOn"   -> Pair({ it.copy(keepScreenOn = b) }, false)
+                "blankPreview"   -> Pair({ it.copy(blankPreview = b) }, false)
+                "rotationLock" -> {
+                    val rl = dev.lenscast.prefs.RotationLock.entries
+                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    Pair({ it.copy(rotationLock = rl) }, false)
+                }
+                "autoStart"      -> Pair({ it.copy(autoStart = b) }, false)
+                "startOnBoot"    -> Pair({ it.copy(startOnBoot = b) }, false)
+                "recordLocally" -> {
+                    if (streaming) return null
+                    Pair({ it.copy(recordLocally = b) }, false)
+                }
+                "mjpegPort" -> {
+                    if (streaming) return null
+                    val p = value.toIntOrNull()?.takeIf { it in 1024..65535 } ?: return null
+                    Pair({ it.copy(mjpegPort = p) }, false)
+                }
+                "rtspPort" -> {
+                    if (streaming) return null
+                    val p = value.toIntOrNull()?.takeIf { it in 1024..65535 } ?: return null
+                    Pair({ it.copy(rtspPort = p) }, false)
+                }
+                else -> null
+            }
+        }
+
+        override fun exportSettingsJson(): String = SettingsCodec.toJson(_status.value.settings)
+
+        override fun importSettingsJson(body: String): Boolean {
+            if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
+            val parsed = SettingsCodec.fromJson(body) ?: return false
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                repo.replace(parsed)
+                _status.value = _status.value.copy(settings = repo.flow.first())
+            }
+            return true
+        }
+
+        override fun startStream(): Boolean {
+            if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
+            // Reuse the QS tile's code path: a startForegroundService kicks off
+            // onStartCommand → ACTION_START_TILE → startStreaming with the saved settings.
+            // This keeps the foreground-service handshake the OS expects on API 31+.
+            val intent = Intent(this@StreamingService, StreamingService::class.java)
+                .setAction(ACTION_START_TILE)
+            androidx.core.content.ContextCompat.startForegroundService(this@StreamingService, intent)
+            return true
+        }
+        override fun statusJson(): String {
+            val s = _status.value.settings
+            val st = _status.value.state.name.lowercase()
+            val lensLabel = if (s.lens == dev.lenscast.prefs.Lens.BACK) "back" else "front"
+            val protoLabel = if (s.protocol == Protocol.MJPEG) "mjpeg" else "rtsp"
+            val res = CameraCapabilities.supportedResolutions(this@StreamingService, s.lens)
+                .joinToString(",") { "\"${it.label}\"" }
+            val fps = CameraCapabilities.supportedFps(
+                this@StreamingService, s.lens, s.resolution, s.protocol,
+            ).joinToString(",")
+            fun lower(any: Any) = any.toString().lowercase()
+            // Hand-rolled JSON — values are well-known primitives, no escaping needed.
+            return "{" +
+                """"state":"$st","protocol":"$protoLabel","lens":"$lensLabel",""" +
+                """"torch":${torchIsOn()},""" +
+                """"resolution":"${s.resolution.label}",""" +
+                """"availableResolutions":[$res],"availableFps":[$fps],""" +
+                """"fps":${framesPerSecondNow()},"targetFps":${s.fps.value},""" +
+                """"clients":${connectedClientCount()},"audioPeakDbfs":${audioPeakDbfs()},""" +
+                // image controls
+                """"mirror":${s.mirror},"continuousAf":${s.continuousAf},""" +
+                """"zoom":${currentZoomRatio()},"ev":${s.exposureEv},""" +
+                """"whiteBalance":"${lower(s.whiteBalance)}",""" +
+                """"antiBanding":"${lower(s.antiBanding)}",""" +
+                """"effect":"${lower(s.effect)}",""" +
+                """"sceneMode":"${lower(s.sceneMode)}",""" +
+                """"manualFocus":${s.manualFocus},""" +
+                """"manualFocusCentidiopters":${s.manualFocusCentidiopters},""" +
+                """"manualExposure":${s.manualExposure},"iso":${s.iso},""" +
+                """"shutterUs":${s.shutterUs},""" +
+                """"httpsEnabled":${s.httpsEnabled},""" +
+                """"tlsFingerprint":"${TlsManager.fingerprintSha256() ?: ""}",""" +
+                """"supportsManualSensor":${CameraCapabilities.supportsManualSensor(this@StreamingService, s.lens)},""" +
+                """"isoRange":${CameraCapabilities.isoRange(this@StreamingService, s.lens)?.let { "[${it.lower},${it.upper}]" } ?: "null"},""" +
+                """"shutterRangeUs":${CameraCapabilities.exposureTimeRangeNs(this@StreamingService, s.lens)?.let { "[${it.lower / 1000L},${it.upper / 1000L}]" } ?: "null"},""" +
+                // audio
+                """"audioEnabled":${s.audioEnabled},""" +
+                """"micSource":"${lower(s.micSource)}",""" +
+                """"audioGainDb":${s.audioGainDb},""" +
+                """"noiseSuppress":${s.noiseSuppress},""" +
+                """"echoCancel":${s.echoCancel},""" +
+                // stream
+                """"jpegQuality":${s.jpegQuality},""" +
+                """"rtspBitrateKbps":${s.rtspBitrateKbps},""" +
+                // UX
+                """"keepScreenOn":${s.keepScreenOn},""" +
+                """"blankPreview":${s.blankPreview},""" +
+                """"rotationLock":"${lower(s.rotationLock)}",""" +
+                // automation
+                """"autoStart":${s.autoStart},""" +
+                """"startOnBoot":${s.startOnBoot},""" +
+                """"recordLocally":${s.recordLocally},""" +
+                // ports
+                """"mjpegPort":${s.mjpegPort},"rtspPort":${s.rtspPort}""" +
+            "}"
+        }
+    }
+
+    /**
+     * Rebind the CameraX preview-only session for the MJPEG path after a settings change
+     * that affects the camera (resolution, fps, AWB/AF/anti-banding/effect/scene). RTSP
+     * mode owns Camera2 directly and won't react to this — that's deliberate; rebinding
+     * mid-RTSP-stream tears down the encoder Surface.
+     */
+    private suspend fun rebindCameraFor(s: Settings) {
+        if (_status.value.state == State.STREAMING && _status.value.activeProtocol == Protocol.RTSP) return
+        bindCameraIfNeeded(
+            s.lens, s.resolution, s.fps.value, s.jpegQuality,
+            mirror = s.mirror,
+            whiteBalance = s.whiteBalance,
+            antiBanding = s.antiBanding,
+            continuousAf = s.continuousAf,
+            exposureEv = s.exposureEv,
+            effect = s.effect,
+            sceneMode = s.sceneMode,
+            manualFocus = s.manualFocus,
+            manualFocusCentidiopters = s.manualFocusCentidiopters,
+            manualExposure = s.manualExposure,
+            iso = s.iso,
+            shutterUs = s.shutterUs,
+        )
+    }
+
+    @Volatile private var lastFpsCount: Long = 0
+    @Volatile private var lastFpsT: Long = System.currentTimeMillis()
+
+    /** Crude rolling FPS for the web /status endpoint — sample-rate aware over ≥500 ms. */
+    private fun framesPerSecondNow(): Int {
+        val now = System.currentTimeMillis()
+        val dt = (now - lastFpsT)
+        if (dt < 500) return 0
+        val count = framesProducedNow()
+        val fps = ((count - lastFpsCount) * 1000.0 / dt).toInt()
+        lastFpsCount = count
+        lastFpsT = now
+        return fps
     }
 
     private suspend fun startRtsp(settings: Settings) {
@@ -192,6 +737,11 @@ class StreamingService : LifecycleService() {
                 audioEnabled = settings.audioEnabled,
                 port = settings.rtspPort,
                 deviceRotationDegrees = rotationDegrees,
+                micSource = settings.micSource,
+                audioGainDb = settings.audioGainDb,
+                noiseSuppress = settings.noiseSuppress,
+                echoCancel = settings.echoCancel,
+                recordLocally = settings.recordLocally,
             ),
             previewSurface = null,
         )
@@ -244,10 +794,19 @@ class StreamingService : LifecycleService() {
         antiBanding: AntiBanding = AntiBanding.AUTO,
         continuousAf: Boolean = true,
         exposureEv: Int = 0,
+        effect: CameraEffect = CameraEffect.NONE,
+        sceneMode: SceneMode = SceneMode.DISABLED,
+        manualFocus: Boolean = false,
+        manualFocusCentidiopters: Int = 0,
+        manualExposure: Boolean = false,
+        iso: Int = 100,
+        shutterUs: Long = 16_666L,
     ) {
         val key = BindKey(
             lens, resolution.width, resolution.height, fps,
             whiteBalance, antiBanding, continuousAf,
+            effect, sceneMode, manualFocus, manualFocusCentidiopters,
+            manualExposure, iso, shutterUs,
         )
         if (key == previewBoundKey && cameraController != null) {
             cameraController?.jpegQuality = jpegQuality
@@ -270,6 +829,13 @@ class StreamingService : LifecycleService() {
             antiBanding = antiBanding,
             continuousAf = continuousAf,
             exposureEv = exposureEv,
+            effect = effect,
+            sceneMode = sceneMode,
+            manualFocus = manualFocus,
+            manualFocusDiopters = manualFocusCentidiopters / 100f,
+            manualExposure = manualExposure,
+            iso = iso,
+            shutterUs = shutterUs,
         )
         previewBoundKey = key
     }
@@ -345,6 +911,14 @@ class StreamingService : LifecycleService() {
     }
 
     fun setExposureEv(ev: Int) { cameraController?.applyExposureEv(ev) }
+    fun setAudioGainDb(db: Int) { rtspManager?.setAudioGainDb(db) }
+    /** Last-buffer peak in dBFS, clamped to -90..0. `-90` when no audio path is active. */
+    fun audioPeakDbfs(): Float = mjpegAudioCapture?.lastPeakDbfs()
+        ?: rtspManager?.audioPeakDbfs()
+        ?: -90f
+    /** URI of the most recently finalised MP4 recording, or null if none. */
+    fun lastRecordingUri(): android.net.Uri? = _lastRecordingUri
+    @Volatile private var _lastRecordingUri: android.net.Uri? = null
 
     /**
      * Save the most recently broadcast JPEG to MediaStore under
@@ -382,7 +956,16 @@ class StreamingService : LifecycleService() {
     fun stopStreaming() {
         try { mjpegServer?.stop() } catch (_: Throwable) {}
         mjpegServer = null
+        try { mjpegAudioCapture?.stop() } catch (_: Throwable) {}
+        mjpegAudioCapture = null
+        mjpegAudioBroadcaster = null
+        // Grab the recording URI before nulling the manager so the activity can surface
+        // a Toast linking to it after stopStreaming returns.
+        _lastRecordingUri = rtspManager?.lastRecordingUri()
         try { rtspManager?.stop() } catch (_: Throwable) {}
+        // rtspManager.stop() finalises the muxer; re-read so we surface the saved URI
+        // (lastRecordingUri is only set after stop()).
+        _lastRecordingUri = rtspManager?.lastRecordingUri() ?: _lastRecordingUri
         rtspManager = null
         stopNsd()
         _lastRtspPlan = null
@@ -402,6 +985,8 @@ class StreamingService : LifecycleService() {
 
     override fun onDestroy() {
         stopStreaming()
+        try { webControlServer?.stop() } catch (_: Throwable) {}
+        webControlServer = null
         try { cameraController?.shutdown() } catch (_: Throwable) {}
         cameraController = null
         super.onDestroy()
@@ -433,7 +1018,7 @@ class StreamingService : LifecycleService() {
             .build()
 
         val baseType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-        val type = if (settings.protocol == Protocol.RTSP && settings.audioEnabled)
+        val type = if (settings.audioEnabled)
             baseType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         else baseType
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

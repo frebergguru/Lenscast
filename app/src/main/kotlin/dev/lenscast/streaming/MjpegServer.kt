@@ -18,6 +18,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
+import javax.net.ssl.SSLContext
 
 /**
  * Minimal MJPEG-over-HTTP server.
@@ -30,12 +31,59 @@ import java.net.SocketException
  * Each client gets its own coroutine that reads the latest frame from [broadcaster] on a
  * configurable cadence. Slow clients drop frames automatically.
  */
+/**
+ * Bridge that lets [MjpegServer]'s control endpoints reach back into the running app
+ * without taking a direct dependency on `StreamingService` (which would create a circular
+ * import). The service supplies one of these when starting the MJPEG path.
+ */
+interface MjpegControl {
+    fun lensIsBack(): Boolean
+    fun torchIsOn(): Boolean
+    fun toggleTorch()
+    fun switchLens()
+    fun snapshot(): Boolean
+    /** Returns false if a stream is already running or if the service can't start one. */
+    fun startStream(): Boolean
+    fun stopStream()
+    fun zoomBy(factor: Float)
+    fun nudgeExposure(delta: Int)
+    fun toggleMirror()
+    fun toggleContinuousAf()
+    fun setJpegQuality(value: Int)
+    fun jpegQuality(): Int
+    /** Apply a resolution by label ("720p", "1080p", ...). Returns false if unknown. */
+    fun setResolutionLabel(label: String): Boolean
+    /** Apply a target FPS by value. Returns false if not in [Fps.entries]. */
+    fun setFpsValue(value: Int): Boolean
+    /** Switch the saved protocol ("mjpeg" or "rtsp"); clamps FPS to the new path's range. */
+    fun setProtocol(value: String): Boolean
+    /**
+     * Update an arbitrary Settings field by name. Keys mirror the snake-case form used in
+     * Settings UI; values are stringly-typed (bool: "true"/"false", enum: lowercase name,
+     * int: decimal). Returns false on unknown key / parse failure / disallowed change
+     * (e.g. ports while streaming). Implementation lives in StreamingService where it
+     * can call into SettingsRepository + rebind the camera.
+     */
+    fun updateSetting(key: String, value: String): Boolean
+    /** Single-line JSON for the browser to poll. Keys match the data-act button names. */
+    fun statusJson(): String
+    /** Pretty JSON dump of every Settings field, suitable for export. */
+    fun exportSettingsJson(): String
+    /** Replace the saved settings from a JSON blob. Returns false on parse failure or
+     *  when the swap is not allowed mid-stream. */
+    fun importSettingsJson(body: String): Boolean
+}
+
 class MjpegServer(
     private val broadcaster: FrameBroadcaster,
     private val port: Int,
     private val targetFps: Int,
     /** Optional HTTP Basic auth passcode. Empty = open. Username fixed to `lenscast`. */
     private val password: String = "",
+    /** Non-null when MJPEG-path audio is also being streamed. Drives the `/audio` endpoint. */
+    private val audioBroadcaster: AudioBroadcaster? = null,
+    /** When non-null, the server serves HTTPS instead of HTTP. */
+    private val sslContext: SSLContext? = null,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var server: ServerSocket? = null
@@ -47,13 +95,23 @@ class MjpegServer(
         running = true
         acceptJob = scope.launch {
             try {
-                val s = ServerSocket()
-                s.reuseAddress = true
-                s.bind(InetSocketAddress(port))
+                val s = if (sslContext != null) {
+                    sslContext.serverSocketFactory.createServerSocket().also {
+                        it.reuseAddress = true
+                        it.bind(InetSocketAddress(port))
+                    }
+                } else {
+                    ServerSocket().also {
+                        it.reuseAddress = true
+                        it.bind(InetSocketAddress(port))
+                    }
+                }
                 server = s
-                Log.i(TAG, "MJPEG server listening on 0.0.0.0:$port")
+                val scheme = if (sslContext != null) "https" else "http"
+                Log.i(TAG, "MJPEG $scheme server listening on 0.0.0.0:$port")
                 while (running && isActive) {
                     val client = try { s.accept() } catch (e: IOException) { break }
+                    // TLS sockets need the TCP_NODELAY before the handshake.
                     client.tcpNoDelay = true
                     client.soTimeout = 5_000
                     launch { handle(client) }
@@ -74,7 +132,10 @@ class MjpegServer(
     }
 
     private suspend fun handle(socket: Socket) = withContext(Dispatchers.IO) {
-        broadcaster.onClientConnected()
+        // Count this connection as a "client" only if it ends up consuming the MJPEG
+        // stream. Control / status / landing / snapshot are short-lived; counting them
+        // would make /status itself appear as a phantom client on every 1 Hz poll.
+        var countedAsClient = false
         try {
             val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
             val requestLine = reader.readLine() ?: return@withContext
@@ -94,9 +155,21 @@ class MjpegServer(
                 return@withContext
             }
             when {
-                path.startsWith("/video") -> writeMjpegStream(out)
+                path.startsWith("/video") -> {
+                    countedAsClient = true
+                    broadcaster.onClientConnected()
+                    writeMjpegStream(out)
+                }
+                path.startsWith("/audio") -> {
+                    val ab = audioBroadcaster
+                    if (ab == null) writeAudioNotAvailable(out)
+                    else {
+                        ab.onClientConnected()
+                        try { writeAudioStream(out, ab) } finally { ab.onClientDisconnected() }
+                    }
+                }
                 path.startsWith("/shot")  -> writeSingleShot(out)
-                else                       -> writeLanding(out)
+                else -> writeSimpleLanding(out)
             }
         } catch (_: SocketException) {
             // Client disconnected — normal.
@@ -104,7 +177,7 @@ class MjpegServer(
             Log.w(TAG, "Client handler error: ${t.message}")
         } finally {
             try { socket.close() } catch (_: Throwable) {}
-            broadcaster.onClientDisconnected()
+            if (countedAsClient) broadcaster.onClientDisconnected()
         }
     }
 
@@ -194,9 +267,124 @@ class MjpegServer(
         out.flush()
     }
 
-    private fun writeLanding(out: OutputStream) {
-        out.write(LANDING_RESPONSE)
-        out.flush()
+    /**
+     * Stream PCM-16LE wrapped in a WAV container. The RIFF / data chunk sizes are set to
+     * `0xFFFFFFFF` so receivers treat the response as an open-ended live stream rather
+     * than trying to seek to a finite end — this is the standard "streaming WAV" trick.
+     *
+     * Why not AAC: codec lookahead plus receiver-side AAC buffering produced multi-hundred
+     * millisecond lag. PCM has no codec stage and players (browsers' `<audio>`, VLC, ffplay)
+     * treat WAV as low-buffer live audio. 44.1 kHz mono is ~88 KB/s — trivial overhead
+     * next to the MJPEG video.
+     */
+    private suspend fun writeAudioStream(out: OutputStream, ab: AudioBroadcaster) {
+        val sampleRate = ab.sampleRate
+        val channels = ab.channels
+        val header = ("HTTP/1.0 200 OK\r\n" +
+            "Server: Lenscast\r\n" +
+            "Cache-Control: no-cache, no-store\r\n" +
+            "Connection: close\r\n" +
+            "Content-Type: audio/wav\r\n\r\n").toByteArray(Charsets.US_ASCII)
+        val wavHeader = makeStreamingWavHeader(sampleRate, channels)
+        try {
+            out.write(header)
+            out.write(wavHeader)
+            out.flush()
+        } catch (_: IOException) { return }
+
+        val ch = ab.subscribe()
+        try {
+            while (running) {
+                val chunk = ch.receiveCatching().getOrNull() ?: return
+                try {
+                    out.write(chunk)
+                    out.flush()
+                } catch (_: IOException) { return }
+            }
+        } finally {
+            ab.unsubscribe(ch)
+        }
+    }
+
+    /**
+     * 44-byte WAV header for 16-bit PCM with claimed-infinite chunk sizes. Bits per
+     * sample fixed at 16; sample rate and channels parameterised. Players that respect
+     * the `0xFFFFFFFF` length sentinel keep reading until the socket closes.
+     */
+    private fun makeStreamingWavHeader(sampleRate: Int, channels: Int): ByteArray {
+        val bitsPerSample = 16
+        val byteRate = sampleRate * channels * bitsPerSample / 8
+        val blockAlign = channels * bitsPerSample / 8
+        val h = ByteArray(44)
+        // RIFF chunk
+        h[0]='R'.code.toByte();   h[1]='I'.code.toByte();   h[2]='F'.code.toByte();   h[3]='F'.code.toByte()
+        putI32(h, 4, -1)           // size sentinel
+        h[8]='W'.code.toByte();   h[9]='A'.code.toByte();   h[10]='V'.code.toByte();  h[11]='E'.code.toByte()
+        // fmt sub-chunk
+        h[12]='f'.code.toByte();  h[13]='m'.code.toByte();  h[14]='t'.code.toByte();  h[15]=' '.code.toByte()
+        putI32(h, 16, 16)          // PCM fmt chunk size
+        putI16(h, 20, 1)           // audio format = PCM
+        putI16(h, 22, channels)
+        putI32(h, 24, sampleRate)
+        putI32(h, 28, byteRate)
+        putI16(h, 32, blockAlign)
+        putI16(h, 34, bitsPerSample)
+        // data sub-chunk
+        h[36]='d'.code.toByte();  h[37]='a'.code.toByte();  h[38]='t'.code.toByte();  h[39]='a'.code.toByte()
+        putI32(h, 40, -1)          // size sentinel
+        return h
+    }
+
+    private fun putI16(h: ByteArray, off: Int, v: Int) {
+        h[off]     = (v and 0xFF).toByte()
+        h[off + 1] = ((v shr 8) and 0xFF).toByte()
+    }
+    private fun putI32(h: ByteArray, off: Int, v: Int) {
+        h[off]     = (v and 0xFF).toByte()
+        h[off + 1] = ((v shr 8) and 0xFF).toByte()
+        h[off + 2] = ((v shr 16) and 0xFF).toByte()
+        h[off + 3] = ((v shr 24) and 0xFF).toByte()
+    }
+
+    private fun writeAudioNotAvailable(out: OutputStream) {
+        val body = "Audio is disabled. Enable it in Settings.".toByteArray(Charsets.US_ASCII)
+        val header = ("HTTP/1.0 503 Service Unavailable\r\n" +
+            "Content-Type: text/plain\r\n" +
+            "Content-Length: ${body.size}\r\n" +
+            "Connection: close\r\n\r\n").toByteArray(Charsets.US_ASCII)
+        try { out.write(header); out.write(body); out.flush() } catch (_: IOException) {}
+    }
+
+    /**
+     * Lightweight landing page for the MJPEG port. The rich control panel lives on the
+     * separate [WebControlServer] port — this one is just the video / audio / snapshot
+     * endpoints. Direct visitors get a one-line pointer and an embedded preview.
+     */
+    private fun writeSimpleLanding(out: OutputStream) {
+        val html = """
+            <!doctype html>
+            <html><head><title>Lenscast</title>
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <style>
+              body{background:#14121c;color:#eee;font-family:system-ui,sans-serif;margin:0;padding:24px;text-align:center}
+              img{max-width:100%;border-radius:12px;box-shadow:0 8px 32px rgba(120,73,242,0.3)}
+              code{background:#262335;padding:2px 8px;border-radius:6px}
+            </style></head>
+            <body>
+              <h1>Lenscast — MJPEG endpoint</h1>
+              <p><code>/video</code> · <code>/shot.jpg</code> · <code>/audio</code> (when enabled)</p>
+              <img src="/video" alt="Live preview">
+            </body></html>
+        """.trimIndent().toByteArray(Charsets.UTF_8)
+        val header = ("HTTP/1.0 200 OK\r\n" +
+            "Content-Type: text/html; charset=utf-8\r\n" +
+            "Cache-Control: no-cache\r\n" +
+            "Content-Length: ${html.size}\r\n\r\n").toByteArray(Charsets.US_ASCII)
+        try {
+            out.write(header)
+            out.write(html)
+            out.flush()
+        } catch (_: IOException) {}
     }
 
     companion object {
@@ -228,27 +416,5 @@ class MjpegServer(
             "Content-Length: 12\r\n\r\n"
         ).toByteArray(Charsets.US_ASCII)
         private val NO_FRAME_BODY = "No frame yet".toByteArray(Charsets.US_ASCII)
-
-        private val LANDING_RESPONSE: ByteArray = run {
-            val html = """
-                <!doctype html>
-                <html><head><title>Lenscast</title>
-                <style>
-                  body{background:#14121c;color:#eee;font-family:system-ui,sans-serif;margin:0;padding:24px;text-align:center}
-                  h1{font-weight:600;margin:0 0 12px}
-                  img{max-width:100%;border-radius:12px;box-shadow:0 8px 32px rgba(120,73,242,0.3)}
-                  code{background:#262335;padding:2px 8px;border-radius:6px}
-                </style></head>
-                <body>
-                  <h1>Lenscast</h1>
-                  <p>MJPEG stream at <code>/video</code> · snapshot at <code>/shot.jpg</code></p>
-                  <img src="/video" alt="Live preview">
-                </body></html>
-            """.trimIndent().toByteArray()
-            val header = ("HTTP/1.0 200 OK\r\n" +
-                "Content-Type: text/html; charset=utf-8\r\n" +
-                "Content-Length: ${html.size}\r\n\r\n").toByteArray(Charsets.US_ASCII)
-            header + html
-        }
     }
 }

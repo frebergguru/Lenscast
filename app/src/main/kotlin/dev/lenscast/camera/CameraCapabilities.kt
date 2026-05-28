@@ -139,6 +139,39 @@ object CameraCapabilities {
         return null
     }
 
+    /** ISO range the sensor advertises, or null if unsupported / camera missing. */
+    fun isoRange(context: Context, lens: Lens): Range<Int>? =
+        characteristic(context, lens) { it.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE) }
+
+    /** Exposure time range in nanoseconds, or null if unsupported. */
+    fun exposureTimeRangeNs(context: Context, lens: Lens): Range<Long>? =
+        characteristic(context, lens) { it.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE) }
+
+    /**
+     * True when this lens declares the MANUAL_SENSOR capability — that's the prerequisite
+     * for `CONTROL_AE_MODE = OFF` + `SENSOR_SENSITIVITY` + `SENSOR_EXPOSURE_TIME`. Most
+     * Pixels and high-end Samsung / OnePlus phones do; budget devices often don't.
+     */
+    fun supportsManualSensor(context: Context, lens: Lens): Boolean =
+        characteristic(context, lens) { ch ->
+            val caps = ch.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: return@characteristic false
+            caps.any { it == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR }
+        } ?: false
+
+    private inline fun <T> characteristic(context: Context, lens: Lens, read: (CameraCharacteristics) -> T?): T? {
+        val cm = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return null
+        val wantedFacing = when (lens) {
+            Lens.BACK  -> CameraCharacteristics.LENS_FACING_BACK
+            Lens.FRONT -> CameraCharacteristics.LENS_FACING_FRONT
+        }
+        for (id in cm.cameraIdList) {
+            val ch = cm.getCameraCharacteristics(id)
+            if (ch.get(CameraCharacteristics.LENS_FACING) != wantedFacing) continue
+            return read(ch)
+        }
+        return null
+    }
+
     private fun lensHasAeRangeContaining(context: Context, lens: Lens, fps: Int): Boolean {
         val cm = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return false
         val wantedFacing = when (lens) {

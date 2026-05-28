@@ -13,22 +13,31 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
 - [x] **Exposure compensation slider** — `CameraControl.setExposureCompensationIndex`,
       clamped to `CameraInfo.exposureState.exposureCompensationRange`. Settings sheet,
       MJPEG path.
-- [ ] **ISO / sensor sensitivity lock** — Camera2 `SENSOR_SENSITIVITY` (requires
-      `CONTROL_AE_MODE = OFF`). MJPEG path needs a Camera2 interop bridge or a switch
-      to direct Camera2; RTSP path already owns Camera2.
-- [ ] **Manual shutter speed** — `SENSOR_EXPOSURE_TIME`, same AE_OFF requirement.
+- [x] **ISO / sensor sensitivity lock** + **Manual shutter speed** — single
+      Settings toggle (`manualExposure`) plus ISO and shutter sliders, both
+      clamped to the lens's `SENSOR_INFO_SENSITIVITY_RANGE` /
+      `SENSOR_INFO_EXPOSURE_TIME_RANGE`. Wired via Camera2Interop in
+      `CameraController.applyCommonControls`: when on, `CONTROL_AE_MODE` goes
+      to OFF and `SENSOR_SENSITIVITY` / `SENSOR_EXPOSURE_TIME` take effect.
+      Phone Settings sheet hides the controls on lenses without the
+      `MANUAL_SENSOR` capability; web control panel mirrors the same logic
+      from `/status.supportsManualSensor` + `isoRange` / `shutterRangeUs`.
 - [x] **White-balance presets** — `CONTROL_AWB_MODE` via Camera2Interop. Settings
       sheet (Auto / Tungsten / Fluor / Daylight / Cloudy / Shade). MJPEG path.
-- [ ] **Manual focus distance** — `LENS_FOCUS_DISTANCE` with a slider (0 = infinity,
-      max from `LENS_INFO_MINIMUM_FOCUS_DISTANCE`). Toggle: AF / MF.
+- [x] **Manual focus distance** — Settings toggle plus a centidiopter slider
+      (0 = infinity). When enabled, `CONTROL_AF_MODE` switches to OFF and
+      `LENS_FOCUS_DISTANCE` (diopters) is set via Camera2Interop. MJPEG path.
 - [x] **Continuous-AF toggle** — `CONTROL_AF_MODE_CONTINUOUS_VIDEO` vs `_AUTO`.
       Settings sheet. MJPEG path.
-- [ ] **Scene modes** — night, sports, action. `CONTROL_SCENE_MODE` where supported.
+- [x] **Scene modes** — `CONTROL_SCENE_MODE` (Off / Action / Portrait / Landscape /
+      Night / Sports / Theatre / Fireworks / Beach / Snow / Sunset). Camera2 also
+      needs `CONTROL_MODE = USE_SCENE_MODE`. Settings sheet. MJPEG path.
 - [x] **Anti-banding** — `CONTROL_AE_ANTIBANDING_MODE` (Auto / 50 Hz / 60 Hz / Off).
       Settings sheet. MJPEG path.
-- [ ] **Effects / filters** — Droidcam Pro has mono, sepia, negative, etc. Camera2
-      `CONTROL_EFFECT_MODE`. Cheap to wire on the RTSP path; MJPEG needs a YUV-domain
-      pass or a switch to GPU.
+- [x] **Effects / filters** — `CONTROL_EFFECT_MODE` (None / Mono / Negative /
+      Sepia / Aqua / Solarize / Posterize / Blackboard / Whiteboard). Wired via
+      Camera2Interop so it applies to both preview and the streamed JPEGs without
+      a separate YUV-domain pass. MJPEG path.
 - [x] **Mirror / horizontal flip** — in-place NV21 row reverse inside `YuvToJpeg`,
       gated by a Settings toggle. MJPEG output.
 - [x] **Manual rotation lock** — Settings segmented row (Auto / Portrait /
@@ -41,46 +50,61 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
 
 ## Connectivity & transports
 
-- [ ] **USB transport over ADB forward** — Droidcam ships a desktop client that runs
-      `adb forward tcp:4747 tcp:4747` so the phone streams over USB without Wi-Fi.
-      Lenscast's MJPEG server already binds on all interfaces; what's missing is a
-      one-click PC-side helper or docs walking the user through `adb forward` for
-      both ports. The Linux `lenscast-virtualcam` helper could grow a `--usb` mode
-      that runs the forward automatically.
+- [x] **USB transport over ADB forward** — documented in
+      [Docs/USB.md](Docs/USB.md) (one-shot `adb forward` for both ports,
+      OBS/VLC URL forms, custom-port mapping, comparison vs Wi-Fi). The Linux
+      helper auto-mode is still open.
 - [x] **Stream password / basic auth** — HTTP Basic auth on the MJPEG endpoints
       (`/video`, `/shot.jpg`, `/`). Settings field for the passcode; username fixed
       to `lenscast`. RTSP DIGEST is a separate follow-up.
-- [ ] **HTTPS / RTSPS** — TLS for both protocols, even with a self-signed cert,
-      lets users on hostile networks stream without exposing credentials. Add a
-      "Generate self-signed cert" Settings action.
+- [x] **HTTPS (MJPEG + web control)** — Settings toggle. Self-signed RSA-2048
+      cert auto-generated via `AndroidKeyStore` the first time it's enabled
+      (no Bouncy Castle dep needed — Android synthesises the X.509 wrapper
+      when you create a key pair with a `setCertificateSubject(...)` spec).
+      `MjpegServer` and `WebControlServer` swap their accept-loop to use
+      `SSLContext.serverSocketFactory` when a context is provided.
+      Fingerprint surfaces in both the Settings sheet and the web control
+      page so the user can verify the cert hasn't been MITM-ed. RTSPS is
+      still open — most RTSP clients (OBS in particular) don't speak it.
 - [x] **Bonjour / mDNS advertisement** — `NsdAdvertiser` broadcasts `_http._tcp.`
       for MJPEG and `_rtsp._tcp.` for RTSP while the server is up.
-- [ ] **Multi-PC URL favourites** — Droidcam Pro remembers IPs the user has streamed
-      to before. Settings list of saved presets + a quick-pick on Start.
+- [x] **Multi-PC URL favourites** — reinterpreted as **named presets** since
+      Lenscast is the server (so there's no "PC IP" to remember). Save the
+      current protocol+resolution+fps+lens as a labelled preset; apply or
+      delete from the Settings sheet.
 
 ## Audio
 
-- [ ] **Microphone source picker** — Droidcam Pro lets the user choose between
-      camcorder mic, voice-recognition mic, and unprocessed. `MediaRecorder.AudioSource`
-      values (`CAMCORDER`, `MIC`, `VOICE_RECOGNITION`, `UNPROCESSED`).
-- [ ] **Live audio level meter** — small VU meter in the streaming card so users
-      know the mic is hot. Sample `AudioRecord` peaks on the existing audio path.
-- [ ] **Manual gain control** — software gain stage on the AAC encoder input. Cap
-      at +12 dB with a soft limiter.
-- [ ] **Audio over the MJPEG transport** — Droidcam Pro streams audio even on its
-      MJPEG-equivalent mode (separate WAV channel on a sibling port). Lenscast only
-      ships audio on RTSP today.
-- [ ] **Noise suppression / echo cancel toggle** — Android `NoiseSuppressor`,
-      `AcousticEchoCanceler` effects, attached to the `AudioRecord` session.
+- [x] **Microphone source picker** — Settings segmented row (Camcorder / Default
+      mic / Voice recog / Voice comm / Unprocessed) drives
+      `MediaRecorder.AudioSource` on the AacEncoder.
+- [x] **Live audio level meter** — AacEncoder publishes the per-buffer peak
+      amplitude as dBFS. MainScreen shows a colour-shifting bar (green → amber
+      → red at -3 dBFS) below the stat row while audio is on.
+- [x] **Manual gain control** — software gain stage in the captureLoop (-24..+24
+      dB) with hard clip. Live-updated via a @Volatile linear factor so the
+      slider re-applies without restarting the encoder.
+- [x] **Audio over the MJPEG transport** — `AudioBroadcaster` mirrors
+      `FrameBroadcaster` for AAC AUs. When MJPEG + audio is on,
+      `StreamingService.startMjpeg` spins up an `AacEncoder` and the
+      `MjpegServer` exposes an `/audio` endpoint that streams `audio/aac` with
+      synthesised ADTS headers (so ffmpeg / VLC / browser `<audio>` can decode
+      without out-of-band ASC). Runtime permission, foreground-service type
+      and Settings UI are no longer gated on RTSP.
+- [x] **Noise suppression / echo cancel toggle** — Settings toggles. Effects
+      attached to the AudioRecord session id when `isAvailable()` returns true;
+      released in `AacEncoder.stop`.
 
 ## Capture & sharing
 
 - [x] **Snapshot button → gallery** — overlay button next to torch; saves the latest
       MJPEG frame to `Pictures/Lenscast/` via MediaStore, with a Toast confirming.
-- [ ] **Burst snapshot** — Droidcam Pro can fire a sequence. Same plumbing as the
-      single-shot snapshot, plus a count selector.
-- [ ] **Local recording** — write the live H.264 + AAC stream to an MP4 in
-      `Movies/Lenscast/` while streaming. `MediaMuxer` fed from the same encoders.
+- [x] **Burst snapshot** — long-press the snapshot button. 5 shots at ~250 ms
+      intervals via `StreamingService.saveSnapshot`.
+- [x] **Local recording** — RTSP-only Settings toggle. `RecordingMuxer` taps the
+      existing H.264 + AAC encoder callbacks and feeds a `MediaMuxer` writing to
+      `Movies/Lenscast/Lenscast_<ts>.mp4` via MediaStore (IS_PENDING handshake
+      on Q+). Finalised when streaming stops; a Toast confirms the saved path.
 
 ## UX, background, system integration
 
@@ -88,15 +112,74 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
       `StreamingService.status`; tap toggles streaming using the last-saved settings.
 - [x] **Auto-start on app launch** — Settings toggle. Once-per-process flag in
       `MainScreen` so rotation doesn't re-trigger it.
-- [ ] **Start-on-boot** — `BOOT_COMPLETED` receiver that brings the foreground
-      service up. Document the battery-optimisation exemption it implies.
+- [x] **Start-on-boot** — `BootReceiver` listens for `BOOT_COMPLETED` and
+      `LOCKED_BOOT_COMPLETED`; if Settings.startOnBoot is true, hands off to the
+      service via `ACTION_START_TILE`. Settings sheet shows the
+      battery-optimisation caveat next to the toggle.
 - [x] **Battery-saver / blank-preview mode** — Settings toggle hides the
       on-screen preview while streaming; the analysis pipeline keeps publishing JPEGs.
-- [ ] **Picture-in-picture preview** — `PictureInPictureParams` so the user can
-      keep an eye on the framing while using another app.
-- [ ] **Web control page** — extend the `/` landing page to expose Start / Stop,
-      lens switch, torch, resolution from the browser. Already half-built since
-      `MjpegServer` serves a landing HTML.
+- [x] **Picture-in-picture preview** — `MainActivity.onUserLeaveHint` auto-enters
+      PiP when the user presses Home while streaming; `MainScreen` collapses to
+      just the preview when `inPictureInPicture` is true. Aspect ratio follows
+      the selected resolution.
+- [x] **Web control page** — `/` now renders a control panel with Switch camera,
+      Toggle torch, Snapshot and Stop buttons that POST to `/control/*`
+      endpoints handled inside `MjpegServer`. The server reaches the service via
+      a small `MjpegControl` bridge.
+- [ ] **Web control page — extended surface.** The current panel covers the four
+      most-common toggles, but the same `MjpegControl` bridge can grow to expose
+      most of the Settings sheet from the browser:
+      - **Resolution / FPS pickers** (`<select>` + apply button — rebinds the camera).
+      - **JPEG quality slider** (live, no rebind needed).
+      - **White-balance / effect / scene / anti-flicker pickers** (rebind keyed).
+      - **Manual-focus toggle + diopter slider**, **continuous-AF toggle**,
+        **mirror toggle** — partially landed (mirror / AF / continuous-AF, see
+        below); rest still open.
+      - **RTSP bitrate slider** for the RTSP path (no rebind, MediaCodec
+        `setParameters` once we wire it).
+      - **Audio gain slider** + mic-source picker + NS/AEC toggles (RTSP only).
+      - **Multi-client kick** — list active client IPs and a "drop this one"
+        button (server already tracks per-socket sessions).
+      - **Settings export / import** as a JSON blob the user can paste between
+        devices.
+      Several of these are already wired up in the second pass:
+- [x] **Web control — settings export / import.** `GET /export` downloads a
+      JSON blob; the page has a textarea + Import button that `POST /import`s
+      the pasted JSON back. Phone Settings sheet has Export / Import buttons
+      using the Storage Access Framework. Codec is hand-rolled with `org.json`,
+      versioned, and tolerant of missing fields so older exports still apply.
+- [x] **Web control — runtime knobs:** zoom in/out, EV ±, mirror toggle,
+      continuous-AF toggle, live stats refresh (fps / clients / audio peak)
+      polled every second via a new `/status` JSON endpoint.
+- [x] **Web control — JPEG quality slider:** `/control/quality?v=NN` updates
+      `Settings.jpegQuality` and `CameraController.jpegQuality` live; debounced
+      150 ms on the slider input so the user doesn't fire a POST per frame.
+- [x] **Web control — independent panel for both protocols.** New
+      `WebControlServer` on its own port (Settings → `webControlPort`, default
+      8080; toggle to disable). Runs the entire time the service is alive — the
+      user can hit `http://<phone>:8080/` to start a stream, stop, and tune
+      from any LAN device. Page is data-driven from `/status`: idle shows a
+      Start button, MJPEG live shows the embedded preview + audio/snapshot
+      links + JPEG quality slider, RTSP live shows the `rtsp://` URL hint.
+      All control buttons (lens / torch / mirror / continuous-AF / zoom / EV /
+      snapshot / stop) are available in either protocol where they make sense.
+- [x] **Web control — resolution + FPS pickers.** `/control/resolution?v=720p`
+      and `/control/fps?v=30`. Available options come from
+      `CameraCapabilities.supportedResolutions` / `supportedFps` in the
+      `/status` JSON, so the `<select>` always reflects what the active lens
+      can actually do.
+- [x] **Web control — protocol picker (idle).** Radio buttons on the idle
+      block POST `/control/protocol?v=mjpeg|rtsp` before the user hits Start.
+      FPS is clamped to the new path's range automatically.
+- [x] **Web control — full Settings parity.** Generic
+      `POST /control/setting?key=K&v=V` endpoint dispatched by a single
+      `updateSetting()` on `MjpegControl`. Page has a collapsible Settings
+      panel mirroring the app's Settings sheet (lens / image / audio /
+      stream / UX / automation / server ports). `/status` carries every
+      field; the 1 Hz refresh repopulates controls except the one currently
+      focused so the user's edits aren't clobbered mid-type. Streaming-only
+      restrictions (audio toggle, mic source, NS/AEC, ports, etc.) are
+      enforced server-side.
 - [x] **Encoder bitrate cap** — RTSP-only slider in Settings (0 kbps = use the
       resolution+fps heuristic).
 - [ ] **Light theme polish** — already in [Roadmap → Minor polish](Docs/Roadmap.md).
@@ -114,6 +197,12 @@ has the Linux v4l2loopback helper only.
 - [ ] **GUI for the Linux helper** — `lenscast-virtualcam` is CLI today. A small
       tray app (start/stop, pick device, pick stream URL) closes most of the gap
       with the Droidcam desktop UX.
+- [x] **Linux helper — audio + HTTPS.** `lenscast-virtualcam -a` creates a
+      PulseAudio null sink (`lenscast`) and runs a parallel ffmpeg pulling
+      `/audio` (PCM-16LE WAV) into it; apps pick "Monitor of Lenscast" as a
+      mic. `--insecure` passes `-tls_verify 0` to ffmpeg for self-signed
+      HTTPS URLs from Lenscast's built-in TLS toggle. Doctor checks for
+      `pactl`. README updated with both flags.
 
 ## Out of scope / not planned
 

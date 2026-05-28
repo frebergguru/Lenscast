@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
@@ -21,11 +22,17 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -35,12 +42,17 @@ import androidx.compose.ui.unit.dp
 import dev.lenscast.R
 import dev.lenscast.camera.CameraCapabilities
 import dev.lenscast.prefs.AntiBanding
+import dev.lenscast.prefs.CameraEffect
 import dev.lenscast.prefs.Fps
 import dev.lenscast.prefs.Lens
+import dev.lenscast.prefs.MicSource
+import dev.lenscast.prefs.Preset
 import dev.lenscast.prefs.Protocol
 import dev.lenscast.prefs.Resolution
 import dev.lenscast.prefs.RotationLock
+import dev.lenscast.prefs.SceneMode
 import dev.lenscast.prefs.Settings
+import dev.lenscast.prefs.SettingsCodec
 import dev.lenscast.prefs.WhiteBalance
 import dev.lenscast.system.SystemWebcam
 
@@ -260,6 +272,153 @@ fun SettingsSheet(
             )
 
             Spacer(Modifier.height(12.dp))
+            val manualSensorOk = remember(settings.lens) {
+                CameraCapabilities.supportsManualSensor(context, settings.lens)
+            }
+            ToggleRow(
+                title = stringResource(R.string.settings_manual_exposure),
+                checked = settings.manualExposure && manualSensorOk,
+                enabled = manualSensorOk,
+                onCheckedChange = { onChange(settings.copy(manualExposure = it)) },
+            )
+            if (!manualSensorOk) {
+                Text(
+                    text = stringResource(R.string.settings_manual_exposure_unavailable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
+                )
+            }
+            if (settings.manualExposure && manualSensorOk) {
+                val isoR = remember(settings.lens) {
+                    CameraCapabilities.isoRange(context, settings.lens)
+                }
+                val shutterR = remember(settings.lens) {
+                    CameraCapabilities.exposureTimeRangeNs(context, settings.lens)
+                }
+                if (isoR != null) {
+                    Text(stringResource(R.string.settings_iso), style = MaterialTheme.typography.bodyMedium)
+                    var iso by remember(settings.iso) { mutableStateOf(settings.iso.toFloat()) }
+                    Slider(
+                        value = iso.coerceIn(isoR.lower.toFloat(), isoR.upper.toFloat()),
+                        onValueChange = { iso = it },
+                        onValueChangeFinished = { onChange(settings.copy(iso = iso.toInt())) },
+                        valueRange = isoR.lower.toFloat()..isoR.upper.toFloat(),
+                    )
+                    Text(
+                        text = "${iso.toInt()} (${isoR.lower}..${isoR.upper})",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (shutterR != null) {
+                    val minUs = shutterR.lower / 1000L
+                    val maxUs = shutterR.upper / 1000L
+                    Spacer(Modifier.height(8.dp))
+                    Text(stringResource(R.string.settings_shutter), style = MaterialTheme.typography.bodyMedium)
+                    var shutter by remember(settings.shutterUs) { mutableStateOf(settings.shutterUs.toFloat()) }
+                    Slider(
+                        value = shutter.coerceIn(minUs.toFloat(), maxUs.toFloat()),
+                        onValueChange = { shutter = it },
+                        onValueChangeFinished = { onChange(settings.copy(shutterUs = shutter.toLong())) },
+                        valueRange = minUs.toFloat()..maxUs.toFloat(),
+                    )
+                    Text(
+                        text = "${shutter.toLong()} µs  (1/${(1_000_000L / shutter.toLong().coerceAtLeast(1L))}s)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            ToggleRow(
+                title = stringResource(R.string.settings_manual_focus),
+                checked = settings.manualFocus,
+                onCheckedChange = { onChange(settings.copy(manualFocus = it)) },
+            )
+            if (settings.manualFocus) {
+                Text(
+                    text = stringResource(R.string.settings_focus_distance),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                // 0..10 diopters covers every consumer-phone sensor I've seen
+                // (minimum focus distance reported as 10 = ~10cm). Camera2 clamps
+                // out-of-range values silently. Stored as centidiopters (0..1000).
+                var focus by remember(settings.manualFocusCentidiopters) {
+                    mutableStateOf(settings.manualFocusCentidiopters.toFloat())
+                }
+                Slider(
+                    value = focus,
+                    onValueChange = { focus = it },
+                    onValueChangeFinished = {
+                        onChange(settings.copy(manualFocusCentidiopters = focus.toInt()))
+                    },
+                    valueRange = 0f..1000f,
+                    steps = 19,
+                )
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = stringResource(R.string.settings_focus_infinity),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = stringResource(R.string.settings_focus_close),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+            SectionLabel(stringResource(R.string.settings_effect))
+            SegmentedRow(
+                options = CameraEffect.entries.toList(),
+                selected = settings.effect,
+                enabled = true,
+                labelOf = {
+                    when (it) {
+                        CameraEffect.NONE       -> stringResource(R.string.effect_none)
+                        CameraEffect.MONO       -> stringResource(R.string.effect_mono)
+                        CameraEffect.NEGATIVE   -> stringResource(R.string.effect_negative)
+                        CameraEffect.SEPIA      -> stringResource(R.string.effect_sepia)
+                        CameraEffect.AQUA       -> stringResource(R.string.effect_aqua)
+                        CameraEffect.SOLARIZE   -> stringResource(R.string.effect_solarize)
+                        CameraEffect.POSTERIZE  -> stringResource(R.string.effect_posterize)
+                        CameraEffect.BLACKBOARD -> stringResource(R.string.effect_blackboard)
+                        CameraEffect.WHITEBOARD -> stringResource(R.string.effect_whiteboard)
+                    }
+                },
+                onSelect = { onChange(settings.copy(effect = it)) },
+            )
+
+            Spacer(Modifier.height(12.dp))
+            SectionLabel(stringResource(R.string.settings_scene))
+            SegmentedRow(
+                options = SceneMode.entries.toList(),
+                selected = settings.sceneMode,
+                enabled = true,
+                labelOf = {
+                    when (it) {
+                        SceneMode.DISABLED  -> stringResource(R.string.scene_disabled)
+                        SceneMode.ACTION    -> stringResource(R.string.scene_action)
+                        SceneMode.PORTRAIT  -> stringResource(R.string.scene_portrait)
+                        SceneMode.LANDSCAPE -> stringResource(R.string.scene_landscape)
+                        SceneMode.NIGHT     -> stringResource(R.string.scene_night)
+                        SceneMode.SPORTS    -> stringResource(R.string.scene_sports)
+                        SceneMode.THEATRE   -> stringResource(R.string.scene_theatre)
+                        SceneMode.FIREWORKS -> stringResource(R.string.scene_fireworks)
+                        SceneMode.BEACH     -> stringResource(R.string.scene_beach)
+                        SceneMode.SNOW      -> stringResource(R.string.scene_snow)
+                        SceneMode.SUNSET    -> stringResource(R.string.scene_sunset)
+                    }
+                },
+                onSelect = { onChange(settings.copy(sceneMode = it)) },
+            )
+
+            Spacer(Modifier.height(12.dp))
             SectionLabel(stringResource(R.string.settings_antibanding))
             SegmentedRow(
                 options = AntiBanding.entries.toList(),
@@ -309,12 +468,67 @@ fun SettingsSheet(
 
             Spacer(Modifier.height(16.dp))
 
-            if (settings.protocol == Protocol.RTSP) {
+            // Audio is available on both transports. MJPEG exposes it via the /audio
+            // endpoint (AAC ADTS); RTSP carries it inside the RTSP session as the
+            // second track.
+            ToggleRow(
+                title = stringResource(R.string.settings_audio),
+                checked = settings.audioEnabled,
+                enabled = !streaming,
+                onCheckedChange = { onChange(settings.copy(audioEnabled = it)) },
+            )
+            if (settings.audioEnabled) {
+                Spacer(Modifier.height(8.dp))
+                SectionLabel(stringResource(R.string.settings_mic_source))
+                    SegmentedRow(
+                        options = MicSource.entries.toList(),
+                        selected = settings.micSource,
+                        enabled = !streaming,
+                        labelOf = {
+                            when (it) {
+                                MicSource.CAMCORDER           -> stringResource(R.string.mic_camcorder)
+                                MicSource.MIC                 -> stringResource(R.string.mic_mic)
+                                MicSource.VOICE_RECOGNITION   -> stringResource(R.string.mic_voice_recognition)
+                                MicSource.VOICE_COMMUNICATION -> stringResource(R.string.mic_voice_communication)
+                                MicSource.UNPROCESSED         -> stringResource(R.string.mic_unprocessed)
+                            }
+                        },
+                        onSelect = { onChange(settings.copy(micSource = it)) },
+                    )
+
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.settings_audio_gain),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    var gain by remember(settings.audioGainDb) { mutableStateOf(settings.audioGainDb.toFloat()) }
+                    Slider(
+                        value = gain,
+                        onValueChange = { gain = it },
+                        // Live forward to the encoder is safe (gainLinear is @Volatile);
+                        // also persists on slide-end so the value survives restarts.
+                        onValueChangeFinished = { onChange(settings.copy(audioGainDb = gain.toInt())) },
+                        valueRange = -24f..24f,
+                        steps = 23,
+                    )
+                    Text(
+                        text = stringResource(R.string.settings_audio_gain_summary, gain.toInt()),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
+                    Spacer(Modifier.height(8.dp))
+                    ToggleRow(
+                        title = stringResource(R.string.settings_noise_suppress),
+                        checked = settings.noiseSuppress,
+                        enabled = !streaming,
+                        onCheckedChange = { onChange(settings.copy(noiseSuppress = it)) },
+                    )
                 ToggleRow(
-                    title = stringResource(R.string.settings_audio),
-                    checked = settings.audioEnabled,
+                    title = stringResource(R.string.settings_echo_cancel),
+                    checked = settings.echoCancel,
                     enabled = !streaming,
-                    onCheckedChange = { onChange(settings.copy(audioEnabled = it)) },
+                    onCheckedChange = { onChange(settings.copy(echoCancel = it)) },
                 )
             }
 
@@ -351,6 +565,20 @@ fun SettingsSheet(
             }
 
             if (settings.protocol == Protocol.RTSP) {
+                ToggleRow(
+                    title = stringResource(R.string.settings_record_locally),
+                    checked = settings.recordLocally,
+                    enabled = !streaming,
+                    onCheckedChange = { onChange(settings.copy(recordLocally = it)) },
+                )
+                if (settings.recordLocally) {
+                    Text(
+                        text = stringResource(R.string.settings_record_locally_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = stringResource(R.string.settings_rtsp_bitrate),
@@ -395,6 +623,32 @@ fun SettingsSheet(
                 supportingText = { Text(stringResource(R.string.settings_password_hint)) },
                 modifier = Modifier.fillMaxWidth(),
             )
+            Spacer(Modifier.height(8.dp))
+            ToggleRow(
+                title = stringResource(R.string.settings_https),
+                checked = settings.httpsEnabled,
+                enabled = !streaming,
+                onCheckedChange = { onChange(settings.copy(httpsEnabled = it)) },
+            )
+            if (settings.httpsEnabled) {
+                val fingerprint = remember { dev.lenscast.net.TlsManager.fingerprintSha256() }
+                Text(
+                    text = stringResource(R.string.settings_https_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                if (fingerprint != null) {
+                    Text(
+                        text = fingerprint,
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
 
             Spacer(Modifier.height(16.dp))
             HorizontalDivider()
@@ -406,6 +660,43 @@ fun SettingsSheet(
                 checked = settings.autoStart,
                 onCheckedChange = { onChange(settings.copy(autoStart = it)) },
             )
+            ToggleRow(
+                title = stringResource(R.string.settings_start_on_boot),
+                checked = settings.startOnBoot,
+                onCheckedChange = { onChange(settings.copy(startOnBoot = it)) },
+            )
+            if (settings.startOnBoot) {
+                Text(
+                    text = stringResource(R.string.settings_start_on_boot_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
+            SectionLabel(stringResource(R.string.settings_web_control_section))
+            ToggleRow(
+                title = stringResource(R.string.settings_web_control_enabled),
+                checked = settings.webControlEnabled,
+                onCheckedChange = { onChange(settings.copy(webControlEnabled = it)) },
+            )
+            if (settings.webControlEnabled) {
+                PortField(
+                    label = stringResource(R.string.settings_web_control_port),
+                    port = settings.webControlPort,
+                    enabled = true,
+                    onPortChange = { onChange(settings.copy(webControlPort = it)) },
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+            PresetsSection(settings, streaming, onChange)
 
             if (SystemWebcam.isSupported(context)) {
                 Spacer(Modifier.height(16.dp))
@@ -423,6 +714,11 @@ fun SettingsSheet(
                     Text(stringResource(R.string.settings_system_webcam_open))
                 }
             }
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+            BackupSection(settings, streaming, onChange)
 
             // Read versionName at runtime from PackageManager so the footer always
             // matches whatever Gradle compiled — no risk of the string drifting from
@@ -510,6 +806,146 @@ private fun PortField(
         } else null,
         modifier = Modifier.fillMaxWidth(),
     )
+}
+
+@Composable
+private fun PresetsSection(
+    settings: Settings,
+    streaming: Boolean,
+    onChange: (Settings) -> Unit,
+) {
+    SectionLabel(stringResource(R.string.settings_presets_section))
+    var newName by remember { mutableStateOf("") }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(
+            value = newName,
+            onValueChange = { newName = it.take(40) },
+            label = { Text(stringResource(R.string.settings_preset_name_hint)) },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        OutlinedButton(
+            enabled = newName.isNotBlank() && !streaming,
+            onClick = {
+                val preset = Preset(
+                    name = newName.trim(),
+                    protocol = settings.protocol,
+                    resolution = settings.resolution,
+                    fps = settings.fps,
+                    lens = settings.lens,
+                )
+                onChange(settings.copy(presets = settings.presets + preset))
+                newName = ""
+            },
+        ) { Text(stringResource(R.string.settings_preset_save)) }
+    }
+    Spacer(Modifier.height(8.dp))
+    settings.presets.forEachIndexed { index, preset ->
+        val lensLabel = if (preset.lens == Lens.BACK) {
+            stringResource(R.string.settings_preset_lens_back)
+        } else {
+            stringResource(R.string.settings_preset_lens_front)
+        }
+        val protoLabel = if (preset.protocol == Protocol.MJPEG) "MJPEG" else "RTSP"
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(vertical = 4.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(preset.name, style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    text = stringResource(
+                        R.string.settings_preset_summary,
+                        protoLabel, preset.resolution.label, preset.fps.value, lensLabel,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            OutlinedButton(
+                enabled = !streaming,
+                onClick = {
+                    onChange(settings.copy(
+                        protocol = preset.protocol,
+                        resolution = preset.resolution,
+                        fps = preset.fps,
+                        lens = preset.lens,
+                    ))
+                },
+            ) { Text(stringResource(R.string.settings_preset_apply)) }
+            Spacer(Modifier.width(4.dp))
+            OutlinedButton(
+                onClick = {
+                    onChange(settings.copy(presets = settings.presets.toMutableList().also { it.removeAt(index) }))
+                },
+            ) { Text(stringResource(R.string.settings_preset_delete)) }
+        }
+    }
+}
+
+@Composable
+private fun BackupSection(
+    settings: Settings,
+    streaming: Boolean,
+    onChange: (Settings) -> Unit,
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val exporter = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json"),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                try {
+                    ctx.contentResolver.openOutputStream(uri)?.use {
+                        it.write(SettingsCodec.toJson(settings).toByteArray(Charsets.UTF_8))
+                    }
+                    true
+                } catch (_: Throwable) { false }
+            }
+            android.widget.Toast.makeText(
+                ctx,
+                ctx.getString(if (ok) R.string.settings_export_done else R.string.settings_import_failed),
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+    val importer = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val parsed = withContext(Dispatchers.IO) {
+                try {
+                    val text = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        ?.toString(Charsets.UTF_8)
+                    text?.let { SettingsCodec.fromJson(it) }
+                } catch (_: Throwable) { null }
+            }
+            if (parsed != null) {
+                onChange(parsed)
+                android.widget.Toast.makeText(ctx, ctx.getString(R.string.settings_import_done), android.widget.Toast.LENGTH_SHORT).show()
+            } else {
+                android.widget.Toast.makeText(ctx, ctx.getString(R.string.settings_import_failed), android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    SectionLabel(stringResource(R.string.settings_backup_section))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(
+            onClick = { exporter.launch("lenscast-settings.json") },
+            modifier = Modifier.weight(1f),
+        ) { Text(stringResource(R.string.settings_export)) }
+        Spacer(Modifier.width(8.dp))
+        OutlinedButton(
+            enabled = !streaming,
+            onClick = { importer.launch(arrayOf("application/json")) },
+            modifier = Modifier.weight(1f),
+        ) { Text(stringResource(R.string.settings_import)) }
+    }
 }
 
 @Composable

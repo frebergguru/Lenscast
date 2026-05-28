@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # lenscast-virtualcam — bridge a Lenscast MJPEG stream into a Linux v4l2 device,
 # so the phone shows up as a regular webcam in Zoom, Chrome, Discord, OBS, etc.
+# Optionally also creates a virtual mic from /audio so the phone is a webcam +
+# microphone combo.
 #
-# Wraps ffmpeg + v4l2loopback. No PC-side OBS required.
+# Wraps ffmpeg + v4l2loopback (+ optional PulseAudio null sink). No PC-side OBS
+# required.
 
 set -euo pipefail
 
@@ -11,23 +14,35 @@ DEVICE=""
 LABEL="Lenscast"
 FPS=""
 DOCTOR=0
+AUDIO=0
+AUDIO_URL=""
+INSECURE=0
+SINK_NAME="lenscast"
+NULL_SINK_MODULE=""
+AUDIO_PID=""
 
 usage() {
   cat <<EOF
 Usage: lenscast-virtualcam [options] <stream-url>
 
   <stream-url>     e.g. http://192.168.1.42:4747/video
+                   (https:// also works — pass --insecure for the self-signed cert)
 
 Options:
   -d, --device DEV    v4l2 loopback device (default: auto-detect, fallback /dev/video10)
   -f, --fps N         Target framerate (default: source's native cadence)
   -l, --label NAME    Friendly device label (used in error hints; default: Lenscast)
+  -a, --audio         Also forward /audio as a virtual mic (PulseAudio null sink).
+                      Derives the audio URL from the video URL.
+      --audio-url URL Explicit audio URL (use if your video URL doesn't end in /video).
+      --insecure      Accept self-signed TLS certs (use with https:// URLs).
       --doctor        Check prerequisites and exit
   -h, --help          Show this help
 
 Examples:
   lenscast-virtualcam http://192.168.1.42:4747/video
   lenscast-virtualcam -d /dev/video20 http://192.168.1.42:4747/video
+  lenscast-virtualcam -a https://192.168.1.42:4747/video --insecure
   lenscast-virtualcam --doctor
 
 One-time setup (run once per boot, or persist in /etc/modules-load.d):
@@ -67,6 +82,11 @@ doctor() {
   else
     echo "  [..]  v4l2-ctl not found — install v4l-utils for nicer device listing (optional)"
   fi
+  if command -v pactl >/dev/null 2>&1; then
+    echo "  [ok]  pactl available (audio forwarding ready)"
+  else
+    echo "  [..]  pactl not found — audio forwarding (-a) won't work without PulseAudio / PipeWire-pulse"
+  fi
   if [ "$ok" -eq 1 ]; then
     echo "  ready."
     exit 0
@@ -76,14 +96,17 @@ doctor() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    -d|--device) DEVICE="${2:?missing value for --device}"; shift 2 ;;
-    -f|--fps)    FPS="${2:?missing value for --fps}"; shift 2 ;;
-    -l|--label)  LABEL="${2:?missing value for --label}"; shift 2 ;;
-    --doctor)    DOCTOR=1; shift ;;
-    -h|--help)   usage; exit 0 ;;
-    --)          shift; URL="${1-}"; shift || true ;;
-    -*)          echo "unknown option: $1" >&2; usage; exit 2 ;;
-    *)           URL="$1"; shift ;;
+    -d|--device)   DEVICE="${2:?missing value for --device}"; shift 2 ;;
+    -f|--fps)      FPS="${2:?missing value for --fps}"; shift 2 ;;
+    -l|--label)    LABEL="${2:?missing value for --label}"; shift 2 ;;
+    -a|--audio)    AUDIO=1; shift ;;
+    --audio-url)   AUDIO=1; AUDIO_URL="${2:?missing value for --audio-url}"; shift 2 ;;
+    --insecure)    INSECURE=1; shift ;;
+    --doctor)      DOCTOR=1; shift ;;
+    -h|--help)     usage; exit 0 ;;
+    --)            shift; URL="${1-}"; shift || true ;;
+    -*)            echo "unknown option: $1" >&2; usage; exit 2 ;;
+    *)             URL="$1"; shift ;;
   esac
 done
 
@@ -93,6 +116,17 @@ if [ -z "$URL" ]; then
   echo "error: missing stream URL" >&2
   usage >&2
   exit 2
+fi
+
+# If --audio without an explicit --audio-url, swap the trailing /video for /audio
+# in the video URL. Works for the default Lenscast scheme; users with custom paths
+# can pass --audio-url.
+if [ "$AUDIO" -eq 1 ] && [ -z "$AUDIO_URL" ]; then
+  AUDIO_URL="${URL/\/video/\/audio}"
+  if [ "$AUDIO_URL" = "$URL" ]; then
+    echo "error: --audio set but URL doesn't contain /video; pass --audio-url <url>" >&2
+    exit 2
+  fi
 fi
 
 detect_loopback() {
@@ -119,14 +153,69 @@ EOF
   exit 3
 fi
 
+# TLS option for self-signed https:// URLs. ffmpeg's https backend uses gnutls or
+# openssl; both honour the tls_verify option through the https protocol. Setting
+# it to 0 is the polite "trust this self-signed cert" knob.
+TLS_FLAGS=()
+if [ "$INSECURE" -eq 1 ]; then
+  TLS_FLAGS=(-tls_verify 0)
+fi
+
 echo "Lenscast → $DEVICE"
-echo "  source: $URL"
+echo "  video:  $URL"
+[ "$AUDIO" -eq 1 ] && echo "  audio:  $AUDIO_URL → PulseAudio sink \"$SINK_NAME\" (monitor in your input picker)"
 echo "  Ctrl-C to stop."
 
 FPS_FLAG=()
 [ -n "$FPS" ] && FPS_FLAG=(-r "$FPS")
 
-trap 'echo; echo "stopping..."; exit 0' INT TERM
+cleanup() {
+  if [ -n "$AUDIO_PID" ]; then
+    kill "$AUDIO_PID" 2>/dev/null || true
+    wait "$AUDIO_PID" 2>/dev/null || true
+  fi
+  if [ -n "$NULL_SINK_MODULE" ]; then
+    pactl unload-module "$NULL_SINK_MODULE" 2>/dev/null || true
+  fi
+}
+trap 'echo; echo "stopping..."; cleanup; exit 0' INT TERM
+trap 'cleanup' EXIT
+
+# Audio side: create a PulseAudio null sink, then loop an ffmpeg that pipes
+# /audio into it. Other apps pick "Monitor of Lenscast" from their mic dropdown.
+# PipeWire users get this for free via the pulse compatibility shim.
+if [ "$AUDIO" -eq 1 ]; then
+  if ! command -v pactl >/dev/null 2>&1; then
+    echo "warning: pactl not found — audio forwarding disabled" >&2
+    AUDIO=0
+  else
+    NULL_SINK_MODULE="$(pactl load-module module-null-sink \
+      sink_name="$SINK_NAME" \
+      sink_properties="device.description=\"$LABEL\"" 2>/dev/null || true)"
+    if [ -z "$NULL_SINK_MODULE" ]; then
+      echo "warning: could not create null sink — audio forwarding disabled" >&2
+      AUDIO=0
+    fi
+  fi
+fi
+
+if [ "$AUDIO" -eq 1 ]; then
+  (
+    # Same reconnect loop as video. ffmpeg reads WAV from /audio (44.1k mono
+    # PCM-16LE) and writes it to the named PulseAudio sink. fflags nobuffer +
+    # low_delay shave the encode-to-monitor latency down to one buffer.
+    while true; do
+      ffmpeg -hide_banner -loglevel error -nostdin -nostats \
+        -fflags nobuffer -flags low_delay \
+        "${TLS_FLAGS[@]}" \
+        -i "$AUDIO_URL" \
+        -f pulse -device "$SINK_NAME" -name "$LABEL" \
+        || true
+      sleep 2
+    done
+  ) &
+  AUDIO_PID=$!
+fi
 
 # ffmpeg exits when the stream drops (phone sleep, Wi-Fi blip, app stopped).
 # Reconnect with a short backoff so unplug/replug "just works".
@@ -145,6 +234,7 @@ while true; do
   # SIGTTOU'd. Either suspends the job and starves v4l2loopback of frames.
   ffmpeg -hide_banner -loglevel error -nostdin -nostats \
     -fflags nobuffer -flags low_delay \
+    "${TLS_FLAGS[@]}" \
     -f mjpeg -i "$URL" \
     "${FPS_FLAG[@]}" \
     -an \

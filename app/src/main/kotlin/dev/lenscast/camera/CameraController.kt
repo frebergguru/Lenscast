@@ -23,7 +23,9 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import dev.lenscast.prefs.AntiBanding
+import dev.lenscast.prefs.CameraEffect
 import dev.lenscast.prefs.Lens
+import dev.lenscast.prefs.SceneMode
 import dev.lenscast.prefs.WhiteBalance
 import dev.lenscast.streaming.FrameBroadcaster
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -74,6 +76,13 @@ class CameraController(
         antiBanding: AntiBanding = AntiBanding.AUTO,
         continuousAf: Boolean = true,
         exposureEv: Int = 0,
+        effect: CameraEffect = CameraEffect.NONE,
+        sceneMode: SceneMode = SceneMode.DISABLED,
+        manualFocus: Boolean = false,
+        manualFocusDiopters: Float = 0f,
+        manualExposure: Boolean = false,
+        iso: Int = 100,
+        shutterUs: Long = 16_666L,
     ) {
         val p = awaitProvider()
         provider = p
@@ -101,21 +110,26 @@ class CameraController(
             .build()
 
         val awbMode = awbModeFor(whiteBalance)
-        val afMode = if (continuousAf) {
-            CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
-        } else {
-            CaptureRequest.CONTROL_AF_MODE_AUTO
+        // Manual focus overrides continuousAf — AF_MODE goes OFF so the explicit
+        // LENS_FOCUS_DISTANCE applies.
+        val afMode = when {
+            manualFocus -> CaptureRequest.CONTROL_AF_MODE_OFF
+            continuousAf -> CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+            else -> CaptureRequest.CONTROL_AF_MODE_AUTO
         }
         val abMode = antiBandingModeFor(antiBanding)
+        val effectMode = effectModeFor(effect)
+        val scene = sceneModeFor(sceneMode)
 
         val previewBuilder = Preview.Builder()
             .setResolutionSelector(resolutionSelector)
             .setTargetRotation(targetRotation)
         Camera2Interop.Extender(previewBuilder)
-            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, negotiated)
-            .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, awbMode)
-            .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, afMode)
-            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, abMode)
+            .applyCommonControls(
+                negotiated, awbMode, afMode, abMode, effectMode, scene,
+                manualFocus, manualFocusDiopters,
+                manualExposure, iso, shutterUs,
+            )
         val preview = previewBuilder.build()
             .also { it.setSurfaceProvider(previewSurfaceProvider) }
 
@@ -126,10 +140,11 @@ class CameraController(
                 .setResolutionSelector(resolutionSelector)
                 .setTargetRotation(targetRotation)
             Camera2Interop.Extender(analysisBuilder)
-                .setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, negotiated)
-                .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, awbMode)
-                .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, afMode)
-                .setCaptureRequestOption(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, abMode)
+                .applyCommonControls(
+                    negotiated, awbMode, afMode, abMode, effectMode, scene,
+                    manualFocus, manualFocusDiopters,
+                    manualExposure, iso, shutterUs,
+                )
             analysisBuilder.build()
                 .also {
                     it.setAnalyzer(analysisExecutor) { proxy ->
@@ -211,6 +226,77 @@ class CameraController(
         AntiBanding.HZ50 -> CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_50HZ
         AntiBanding.HZ60 -> CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_60HZ
         AntiBanding.OFF  -> CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_OFF
+    }
+
+    private fun effectModeFor(e: CameraEffect): Int = when (e) {
+        CameraEffect.NONE       -> CaptureRequest.CONTROL_EFFECT_MODE_OFF
+        CameraEffect.MONO       -> CaptureRequest.CONTROL_EFFECT_MODE_MONO
+        CameraEffect.NEGATIVE   -> CaptureRequest.CONTROL_EFFECT_MODE_NEGATIVE
+        CameraEffect.SEPIA      -> CaptureRequest.CONTROL_EFFECT_MODE_SEPIA
+        CameraEffect.AQUA       -> CaptureRequest.CONTROL_EFFECT_MODE_AQUA
+        CameraEffect.SOLARIZE   -> CaptureRequest.CONTROL_EFFECT_MODE_SOLARIZE
+        CameraEffect.POSTERIZE  -> CaptureRequest.CONTROL_EFFECT_MODE_POSTERIZE
+        CameraEffect.BLACKBOARD -> CaptureRequest.CONTROL_EFFECT_MODE_BLACKBOARD
+        CameraEffect.WHITEBOARD -> CaptureRequest.CONTROL_EFFECT_MODE_WHITEBOARD
+    }
+
+    /** Returns -1 when the user picked "Disabled" so the caller skips the scene-mode opt-in. */
+    private fun sceneModeFor(s: SceneMode): Int = when (s) {
+        SceneMode.DISABLED  -> -1
+        SceneMode.ACTION    -> CaptureRequest.CONTROL_SCENE_MODE_ACTION
+        SceneMode.PORTRAIT  -> CaptureRequest.CONTROL_SCENE_MODE_PORTRAIT
+        SceneMode.LANDSCAPE -> CaptureRequest.CONTROL_SCENE_MODE_LANDSCAPE
+        SceneMode.NIGHT     -> CaptureRequest.CONTROL_SCENE_MODE_NIGHT
+        SceneMode.SPORTS    -> CaptureRequest.CONTROL_SCENE_MODE_SPORTS
+        SceneMode.THEATRE   -> CaptureRequest.CONTROL_SCENE_MODE_THEATRE
+        SceneMode.FIREWORKS -> CaptureRequest.CONTROL_SCENE_MODE_FIREWORKS
+        SceneMode.BEACH     -> CaptureRequest.CONTROL_SCENE_MODE_BEACH
+        SceneMode.SNOW      -> CaptureRequest.CONTROL_SCENE_MODE_SNOW
+        SceneMode.SUNSET    -> CaptureRequest.CONTROL_SCENE_MODE_SUNSET
+    }
+
+    /**
+     * Bundles the per-bind Camera2Interop options so the Preview and ImageAnalysis builders
+     * stay in sync — drift between them would leave one stream with stale colour controls
+     * (the on-screen preview, since CameraX picks the analysis output as the "primary").
+     */
+    @Suppress("LongParameterList")
+    private fun <T> Camera2Interop.Extender<T>.applyCommonControls(
+        fpsRange: Range<Int>,
+        awbMode: Int,
+        afMode: Int,
+        antiBandingMode: Int,
+        effectMode: Int,
+        sceneMode: Int,
+        manualFocus: Boolean,
+        manualFocusDiopters: Float,
+        manualExposure: Boolean,
+        iso: Int,
+        shutterUs: Long,
+    ): Camera2Interop.Extender<T> {
+        setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
+        setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, awbMode)
+        setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, afMode)
+        setCaptureRequestOption(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, antiBandingMode)
+        setCaptureRequestOption(CaptureRequest.CONTROL_EFFECT_MODE, effectMode)
+        if (sceneMode >= 0) {
+            // Engaging a scene mode requires CONTROL_MODE=USE_SCENE_MODE.
+            setCaptureRequestOption(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_USE_SCENE_MODE)
+            setCaptureRequestOption(CaptureRequest.CONTROL_SCENE_MODE, sceneMode)
+        }
+        if (manualFocus) {
+            setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, manualFocusDiopters)
+        }
+        if (manualExposure) {
+            // Manual exposure on Camera2: AE off, then explicit sensitivity + exposure
+            // time. The camera silently ignores these on lenses without the
+            // MANUAL_SENSOR capability — CameraCapabilities.supportsManualSensor gates
+            // the UI so the user doesn't expect what won't work.
+            setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+            setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, iso)
+            setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterUs * 1_000L)
+        }
+        return this
     }
 
     /** The FPS upper bound the camera last accepted — for the UI to show "available capped at N". */

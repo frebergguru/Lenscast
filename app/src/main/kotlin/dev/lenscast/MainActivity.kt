@@ -1,11 +1,15 @@
 package dev.lenscast
 
+import android.app.PictureInPictureParams
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,6 +24,7 @@ import dev.lenscast.ui.theme.LenscastTheme
 class MainActivity : ComponentActivity() {
 
     private val serviceState = mutableStateOf<StreamingService?>(null)
+    private val inPipState = mutableStateOf(false)
     private var bound: Boolean = false
 
     private val connection = object : ServiceConnection {
@@ -45,13 +50,39 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val svc by serviceState
+            val inPip by inPipState
             LenscastTheme {
                 MainScreen(
                     service = svc,
+                    inPictureInPicture = inPip,
                     startForeground = { ContextCompat.startForegroundService(this, Intent(this, StreamingService::class.java)) },
                 )
             }
         }
+    }
+
+    /**
+     * Auto-enter PiP when the user presses Home while streaming — that's the moment they're
+     * most likely to want to keep an eye on framing in a corner while doing something else.
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val svc = serviceState.value ?: return
+        val live = svc.status.value.state == StreamingService.State.STREAMING
+        if (!live) return
+        val res = svc.status.value.settings.resolution
+        try {
+            val params = PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(res.width, res.height))
+                .build()
+            enterPictureInPictureMode(params)
+        } catch (_: Throwable) { /* device doesn't support PiP; no-op */ }
+    }
+
+    override fun onPictureInPictureModeChanged(isInPip: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPip, newConfig)
+        inPipState.value = isInPip
     }
 
     override fun onDestroy() {

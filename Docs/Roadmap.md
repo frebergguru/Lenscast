@@ -40,6 +40,98 @@
 - **Manual rotation lock (MJPEG)** — Settings segmented row pins the encoder rotation
   (Auto / Portrait / Landscape ← / Landscape → / Portrait ⤓) instead of following
   the accelerometer.
+- **Camera effects** (`CONTROL_EFFECT_MODE`) — Mono / Negative / Sepia / Aqua /
+  Solarize / Posterize / Blackboard / Whiteboard.
+- **Scene modes** (`CONTROL_SCENE_MODE` + `CONTROL_MODE=USE_SCENE_MODE`) — Action /
+  Portrait / Landscape / Night / Sports / Theatre / Fireworks / Beach / Snow / Sunset.
+- **Manual focus** — toggle in Settings; centidiopter slider sets
+  `LENS_FOCUS_DISTANCE` after switching `CONTROL_AF_MODE` to OFF.
+- **Burst snapshot** — long-press the snapshot overlay button → 5 JPEGs at ~250 ms.
+- **Start-on-boot** — `BootReceiver` listens for `BOOT_COMPLETED` / locked-boot;
+  brings the foreground service up via the same `ACTION_START_TILE` path as the QS
+  tile when `settings.startOnBoot` is set.
+- **Audio pipeline polish (RTSP)**:
+  - Microphone source picker (Camcorder / Default mic / Voice recognition / Voice
+    communication / Unprocessed) → `MediaRecorder.AudioSource`.
+  - Software gain stage in the AacEncoder captureLoop (-24..+24 dB, hard clip,
+    live-updatable via a @Volatile linear factor).
+  - `NoiseSuppressor` / `AcousticEchoCanceler` toggles, attached to the AudioRecord
+    session id when `isAvailable()` and released in `stop()`.
+  - Live VU meter — AacEncoder publishes per-buffer peak in dBFS; MainScreen draws
+    a green/amber/red bar below the stat row whenever audio is on.
+- **Web control page** — `/` landing in `MjpegServer` is now a control panel with
+  Switch camera, Toggle torch, Mirror, Continuous AF, Zoom ±, EV ±, Snapshot and
+  Stop buttons that POST to `/control/*`. A small `MjpegControl` bridge keeps the
+  server decoupled from the rest of the service. A `GET /status` JSON endpoint
+  feeds a 1 Hz stats line above the buttons (lens / fps / clients / zoom / EV /
+  mirror / torch / audio peak).
+- **Named presets** — save the current protocol+resolution+fps+lens as a labelled
+  preset from the Settings sheet, apply or delete in one tap. Stored as a
+  newline-delimited string in DataStore (no JSON dependency).
+- **Picture-in-picture** — `MainActivity.onUserLeaveHint` auto-enters PiP when the
+  user presses Home while streaming; `MainScreen` collapses to just the camera box.
+- **USB transport docs** — [Docs/USB.md](USB.md) walks the user through
+  `adb forward` for both ports.
+- **Local recording (RTSP)** — `RecordingMuxer` taps the existing H.264 + AAC
+  encoder callbacks and writes an MP4 to `Movies/Lenscast/` via MediaStore.
+  Track config is captured from `H264Encoder.parameterSets` and
+  `AacEncoder.asc`; tracks added once both are known; PTS rebased to start at
+  zero. Finalised in `RtspManager.stop()`; UI surfaces a Toast on the
+  STREAMING → IDLE transition.
+- **Audio over MJPEG** — direct PCM-16LE capture via `PcmCapture` (no codec,
+  no codec lookahead). `MjpegServer` serves it as `audio/wav` on `/audio` with
+  an open-ended WAV header (`0xFFFFFFFF` length sentinels), so receivers treat
+  it as a live stream with near-zero buffer. Fan-out is per-client via a
+  `Channel`-subscribed `AudioBroadcaster`; slow clients only drop their own
+  oldest samples. Permissions and foreground-service type are no longer gated
+  on RTSP. AAC was tried first but receiver-side buffering and the codec
+  lookahead added 300–1500 ms of audible lag; PCM/WAV is ~88 KB/s mono and
+  plays in real time in `<audio>`, VLC, ffplay, and the Linux helper.
+- **Web control — JPEG quality slider** — debounced `POST /control/quality?v=NN`
+  endpoint; the slider in the landing page updates `CameraController.jpegQuality`
+  live without rebinding the camera.
+- **Settings export / import.** `SettingsCodec` (hand-rolled with `org.json`,
+  versioned, tolerant of missing fields) gives JSON in/out for the whole
+  `Settings` blob. Phone Settings sheet has Export/Import buttons via SAF
+  (`ActivityResultContracts.CreateDocument` / `OpenDocument`); web page has a
+  download link plus a paste-in textarea backed by `GET /export` and
+  `POST /import`. `WebControlServer.handle` now reads the request body when
+  `Content-Length` is present so the import endpoint receives the JSON.
+- **Linux helper: audio + HTTPS.** `lenscast-virtualcam -a` creates a PulseAudio
+  null sink and forwards `/audio` (PCM-16LE WAV) into it via a parallel ffmpeg
+  with the same auto-reconnect loop as video; downstream apps pick
+  "Monitor of Lenscast" as a mic. `--insecure` flag passes `-tls_verify 0`
+  for self-signed HTTPS URLs from Lenscast's built-in TLS toggle. README
+  documents both flags.
+- **HTTPS for MJPEG + web control** — `TlsManager` synthesises a self-signed
+  RSA-2048 cert via `AndroidKeyStore` (`KeyGenParameterSpec.setCertificateSubject`
+  auto-generates the X.509 wrapper around the key pair — no Bouncy Castle).
+  `MjpegServer` / `WebControlServer` accept an optional `SSLContext`; when
+  present, the accept loop calls `sslContext.serverSocketFactory.createServerSocket`.
+  Self-signed warning on first visit is unavoidable; SHA-256 fingerprint is
+  surfaced in both the Settings sheet and the web page so the user can
+  verify the cert. RTSPS deliberately skipped — OBS doesn't support it.
+- **Manual exposure (ISO + shutter)** — single toggle in Settings, plus
+  range-clamped sliders sourced from `SENSOR_INFO_SENSITIVITY_RANGE` /
+  `SENSOR_INFO_EXPOSURE_TIME_RANGE` via new helpers in
+  `CameraCapabilities`. `CameraController.applyCommonControls` flips
+  `CONTROL_AE_MODE` to OFF and writes `SENSOR_SENSITIVITY` +
+  `SENSOR_EXPOSURE_TIME` when enabled. Both the phone Settings sheet and the
+  web control panel gate the controls on the lens's MANUAL_SENSOR capability,
+  so the user never sees knobs that can't actually do anything.
+- **Independent web control panel (`WebControlServer`)** — separate HTTP server,
+  bound to its own port (default 8080, toggleable + portable via Settings). Runs
+  the entire time `StreamingService` is alive, so the panel is reachable in
+  idle, MJPEG-streaming, and RTSP-streaming states. `/control/start` triggers
+  the same code path the QS tile uses; `/control/protocol` lets the user pick
+  MJPEG vs RTSP from the idle screen; `/control/setting?key=...&v=...` is a
+  generic Settings updater dispatched through a single `updateSetting()` on
+  `MjpegControl`. `/status` reports state + protocol + every Settings field
+  the panel needs; a 1 Hz poll keeps the page mirrored, skipping any control
+  the user is currently editing so typing isn't clobbered. The page is
+  single-HTML, JS-driven: idle / live blocks, MJPEG-only vs RTSP-only
+  sections, and resolution / FPS / WB / effect / scene / antiBanding /
+  rotation lock pickers are all shown/hidden from the same `/status` poll.
 
 ## Known architectural cap: MJPEG ≤ 30 fps
 

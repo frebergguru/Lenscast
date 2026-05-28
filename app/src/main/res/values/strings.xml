@@ -20,6 +20,8 @@
     <string name="card_connection_usb_hint">Run on your PC first:</string>
     <string name="card_connection_no_wifi">Not connected to Wi-Fi</string>
     <string name="card_connection_obs_hint">In OBS: Add → Media Source → uncheck \"Local File\" → paste URL above</string>
+    <string name="card_connection_audio">Audio (PCM-16LE WAV)</string>
+    <string name="card_connection_web_control">Web control panel</string>
 
     <string name="stat_resolution">Resolution</string>
     <string name="stat_fps">FPS</string>
@@ -37,7 +39,7 @@
     <string name="settings_camera">Camera</string>
     <string name="settings_camera_back">Back</string>
     <string name="settings_camera_front">Front</string>
-    <string name="settings_audio">Stream microphone audio (RTSP only)</string>
+    <string name="settings_audio">Stream microphone audio</string>
     <string name="settings_keep_screen_on">Keep screen on while streaming</string>
     <string name="settings_mjpeg_port">MJPEG port</string>
     <string name="settings_rtsp_port">RTSP port</string>
@@ -83,6 +85,10 @@
     <string name="settings_ab_60">60 Hz</string>
     <string name="settings_ab_off">Off</string>
     <string name="settings_image_mjpeg_only_note">Image controls apply to the MJPEG path. The RTSP encoder uses the camera defaults.</string>
+    <string name="settings_manual_exposure">Manual exposure (ISO + shutter)</string>
+    <string name="settings_manual_exposure_unavailable">Not supported on this lens (no MANUAL_SENSOR capability).</string>
+    <string name="settings_iso">ISO</string>
+    <string name="settings_shutter">Shutter (µs)</string>
 
     <string name="snapshot_saved">Saved to Pictures/Lenscast</string>
     <string name="snapshot_failed">Snapshot failed — no frame yet?</string>
@@ -90,6 +96,15 @@
     <string name="settings_security_section">Access control</string>
     <string name="settings_password">Stream passcode (MJPEG)</string>
     <string name="settings_password_hint">Leave blank for open access. Username: lenscast</string>
+    <string name="settings_https">HTTPS (self-signed cert)</string>
+    <string name="settings_https_hint">Receivers will see a "self-signed" warning the first time — click through. Cert fingerprint:</string>
+
+    <string name="settings_backup_section">Backup</string>
+    <string name="settings_export">Export settings</string>
+    <string name="settings_import">Import settings</string>
+    <string name="settings_export_done">Settings exported</string>
+    <string name="settings_import_done">Settings imported</string>
+    <string name="settings_import_failed">Import failed (invalid JSON?)</string>
     <string name="settings_automation_section">Automation</string>
     <string name="settings_auto_start">Start streaming on app launch</string>
     <string name="settings_rtsp_bitrate">RTSP bitrate cap (kbps, 0 = auto)</string>
@@ -106,4 +121,70 @@
     <string name="settings_rotation_landscape_left">Landscape ←</string>
     <string name="settings_rotation_landscape_right">Landscape →</string>
     <string name="settings_rotation_portrait_down">Portrait ⤓</string>
+
+    <string name="settings_effect">Effect</string>
+    <string name="effect_none">None</string>
+    <string name="effect_mono">Mono</string>
+    <string name="effect_negative">Negative</string>
+    <string name="effect_sepia">Sepia</string>
+    <string name="effect_aqua">Aqua</string>
+    <string name="effect_solarize">Solarize</string>
+    <string name="effect_posterize">Posterize</string>
+    <string name="effect_blackboard">Blackboard</string>
+    <string name="effect_whiteboard">Whiteboard</string>
+
+    <string name="settings_scene">Scene</string>
+    <string name="scene_disabled">Off</string>
+    <string name="scene_action">Action</string>
+    <string name="scene_portrait">Portrait</string>
+    <string name="scene_landscape">Landscape</string>
+    <string name="scene_night">Night</string>
+    <string name="scene_sports">Sports</string>
+    <string name="scene_theatre">Theatre</string>
+    <string name="scene_fireworks">Fireworks</string>
+    <string name="scene_beach">Beach</string>
+    <string name="scene_snow">Snow</string>
+    <string name="scene_sunset">Sunset</string>
+
+    <string name="settings_manual_focus">Manual focus</string>
+    <string name="settings_focus_distance">Focus distance</string>
+    <string name="settings_focus_infinity">∞</string>
+    <string name="settings_focus_close">close</string>
+
+    <string name="settings_start_on_boot">Start streaming on device boot</string>
+    <string name="settings_start_on_boot_hint">Requires the app to be excluded from battery optimisation for the boot receiver to fire reliably.</string>
+
+    <string name="snapshot_burst_done">Saved %1$d shots</string>
+
+    <string name="settings_audio_section">Audio</string>
+    <string name="settings_mic_source">Microphone source</string>
+    <string name="mic_camcorder">Camcorder</string>
+    <string name="mic_mic">Default mic</string>
+    <string name="mic_voice_recognition">Voice recog</string>
+    <string name="mic_voice_communication">Voice comm</string>
+    <string name="mic_unprocessed">Unprocessed</string>
+    <string name="settings_audio_gain">Mic gain</string>
+    <string name="settings_audio_gain_summary">%1$+d dB</string>
+    <string name="settings_noise_suppress">Noise suppression</string>
+    <string name="settings_echo_cancel">Echo cancellation</string>
+
+    <string name="stat_audio">Audio</string>
+
+    <string name="settings_presets_section">Presets</string>
+    <string name="settings_preset_save">Save current as preset</string>
+    <string name="settings_preset_name_hint">Name</string>
+    <string name="settings_preset_apply">Apply</string>
+    <string name="settings_preset_delete">Delete</string>
+    <string name="settings_preset_summary">%1$s @ %2$s · %3$d fps · %4$s</string>
+    <string name="settings_preset_lens_back">back</string>
+    <string name="settings_preset_lens_front">front</string>
+
+    <string name="settings_record_locally">Record to MP4 while streaming (RTSP only)</string>
+    <string name="settings_record_locally_hint">Saves to Movies/Lenscast/. Encoded once; no extra battery cost beyond the file write.</string>
+    <string name="recording_saved">Recording saved to Movies/Lenscast</string>
+
+    <string name="settings_web_control_section">Web control panel</string>
+    <string name="settings_web_control_enabled">Run the web control panel</string>
+    <string name="settings_web_control_port">Web control port</string>
+    <string name="settings_web_control_hint">Open <code>http://&lt;phone-ip&gt;:%1$d/</code> on any LAN device to start/stop and tune the stream.</string>
 </resources>

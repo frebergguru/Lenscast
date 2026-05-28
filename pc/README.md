@@ -79,9 +79,41 @@ ffplay /dev/video10
 ```
 -d, --device DEV    v4l2 loopback device (default: auto-detect, fallback /dev/video10)
 -f, --fps N         Target framerate (default: source's native cadence)
--l, --label NAME    Friendly device label used in error hints (default: Lenscast)
+-l, --label NAME    Friendly device label (also used as the PulseAudio device.description
+                    when -a is set; default: Lenscast)
+-a, --audio         Also forward /audio as a virtual mic (PulseAudio null sink).
+                    Derives the audio URL from the video URL by swapping
+                    /video for /audio.
+    --audio-url URL Explicit audio URL — use if your video URL doesn't end in /video.
+    --insecure      Accept self-signed TLS certs (use with https:// URLs from Lenscast's
+                    built-in HTTPS toggle).
     --doctor        Check prerequisites and exit
 -h, --help          Show this help
+```
+
+## Audio (-a) — adds a virtual mic
+
+`lenscast-virtualcam -a <video-url>` adds two things to the regular video bridge:
+
+1. A PulseAudio null sink named `lenscast` (visible as **Lenscast** in Volume Control).
+2. A background ffmpeg pulling the WAV stream from `/audio` and writing it into that
+   sink.
+
+Pick **Monitor of Lenscast** as your input in Zoom, Discord, Chrome, etc. PipeWire
+users get this for free via the pulse compatibility shim — no extra configuration.
+
+When you Ctrl-C the helper, it kills the audio ffmpeg and unloads the null sink so
+your audio device list goes back to normal.
+
+## HTTPS (--insecure)
+
+Lenscast's built-in HTTPS toggle issues a self-signed cert. ffmpeg refuses
+self-signed certificates by default; `--insecure` passes `-tls_verify 0` so it
+accepts the cert. The traffic is still encrypted — you're just opting out of CA
+verification (which can't work for a self-signed cert anyway).
+
+```bash
+lenscast-virtualcam -a https://192.168.1.42:4747/video --insecure
 ```
 
 ## How it works
@@ -117,6 +149,9 @@ udev rule that fixes it; the rule and instructions live in
 - **MJPEG only.** This helper does not consume the RTSP stream; for low-latency
   webcam use, MJPEG is the right choice anyway (ffplay shows ~1 frame of latency
   in practice).
+- **Audio (-a) requires PulseAudio or PipeWire-pulse.** Pure ALSA / JACK setups
+  aren't covered; on those, just pipe `/audio` into your favourite audio chain
+  manually (`ffplay /audio` works as a quick test).
 - **One loopback device, one source.** Running two instances against the same
   `/dev/videoN` will fight. Use different `video_nr` values if you want multiple
   Lenscast phones simultaneously.

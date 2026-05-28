@@ -4,7 +4,9 @@ import android.content.Context
 import android.util.Log
 import android.util.Size
 import android.view.Surface
+import android.media.MediaRecorder
 import dev.lenscast.prefs.Lens
+import dev.lenscast.prefs.MicSource
 import dev.lenscast.streaming.rtsp.AacEncoder
 import dev.lenscast.streaming.rtsp.AacRtpPacketizer
 import dev.lenscast.streaming.rtsp.H264Encoder
@@ -36,12 +38,19 @@ class RtspManager(
         val port: Int,
         /** Display rotation in degrees (0/90/180/270) at stream-start time. */
         val deviceRotationDegrees: Int = 0,
+        val micSource: MicSource = MicSource.VOICE_RECOGNITION,
+        val audioGainDb: Int = 0,
+        val noiseSuppress: Boolean = false,
+        val echoCancel: Boolean = false,
+        val recordLocally: Boolean = false,
     )
 
     private var videoEncoder: H264Encoder? = null
     private var audioEncoder: AacEncoder? = null
     private var camera: RtspCameraDriver? = null
     private var server: RtspServer? = null
+    private var recorder: RecordingMuxer? = null
+    @Volatile private var lastRecordedUri: android.net.Uri? = null
 
     private val videoStream = RtpStream(payloadType = 96, ssrc = Random.nextInt(), clockHz = 90_000)
     private var audioStream: RtpStream? = null
@@ -79,7 +88,26 @@ class RtspManager(
 
         val cameraTargetSurface = encoderInputSurface
 
+        // Set up local recording before encoders start so we don't miss SPS/PPS arrival.
+        if (config.recordLocally) {
+            recorder = RecordingMuxer.create(context, expectAudio = config.audioEnabled)
+            if (recorder == null) {
+                Log.w(TAG, "Local recording requested but MediaStore insert failed; stream continues without recording")
+            }
+        }
+
         ve.start { nal, ptsUs, isKey ->
+            // Capture SPS/PPS for the muxer the moment they're available — the encoder
+            // exposes them via parameterSets after the first config callback, which is
+            // delivered before any VCL NAL.
+            val rec = recorder
+            if (rec != null) {
+                val ps = ve.parameterSets
+                if (ps != null) rec.addVideoTrack(plan.size.width, plan.size.height, ps.sps, ps.pps)
+                val nalType = nal[0].toInt() and 0x1F
+                if (nalType in 1..5) rec.writeVideo(nal, ptsUs, isKey)
+            }
+
             val ts = videoStream.timestampFromUs(ptsUs)
             val nalType = nal[0].toInt() and 0x1F
             // SPS/PPS NALs do not advance frames; mark non-VCL with no marker, VCL last NAL gets marker.
@@ -91,9 +119,20 @@ class RtspManager(
         }
 
         if (config.audioEnabled) {
-            val ae = AacEncoder().also { audioEncoder = it }
+            val ae = AacEncoder(
+                audioSource = audioSourceFor(config.micSource),
+                gainLinear = dbToLinear(config.audioGainDb),
+                enableNoiseSuppress = config.noiseSuppress,
+                enableEchoCancel = config.echoCancel,
+            ).also { audioEncoder = it }
             audioStream = RtpStream(payloadType = 97, ssrc = Random.nextInt(), clockHz = ae.sampleRate)
             ae.start { au, ptsUs ->
+                val rec = recorder
+                if (rec != null) {
+                    val asc = ae.asc
+                    if (asc != null) rec.addAudioTrack(ae.sampleRate, ae.channelCount, asc)
+                    rec.writeAudio(au, ptsUs)
+                }
                 val stream = audioStream ?: return@start
                 val ts = stream.timestampFromUs(ptsUs)
                 val packets = AacRtpPacketizer.packetize(stream, au, ts)
@@ -111,6 +150,8 @@ class RtspManager(
     }
 
     fun setTorch(on: Boolean) { camera?.setTorch(on) }
+    fun setAudioGainDb(db: Int) { audioEncoder?.setGainDb(db) }
+    fun audioPeakDbfs(): Float = audioEncoder?.lastPeakDbfs() ?: -90f
 
     /** Total H.264 VCL frames produced since [start]. */
     fun framesProduced(): Long = videoEncoder?.framesProduced() ?: 0L
@@ -131,7 +172,13 @@ class RtspManager(
         try { audioEncoder?.shutdown() } catch (_: Throwable) {}
         audioEncoder = null
         audioStream = null
+        // Finalise the MP4 only after the encoders have stopped feeding samples.
+        lastRecordedUri = try { recorder?.stop() } catch (_: Throwable) { null }
+        recorder = null
     }
+
+    /** Uri of the last completed MP4 (after the most recent stop), or null if none. */
+    fun lastRecordingUri(): android.net.Uri? = lastRecordedUri
 
     private val streamProvider = object : RtspServer.StreamProvider {
         override fun videoTrack(): Sdp.VideoTrack? {
@@ -164,6 +211,20 @@ class RtspManager(
             activeSink = null
         }
     }
+
+    private fun audioSourceFor(src: MicSource): Int = when (src) {
+        MicSource.CAMCORDER           -> MediaRecorder.AudioSource.CAMCORDER
+        MicSource.MIC                 -> MediaRecorder.AudioSource.MIC
+        MicSource.VOICE_RECOGNITION   -> MediaRecorder.AudioSource.VOICE_RECOGNITION
+        MicSource.VOICE_COMMUNICATION -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
+        MicSource.UNPROCESSED         -> if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            MediaRecorder.AudioSource.UNPROCESSED
+        } else {
+            MediaRecorder.AudioSource.MIC
+        }
+    }
+
+    private fun dbToLinear(db: Int): Float = Math.pow(10.0, db / 20.0).toFloat()
 
     companion object {
         private const val TAG = "RtspManager"

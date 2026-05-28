@@ -5,7 +5,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -83,6 +83,7 @@ import dev.lenscast.ui.components.LiveStatusPill
 import dev.lenscast.ui.components.PermissionRequestRow
 import dev.lenscast.ui.components.PreviewSurface
 import dev.lenscast.ui.components.StatChip
+import dev.lenscast.ui.components.VuMeter
 import dev.lenscast.ui.components.rememberPermissionStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -106,12 +107,14 @@ private data class CamBoxState(
     val onSwitchCamera: () -> Unit,
     val onToggleTorch: () -> Unit,
     val onSnapshot: () -> Unit,
+    val onSnapshotBurst: () -> Unit,
 )
 
 @Composable
 fun MainScreen(
     service: StreamingService?,
     startForeground: () -> Unit,
+    inPictureInPicture: Boolean = false,
 ) {
     val ctx = LocalContext.current
     val repo = remember { SettingsRepository(ctx) }
@@ -134,6 +137,20 @@ fun MainScreen(
         }
     }
 
+    // When a recording stop transitions IDLE, surface the saved-file Toast.
+    var prevState by remember { mutableStateOf(status.state) }
+    LaunchedEffect(status.state) {
+        if (prevState == StreamingService.State.STREAMING && status.state == StreamingService.State.IDLE) {
+            val uri = service?.lastRecordingUri()
+            if (uri != null) {
+                android.widget.Toast.makeText(
+                    ctx, ctx.getString(R.string.recording_saved), android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
+        }
+        prevState = status.state
+    }
+
     // Network info, refreshed every couple of seconds while screen is open.
     var localIp by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
@@ -148,29 +165,32 @@ fun MainScreen(
     // also polls the client count so it updates without depending on other state changes.
     var fpsObserved by remember { mutableStateOf(0) }
     var clientsObserved by remember { mutableStateOf(0) }
+    var audioPeak by remember { mutableStateOf(-90f) }
     LaunchedEffect(streaming, service) {
         if (!streaming || service == null) {
             fpsObserved = 0
             clientsObserved = 0
+            audioPeak = -90f
             return@LaunchedEffect
         }
         var lastCount = service.framesProducedNow()
         var lastT = System.currentTimeMillis()
         clientsObserved = service.connectedClientCount()
         while (true) {
-            delay(500)
+            delay(250)
             val now = System.currentTimeMillis()
             val count = service.framesProducedNow()
             val dt = (now - lastT).coerceAtLeast(1L)
             fpsObserved = ((count - lastCount) * 1000.0 / dt).toInt()
             clientsObserved = service.connectedClientCount()
+            audioPeak = service.audioPeakDbfs()
             lastCount = count
             lastT = now
         }
     }
 
     val perm = rememberPermissionStatus(
-        needAudio = settings.audioEnabled && settings.protocol == dev.lenscast.prefs.Protocol.RTSP,
+        needAudio = settings.audioEnabled,
     )
 
     var settingsOpen by remember { mutableStateOf(false) }
@@ -218,6 +238,8 @@ fun MainScreen(
         service, perm.granted, streaming,
         settings.protocol, settings.lens, settings.resolution, settings.fps, settings.jpegQuality,
         settings.mirror, settings.whiteBalance, settings.antiBanding, settings.continuousAf, settings.exposureEv,
+        settings.effect, settings.sceneMode, settings.manualFocus, settings.manualFocusCentidiopters,
+        settings.manualExposure, settings.iso, settings.shutterUs,
     ) {
         val svc = service ?: return@LaunchedEffect
         if (!perm.granted) return@LaunchedEffect
@@ -235,6 +257,13 @@ fun MainScreen(
                 antiBanding = settings.antiBanding,
                 continuousAf = settings.continuousAf,
                 exposureEv = settings.exposureEv,
+                effect = settings.effect,
+                sceneMode = settings.sceneMode,
+                manualFocus = settings.manualFocus,
+                manualFocusCentidiopters = settings.manualFocusCentidiopters,
+                manualExposure = settings.manualExposure,
+                iso = settings.iso,
+                shutterUs = settings.shutterUs,
             )
         } catch (_: Throwable) {
             // Camera might be transiently unavailable (e.g. another app holding it);
@@ -315,6 +344,22 @@ fun MainScreen(
                     }
                     android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
                 },
+                onSnapshotBurst = {
+                    val svc = service ?: return@CamBoxState
+                    scope.launch {
+                        var saved = 0
+                        repeat(5) {
+                            if (svc.saveSnapshot() != null) saved++
+                            delay(250)
+                        }
+                        val msg = if (saved > 0) {
+                            ctx.getString(R.string.snapshot_burst_done, saved)
+                        } else {
+                            ctx.getString(R.string.snapshot_failed)
+                        }
+                        android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                },
             )
         )
         val cameraBox = remember {
@@ -365,9 +410,10 @@ fun MainScreen(
                         )
                         OverlayIconButton(
                             icon = Icons.Outlined.CameraAlt,
-                            contentDescription = "Save snapshot",
+                            contentDescription = "Save snapshot (long-press for burst)",
                             enabled = true,
                             onClick = st.onSnapshot,
+                            onLongClick = st.onSnapshotBurst,
                         )
                     }
                 }
@@ -417,13 +463,34 @@ fun MainScreen(
                         modifier = Modifier.weight(1f),
                     )
                 }
+                if (settings.audioEnabled) {
+                    VuMeter(
+                        label = stringResource(R.string.stat_audio),
+                        peakDbfs = audioPeak,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
             ConnectionInfoCard(
                 wifiIp = localIp,
                 protocol = settings.protocol,
                 mjpegPort = settings.mjpegPort,
                 rtspPort = settings.rtspPort,
+                audioEnabled = settings.audioEnabled,
+                webControlEnabled = settings.webControlEnabled,
+                webControlPort = settings.webControlPort,
+                httpsEnabled = settings.httpsEnabled,
             )
+        }
+
+        if (inPictureInPicture) {
+            // PiP window: no chrome, no padding — just the preview filling the small overlay.
+            Box(modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)) {
+                cameraBox(Modifier.fillMaxSize())
+            }
+            return@Scaffold
         }
 
         if (isLandscape) {
@@ -573,6 +640,7 @@ private fun TopBar(
  * reads clearly against both bright and dark frames. Disabled state desaturates without
  * removing the button so users can tell the control still exists.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun OverlayIconButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -580,6 +648,7 @@ private fun OverlayIconButton(
     enabled: Boolean,
     onClick: () -> Unit,
     highlighted: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val container = when {
         highlighted -> MaterialTheme.colorScheme.primary
@@ -594,7 +663,12 @@ private fun OverlayIconButton(
         modifier = Modifier
             .size(48.dp)
             .clip(CircleShape)
-            .let { if (enabled) it.clickable { onClick() } else it },
+            .let {
+                if (enabled) it.combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick,
+                ) else it
+            },
         color = container,
         contentColor = tint,
         shape = CircleShape,

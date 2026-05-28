@@ -6,10 +6,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -60,6 +64,54 @@ fun LiveStatusPill(streaming: Boolean) {
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = if (streaming) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+    }
+}
+
+/**
+ * VU-style level indicator. Input is dBFS (-90..0); the bar fills proportionally between
+ * `-60` and `0` (a more useful visual range than the raw dBFS scale, which spends most
+ * of its range at silence). Colour shifts from neutral surface to amber/red as the signal
+ * approaches clip.
+ */
+@Composable
+fun VuMeter(label: String, peakDbfs: Float, modifier: Modifier = Modifier) {
+    val frac = ((peakDbfs + 60f) / 60f).coerceIn(0f, 1f)
+    val barColor = when {
+        peakDbfs > -3f  -> Color(0xFFE53935) // red, clipping risk
+        peakDbfs > -12f -> Color(0xFFFFB300) // amber, healthy
+        peakDbfs > -45f -> Color(0xFF66BB6A) // green, low-ish
+        else            -> MaterialTheme.colorScheme.surfaceContainerHighest
+    }
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text(
+                label.uppercase(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+            Spacer(Modifier.size(4.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .background(
+                        MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shape = RoundedCornerShape(4.dp),
+                    ),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(frac)
+                        .background(barColor, shape = RoundedCornerShape(4.dp)),
+                )
+            }
         }
     }
 }
