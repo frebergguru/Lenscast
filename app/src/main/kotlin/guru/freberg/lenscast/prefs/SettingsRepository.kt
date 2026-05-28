@@ -75,6 +75,12 @@ class SettingsRepository(private val context: Context) {
             prefs[K_SFTP_FP] = next.sftpHostKeyFingerprint.trim().take(120)
             prefs[K_LANG] = next.languageTag.trim().take(16)
             prefs[K_MJPEG_SIDECAR] = next.mjpegSidecar
+            prefs[K_SRT_MODE] = next.srtMode.ordinal
+            prefs[K_SRT_HOST] = next.srtHost.trim().take(255)
+            prefs[K_SRT_PORT] = next.srtPort.coerceIn(1, 65535)
+            prefs[K_SRT_PASS] = next.srtPassphrase.take(79)
+            prefs[K_SRT_LATENCY] = next.srtLatencyMs.coerceIn(20, 8000)
+            prefs[K_SRT_STREAMID] = next.srtStreamId.trim().take(512)
         }
     }
 
@@ -129,6 +135,12 @@ class SettingsRepository(private val context: Context) {
         sftpHostKeyFingerprint = (p[K_SFTP_FP] ?: "").trim(),
         languageTag = (p[K_LANG] ?: "").trim(),
         mjpegSidecar = p[K_MJPEG_SIDECAR] ?: false,
+        srtMode = SrtMode.entries.getOrNull(p[K_SRT_MODE] ?: 0) ?: SrtMode.CALLER,
+        srtHost = (p[K_SRT_HOST] ?: "").trim(),
+        srtPort = (p[K_SRT_PORT] ?: 9710).coerceIn(1, 65535),
+        srtPassphrase = p[K_SRT_PASS] ?: "",
+        srtLatencyMs = (p[K_SRT_LATENCY] ?: 200).coerceIn(20, 8000),
+        srtStreamId = (p[K_SRT_STREAMID] ?: "").trim(),
     )
 
     /**
@@ -207,5 +219,11 @@ class SettingsRepository(private val context: Context) {
         val K_SFTP_FP = stringPreferencesKey("sftp_host_fingerprint")
         val K_LANG = stringPreferencesKey("language_tag")
         val K_MJPEG_SIDECAR = booleanPreferencesKey("mjpeg_sidecar")
+        val K_SRT_MODE = intPreferencesKey("srt_mode")
+        val K_SRT_HOST = stringPreferencesKey("srt_host")
+        val K_SRT_PORT = intPreferencesKey("srt_port")
+        val K_SRT_PASS = stringPreferencesKey("srt_passphrase")
+        val K_SRT_LATENCY = intPreferencesKey("srt_latency_ms")
+        val K_SRT_STREAMID = stringPreferencesKey("srt_streamid")
     }
 }

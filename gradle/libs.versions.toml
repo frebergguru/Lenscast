@@ -1,19 +1,20 @@
 [versions]
-agp = "8.5.2"
-kotlin = "2.0.21"
-coroutines = "1.9.0"
-core-ktx = "1.13.1"
+agp = "8.9.1"
+kotlin = "2.2.0"
+coroutines = "1.10.2"
+core-ktx = "1.17.0"
 lifecycle = "2.8.7"
-activity-compose = "1.9.3"
-compose-bom = "2024.10.01"
-camerax = "1.4.0"
-datastore = "1.1.1"
-bouncycastle = "1.78.1"
+activity-compose = "1.10.1"
+compose-bom = "2025.01.00"
+camerax = "1.4.2"
+datastore = "1.1.2"
+bouncycastle = "1.79"
 zxing = "3.5.3"
 webrtc = "125.6422.07"
 sshj = "0.39.0"
 slf4j = "2.0.16"
 appcompat = "1.7.0"
+srtdroid = "1.9.5"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
@@ -52,3 +53,5 @@ webrtc-android = { group = "io.github.webrtc-sdk", name = "android", version.ref
 sshj = { group = "com.hierynomus", name = "sshj", version.ref = "sshj" }
 slf4j-nop = { group = "org.slf4j", name = "slf4j-nop", version.ref = "slf4j" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+srtdroid-core = { group = "io.github.thibaultbee.srtdroid", name = "srtdroid-core", version.ref = "srtdroid" }
+srtdroid-ktx = { group = "io.github.thibaultbee.srtdroid", name = "srtdroid-ktx", version.ref = "srtdroid" }

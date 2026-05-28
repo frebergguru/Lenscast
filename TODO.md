@@ -333,28 +333,34 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
       the answer on ICE-gathering complete (non-trickle). Closing this lets
       strict WHEP clients (OBS WHIP/WHEP plugin, future receivers) connect
       without the workarounds the in-house viewer needs. Half-day of work.
-- [ ] **SRT (Secure Reliable Transport) — `Protocol.SRT`.** Haivision's
-      protocol used by every modern broadcaster (OBS / vMix / Wirecast /
-      ffmpeg / SLDP / FFmpeg-based decoders); wraps MPEG-TS in a
-      retransmitting UDP layer with built-in encryption and bandwidth-aware
-      ARQ. Two modes worth supporting:
-        - **Caller**: phone connects out to an SRT listener (the easiest
-          path through NAT — broadcaster has a public listener, phone
-          connects to it).
-        - **Listener**: phone listens on a port; receivers (OBS) point
-          at `srt://<phone-ip>:<port>` and pull.
-      Implementation sketch: bundle Haivision's `libsrt` (LGPL, ~600 KB
-      ARM64 .so) via the published Maven artifact or a manual NDK build,
-      wrap an MPEG-TS muxer around our existing H.264 + AAC encoders,
-      hand each TS packet to libsrt. Most of the encoder plumbing is
-      already in `RtspManager` — the new bit is the TS mux and the
-      SRT socket I/O. Latency is similar to RTSP/TCP but tolerates packet
-      loss far better, which makes it the right call for cellular or
-      congested-Wi-Fi uplinks. Settings: srtPort, srtPassphrase
-      (encryption), srtLatencyMs (the ARQ window — 120–300 ms typical),
-      srtStreamId (for receivers that route by stream-id).
-      ~2–3 days of work including a TS muxer and end-to-end testing
-      against an `srt-live-transmit` listener.
+- [x] **SRT (Secure Reliable Transport) — `Protocol.SRT`.** Uses
+      `io.github.thibaultbee.srtdroid:srtdroid-core:1.9.5` (the ThibaultBee
+      Android wrapper around libsrt) for the socket layer; ~600 KB .so per
+      ABI. Two modes:
+        - **Caller**: phone dials `srt://<host>:<port>` (defaults to UDP
+          9710). Best path through NAT.
+        - **Listener**: phone binds the port; OBS / ffmpeg pull from
+          `srt://<phone-ip>:<port>`.
+      Wraps the existing `H264Encoder` + `AacEncoder` outputs in a
+      hand-rolled `MpegTsMuxer` (188-byte TS packets, PAT/PMT every 50
+      packets, PCR on video PID, AAC ADTS framing) and ships each packet
+      via `SrtPublisher`. Settings: mode, host, port, AES passphrase,
+      ARQ latency window (20–8000 ms), optional stream-id. Same camera
+      pipeline as RTSP, so the FPS / resolution / lens picker behave
+      identically.
+- [ ] **RIST (Reliable Internet Stream Transport) — `Protocol.RIST`.**
+      VSF's vendor-neutral alternative to SRT, also UDP + ARQ + optional
+      AES. Two profiles: **Simple** (just RTP + retransmits — receiver
+      compatibility everywhere) and **Main** (adds GRE tunnelling, NULL
+      packet suppression, tunnel encryption). For broadcast-grade
+      contribution feeds where the receiver (Wowza / Open Broadcaster /
+      Zixi) prefers RIST or where the SRT licence terms (MPL-2) are a
+      blocker. `librist` is BSD-licensed — much friendlier for inclusion
+      than libsrt's MPL-2. Implementation reuses the MPEG-TS muxer from
+      the SRT path; the only new bits are JNI bindings to librist and
+      a Settings block (host, port, profile, encryption, multicast).
+      Once SRT lands the rest is mechanical — ~2 days, mostly the NDK
+      build + JNI surface since no published Android Maven artifact exists.
 
 ### Engineering robustness
 

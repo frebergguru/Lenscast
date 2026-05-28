@@ -1,6 +1,6 @@
 package guru.freberg.lenscast.prefs
 
-enum class Protocol { MJPEG, RTSP, WEBRTC }
+enum class Protocol { MJPEG, RTSP, WEBRTC, SRT }
 
 enum class Lens { BACK, FRONT }
 
@@ -205,4 +205,33 @@ data class Settings(
      * (>30 fps) because high-speed only accepts MediaCodec/preview Surfaces.
      */
     val mjpegSidecar: Boolean = false,
+    /**
+     * Where to send the SRT stream (`Protocol.SRT`):
+     *  - **CALLER** (default): the phone dials out to a remote SRT listener at
+     *    [srtHost]:[srtPort]. Easiest path through NAT.
+     *  - **LISTENER**: the phone listens on [srtPort]; receivers (OBS, ffmpeg)
+     *    pull via `srt://<phone-ip>:<port>`.
+     */
+    val srtMode: SrtMode = SrtMode.CALLER,
+    val srtHost: String = "",
+    val srtPort: Int = 9710,
+    /**
+     * Optional AES passphrase for the SRT encryption. 10–79 ASCII chars. Blank
+     * disables encryption. Receivers must use the same passphrase.
+     */
+    val srtPassphrase: String = "",
+    /**
+     * SRT ARQ latency window in milliseconds. Controls how far back the receiver
+     * can request retransmits. 120 ms is the libsrt default; 300 ms is safer on
+     * cellular uplinks. Lower = lower glass-to-glass delay at the cost of more
+     * dropped frames under packet loss.
+     */
+    val srtLatencyMs: Int = 200,
+    /**
+     * Optional `streamid` for the listener to route the connection. The CALLER
+     * sends it on connect; LISTENER-side filtering is the receiver's job.
+     */
+    val srtStreamId: String = "",
 )
+
+enum class SrtMode { CALLER, LISTENER }

@@ -337,6 +337,7 @@ class StreamingService : LifecycleService() {
                     Protocol.MJPEG  -> startMjpeg(settings)
                     Protocol.RTSP   -> startRtsp(settings)
                     Protocol.WEBRTC -> startWebRtc(settings)
+                    Protocol.SRT    -> startSrt(settings)
                 }
                 _status.value = _status.value.copy(state = State.STREAMING, errorMessage = null)
             } catch (t: Throwable) {
@@ -582,6 +583,7 @@ class StreamingService : LifecycleService() {
                 "mjpeg"  -> Protocol.MJPEG
                 "rtsp"   -> Protocol.RTSP
                 "webrtc" -> Protocol.WEBRTC
+                "srt"    -> Protocol.SRT
                 else     -> return false
             }
             // Can't swap protocols mid-stream — the encoders and server differ.
@@ -898,7 +900,9 @@ class StreamingService : LifecycleService() {
      * mid-RTSP-stream tears down the encoder Surface.
      */
     private suspend fun rebindCameraFor(s: Settings) {
-        if (_status.value.state == State.STREAMING && _status.value.activeProtocol == Protocol.RTSP) return
+        // Both RTSP and SRT lock the camera at stream-start via the Camera2 driver.
+        val p = _status.value.activeProtocol
+        if (_status.value.state == State.STREAMING && (p == Protocol.RTSP || p == Protocol.SRT)) return
         bindCameraIfNeeded(
             s.lens, s.resolution, s.fps.value, s.jpegQuality,
             mirror = s.mirror,
@@ -1094,6 +1098,61 @@ class StreamingService : LifecycleService() {
         sidecarHandler = null
     }
 
+    private suspend fun startSrt(settings: Settings) {
+        // SRT path also goes through Camera2 directly (via RtspCameraDriver), so unwind
+        // any CameraX session before starting.
+        try { cameraController?.unbind() } catch (_: Throwable) {}
+        previewBoundKey = null
+        streamingCamera = true
+        val bitrate = if (settings.rtspBitrateKbps > 0) {
+            settings.rtspBitrateKbps * 1000
+        } else {
+            recommendedVideoBitrate(settings.resolution.width, settings.resolution.height, settings.fps.value)
+        }
+        val rotationDegrees = when (currentRotation) {
+            android.view.Surface.ROTATION_90 -> 90
+            android.view.Surface.ROTATION_180 -> 180
+            android.view.Surface.ROTATION_270 -> 270
+            else -> 0
+        }
+        val srtAudioPermitted = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val srtMode = when (settings.srtMode) {
+            guru.freberg.lenscast.prefs.SrtMode.CALLER   -> guru.freberg.lenscast.streaming.srt.SrtPublisher.Mode.CALLER
+            guru.freberg.lenscast.prefs.SrtMode.LISTENER -> guru.freberg.lenscast.streaming.srt.SrtPublisher.Mode.LISTENER
+        }
+        val mgr = guru.freberg.lenscast.streaming.srt.SrtManager(this).also { srtManager = it }
+        val plan = mgr.start(
+            guru.freberg.lenscast.streaming.srt.SrtManager.Config(
+                lens = settings.lens,
+                resolution = Size(settings.resolution.width, settings.resolution.height),
+                fps = settings.fps.value,
+                videoBitrateBps = bitrate,
+                audioEnabled = settings.audioEnabled && srtAudioPermitted,
+                deviceRotationDegrees = rotationDegrees,
+                micSource = settings.micSource,
+                audioGainDb = settings.audioGainDb,
+                noiseSuppress = settings.noiseSuppress,
+                echoCancel = settings.echoCancel,
+                srtMode = srtMode,
+                srtHost = settings.srtHost,
+                srtPort = settings.srtPort,
+                srtPassphrase = settings.srtPassphrase,
+                srtLatencyMs = settings.srtLatencyMs,
+                srtStreamId = settings.srtStreamId,
+            ),
+            previewSurface = null,
+        )
+        if (plan == null) {
+            throw IllegalStateException(
+                "No camera plan matched ${settings.resolution.label} @ ${settings.fps.value} fps on ${settings.lens}",
+            )
+        }
+        _lastRtspPlan = plan
+    }
+    @Volatile private var srtManager: guru.freberg.lenscast.streaming.srt.SrtManager? = null
+
     private fun startWebRtc(settings: Settings) {
         // WebRTC's Camera2Capturer owns Camera2 exclusively — tear down whatever else
         // might be holding the camera (CameraX preview-only, etc.).
@@ -1285,18 +1344,20 @@ class StreamingService : LifecycleService() {
      * MJPEG path: counted via [broadcaster]. RTSP path: counted by the H.264 encoder.
      */
     fun framesProducedNow(): Long = rtspManager?.framesProduced()?.takeIf { it > 0 }
+        ?: srtManager?.framesProduced()?.takeIf { it > 0 }
         ?: broadcaster.framesProduced()
 
     /** Connected clients across both protocols (for the stats chip). */
     fun connectedClientCount(): Int = (rtspManager?.clientCount() ?: 0) +
-        broadcaster.clientCount() + (webRtcManager?.clientCount() ?: 0)
+        broadcaster.clientCount() + (webRtcManager?.clientCount() ?: 0) + srtClientCount()
 
     /** Per-peer SDP answer for a browser's WebRTC offer; null if WebRTC isn't running. */
     fun webRtcAnswer(offerSdp: String, remoteHostPort: String): String? =
         webRtcManager?.createAnswer(offerSdp, remoteHostPort)
 
     /** Cumulative bytes shipped over the wire since the active server started. */
-    fun bytesSentNow(): Long = (rtspManager?.bytesSent() ?: 0L) + (mjpegServer?.bytesSent() ?: 0L)
+    fun bytesSentNow(): Long = (rtspManager?.bytesSent() ?: 0L) + (mjpegServer?.bytesSent() ?: 0L) +
+        (srtManager?.bytesSent() ?: 0L)
 
     /** `host:port` addresses of every currently streaming client across both protocols. */
     fun clientAddresses(): List<String> =
@@ -1334,6 +1395,7 @@ class StreamingService : LifecycleService() {
     fun setTorch(on: Boolean) {
         cameraController?.torchOn = on
         rtspManager?.setTorch(on)
+        srtManager?.setTorch(on)
     }
 
     fun setZoomRatio(ratio: Float) { cameraController?.setZoomRatio(ratio) }
@@ -1346,8 +1408,15 @@ class StreamingService : LifecycleService() {
     fun setExposureEv(ev: Int) { cameraController?.applyExposureEv(ev) }
     fun setAudioGainDb(db: Int) { rtspManager?.setAudioGainDb(db) }
     /** Last-buffer peak in dBFS, clamped to -90..0. `-90` when no audio path is active. */
+    /** "Clients" for SRT = 1 when connected, 0 otherwise (single-receiver protocol). */
+    private fun srtClientCount(): Int = when (srtManager?.connectionState()) {
+        guru.freberg.lenscast.streaming.srt.SrtPublisher.State.CONNECTED -> 1
+        else -> 0
+    }
+
     fun audioPeakDbfs(): Float = mjpegAudioCapture?.lastPeakDbfs()
         ?: rtspManager?.audioPeakDbfs()
+        ?: srtManager?.audioPeakDbfs()
         ?: -90f
     /** URI of the most recently finalised MP4 recording, or null if none. */
     fun lastRecordingUri(): android.net.Uri? = _lastRecordingUri
@@ -1411,6 +1480,8 @@ class StreamingService : LifecycleService() {
         }
         try { webRtcManager?.stop() } catch (_: Throwable) {}
         webRtcManager = null
+        try { srtManager?.stop() } catch (_: Throwable) {}
+        srtManager = null
         stopNsd()
         _lastRtspPlan = null
         streamingCamera = false
@@ -1463,11 +1534,13 @@ class StreamingService : LifecycleService() {
             Protocol.MJPEG  -> settings.mjpegPort
             Protocol.RTSP   -> settings.rtspPort
             Protocol.WEBRTC -> settings.webControlPort
+            Protocol.SRT    -> settings.srtPort
         }
         val protoLabel = when (settings.protocol) {
             Protocol.MJPEG  -> "MJPEG"
             Protocol.RTSP   -> "RTSP"
             Protocol.WEBRTC -> "WebRTC"
+            Protocol.SRT    -> "SRT"
         }
         val notif: Notification = NotificationCompat.Builder(this, LenscastApp.CHANNEL_STREAMING)
             .setSmallIcon(R.drawable.ic_notification)

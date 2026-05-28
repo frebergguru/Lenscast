@@ -34,6 +34,22 @@
     <string name="settings_protocol_mjpeg">MJPEG over HTTP</string>
     <string name="settings_protocol_rtsp">RTSP (H.264 + AAC)</string>
     <string name="settings_protocol_webrtc">WebRTC (nettleser, H.264)</string>
+    <string name="settings_protocol_srt">SRT (H.264 + AAC over MPEG-TS)</string>
+
+    <string name="settings_srt_section">SRT-transport</string>
+    <string name="settings_srt_mode">Modus</string>
+    <string name="settings_srt_mode_caller">Caller (ring ut)</string>
+    <string name="settings_srt_mode_listener">Listener (mottakere henter)</string>
+    <string name="settings_srt_mode_caller_hint">Telefonen ringer ut til en ekstern SRT-listener. Enkleste vei gjennom NAT — mottakeren må ha en offentlig listener-adresse.</string>
+    <string name="settings_srt_mode_listener_hint">Telefonen lytter på porten under. Mottakere (OBS, ffmpeg) henter via srt://&lt;telefon-ip&gt;:&lt;port&gt;.</string>
+    <string name="settings_srt_host">Ekstern vert</string>
+    <string name="settings_srt_port">Port</string>
+    <string name="settings_srt_passphrase">Krypteringspassord</string>
+    <string name="settings_srt_passphrase_hint">10–79 ASCII-tegn. Tom = ingen kryptering. Mottakere må bruke samme passord.</string>
+    <string name="settings_srt_latency">Latensvindu (ms)</string>
+    <string name="settings_srt_latency_hint">SRT ARQ-vindu. Lavere = mindre forsinkelse; høyere = bedre toleranse for pakketap. 120–300 ms vanlig.</string>
+    <string name="settings_srt_streamid">Stream-ID (valgfritt)</string>
+    <string name="settings_srt_streamid_hint">Sendes ved tilkobling (CALLER). Mottakere bruker det til å rute tilkoblingen. La det stå tomt for de fleste oppsett.</string>
     <string name="settings_resolution">Oppløsning</string>
     <string name="settings_fps">FPS-mål</string>
     <string name="settings_quality">JPEG-kvalitet</string>

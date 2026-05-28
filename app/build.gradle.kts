@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "guru.freberg.lenscast"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "guru.freberg.lenscast"
@@ -50,12 +50,16 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-        freeCompilerArgs += listOf(
-            "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
-            "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api"
-        )
+    // Kotlin 2.2 deprecated the kotlinOptions extension in favour of the compilerOptions
+    // DSL — same knobs, less ceremony.
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+            freeCompilerArgs.addAll(
+                "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
+                "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api",
+            )
+        }
     }
 
     buildFeatures {
@@ -134,6 +138,12 @@ dependencies {
     // Only used for `AppCompatDelegate.setApplicationLocales` — the cross-API shim for the
     // platform LocaleManager (API 33+). We don't use AppCompatActivity or AppCompat themes.
     implementation(libs.androidx.appcompat)
+
+    // libsrt — Haivision's SRT transport. We use ThibaultBee's well-maintained Android
+    // wrapper which ships prebuilt .so for arm64-v8a, armeabi-v7a, x86_64 (~600 KB each).
+    // Pure Kotlin Socket API; we hand-roll the MPEG-TS muxer on top.
+    implementation(libs.srtdroid.core)
+    implementation(libs.srtdroid.ktx)
 
     // JVM unit tests for pure data paths (SDP builder, RTCP SR builder, etc.).
     // The streaming / camera pipeline tests stay deferred — they need Android stubs.

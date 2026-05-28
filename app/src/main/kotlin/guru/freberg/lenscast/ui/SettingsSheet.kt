@@ -120,6 +120,7 @@ fun SettingsSheet(
                         Protocol.MJPEG  -> stringResource(R.string.settings_protocol_mjpeg)
                         Protocol.RTSP   -> stringResource(R.string.settings_protocol_rtsp)
                         Protocol.WEBRTC -> stringResource(R.string.settings_protocol_webrtc)
+                        Protocol.SRT    -> stringResource(R.string.settings_protocol_srt)
                     }
                 },
                 onSelect = { onChange(settings.copy(protocol = it)) },
@@ -138,6 +139,11 @@ fun SettingsSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+            }
+
+            if (settings.protocol == Protocol.SRT) {
+                Spacer(Modifier.height(16.dp))
+                SrtSection(settings = settings, onChange = onChange, streaming = streaming)
             }
 
             Spacer(Modifier.height(16.dp))
@@ -1188,6 +1194,82 @@ private fun LanguageSection(settings: Settings, onChange: (Settings) -> Unit) {
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+@Composable
+private fun SrtSection(settings: Settings, onChange: (Settings) -> Unit, streaming: Boolean) {
+    SectionLabel(stringResource(R.string.settings_srt_section))
+    EnumDropdown(
+        label = stringResource(R.string.settings_srt_mode),
+        options = guru.freberg.lenscast.prefs.SrtMode.entries.toList(),
+        selected = settings.srtMode,
+        labelOf = {
+            when (it) {
+                guru.freberg.lenscast.prefs.SrtMode.CALLER   -> stringResource(R.string.settings_srt_mode_caller)
+                guru.freberg.lenscast.prefs.SrtMode.LISTENER -> stringResource(R.string.settings_srt_mode_listener)
+            }
+        },
+        onSelect = { onChange(settings.copy(srtMode = it)) },
+    )
+    Text(
+        text = stringResource(
+            if (settings.srtMode == guru.freberg.lenscast.prefs.SrtMode.CALLER)
+                R.string.settings_srt_mode_caller_hint
+            else R.string.settings_srt_mode_listener_hint
+        ),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+    )
+    if (settings.srtMode == guru.freberg.lenscast.prefs.SrtMode.CALLER) {
+        OutlinedTextField(
+            value = settings.srtHost,
+            onValueChange = { onChange(settings.copy(srtHost = it)) },
+            label = { Text(stringResource(R.string.settings_srt_host)) },
+            singleLine = true,
+            enabled = !streaming,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+    }
+    OutlinedTextField(
+        value = settings.srtPort.toString(),
+        onValueChange = { onChange(settings.copy(srtPort = it.toIntOrNull() ?: settings.srtPort)) },
+        label = { Text(stringResource(R.string.settings_srt_port)) },
+        singleLine = true,
+        enabled = !streaming,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = settings.srtPassphrase,
+        onValueChange = { onChange(settings.copy(srtPassphrase = it)) },
+        label = { Text(stringResource(R.string.settings_srt_passphrase)) },
+        singleLine = true,
+        enabled = !streaming,
+        supportingText = { Text(stringResource(R.string.settings_srt_passphrase_hint)) },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = settings.srtLatencyMs.toString(),
+        onValueChange = { onChange(settings.copy(srtLatencyMs = it.toIntOrNull() ?: settings.srtLatencyMs)) },
+        label = { Text(stringResource(R.string.settings_srt_latency)) },
+        singleLine = true,
+        enabled = !streaming,
+        supportingText = { Text(stringResource(R.string.settings_srt_latency_hint)) },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = settings.srtStreamId,
+        onValueChange = { onChange(settings.copy(srtStreamId = it)) },
+        label = { Text(stringResource(R.string.settings_srt_streamid)) },
+        singleLine = true,
+        enabled = !streaming,
+        supportingText = { Text(stringResource(R.string.settings_srt_streamid_hint)) },
+        modifier = Modifier.fillMaxWidth(),
     )
 }
 

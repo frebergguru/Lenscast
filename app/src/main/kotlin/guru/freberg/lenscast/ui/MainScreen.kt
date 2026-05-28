@@ -257,7 +257,8 @@ fun MainScreen(
         // is streaming or the surface would fight Camera2Capturer / RtspCameraDriver.
         val proto = settings.protocol
         val nonCameraXActive = streaming && (proto == guru.freberg.lenscast.prefs.Protocol.RTSP
-            || proto == guru.freberg.lenscast.prefs.Protocol.WEBRTC)
+            || proto == guru.freberg.lenscast.prefs.Protocol.WEBRTC
+            || proto == guru.freberg.lenscast.prefs.Protocol.SRT)
         if (nonCameraXActive) return@LaunchedEffect
         try {
             svc.bindCameraIfNeeded(
@@ -306,7 +307,10 @@ fun MainScreen(
         // whose dimensions aren't in the supported list, so guessing the SurfaceView size
         // from screen pixels would crash session config.
         val rtspPlannedSize = remember(settings.protocol, settings.lens, settings.resolution, settings.fps) {
-            if (settings.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP) {
+            // RTSP + SRT both go through RtspCameraDriver, so the planned-size lookup is
+            // the same for both.
+            if (settings.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP
+                || settings.protocol == guru.freberg.lenscast.prefs.Protocol.SRT) {
                 RtspCameraDriver.plan(
                     ctx, settings.lens,
                     android.util.Size(settings.resolution.width, settings.resolution.height),
@@ -410,7 +414,8 @@ fun MainScreen(
                         // pipelines). MJPEG can switch mid-stream via CameraX rebind.
                         val cameraLocked = st.streaming && (
                             st.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP ||
-                            st.protocol == guru.freberg.lenscast.prefs.Protocol.WEBRTC)
+                            st.protocol == guru.freberg.lenscast.prefs.Protocol.WEBRTC ||
+                            st.protocol == guru.freberg.lenscast.prefs.Protocol.SRT)
                         if (!cameraLocked) {
                             OverlayIconButton(
                                 icon = Icons.Outlined.Cameraswitch,
@@ -508,6 +513,9 @@ fun MainScreen(
                 httpsEnabled = settings.httpsEnabled,
                 authUsername = settings.streamUsername,
                 authPassword = settings.streamPassword,
+                srtMode = settings.srtMode,
+                srtHost = settings.srtHost,
+                srtPort = settings.srtPort,
             )
         }
 

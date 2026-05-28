@@ -34,6 +34,22 @@
     <string name="settings_protocol_mjpeg">MJPEG over HTTP</string>
     <string name="settings_protocol_rtsp">RTSP (H.264 + AAC)</string>
     <string name="settings_protocol_webrtc">WebRTC (browser, H.264)</string>
+    <string name="settings_protocol_srt">SRT (H.264 + AAC over MPEG-TS)</string>
+
+    <string name="settings_srt_section">SRT transport</string>
+    <string name="settings_srt_mode">Mode</string>
+    <string name="settings_srt_mode_caller">Caller (dial out)</string>
+    <string name="settings_srt_mode_listener">Listener (receivers pull)</string>
+    <string name="settings_srt_mode_caller_hint">Phone dials out to a remote SRT listener. Easiest path through NAT — the receiver needs a public listener address.</string>
+    <string name="settings_srt_mode_listener_hint">Phone listens on the port below. Receivers (OBS, ffmpeg) pull via srt://&lt;phone-ip&gt;:&lt;port&gt;.</string>
+    <string name="settings_srt_host">Remote host</string>
+    <string name="settings_srt_port">Port</string>
+    <string name="settings_srt_passphrase">Encryption passphrase</string>
+    <string name="settings_srt_passphrase_hint">10–79 ASCII characters. Blank disables encryption. Receivers must use the same passphrase.</string>
+    <string name="settings_srt_latency">Latency window (ms)</string>
+    <string name="settings_srt_latency_hint">SRT ARQ window. Lower = lower glass-to-glass delay; higher = better packet-loss tolerance. 120–300 ms typical.</string>
+    <string name="settings_srt_streamid">Stream ID (optional)</string>
+    <string name="settings_srt_streamid_hint">Sent on connect (CALLER). Receivers use it to route the connection. Leave blank for most setups.</string>
     <string name="settings_resolution">Resolution</string>
     <string name="settings_fps">Target FPS</string>
     <string name="settings_quality">JPEG quality</string>

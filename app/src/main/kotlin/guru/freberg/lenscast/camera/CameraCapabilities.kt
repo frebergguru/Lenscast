@@ -64,6 +64,9 @@ object CameraCapabilities {
         // as MJPEG: standard sessions, ≤30 fps. We don't probe MediaCodec here — the
         // PeerConnectionFactory's encoder picker chooses what the device supports.
         Protocol.WEBRTC -> !fps.isHighSpeed && lensHasAeRangeContaining(context, lens, fps.value)
+
+        // SRT reuses the RTSP camera driver and H.264 encoder; same capability constraints.
+        Protocol.SRT -> RtspCameraDriver.plan(context, lens, size, fps.value) != null
     }
 
     /**

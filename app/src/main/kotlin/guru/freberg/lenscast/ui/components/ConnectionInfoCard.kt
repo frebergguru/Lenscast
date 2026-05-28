@@ -59,6 +59,9 @@ fun ConnectionInfoCard(
     httpsEnabled: Boolean = false,
     authUsername: String = "",
     authPassword: String = "",
+    srtMode: guru.freberg.lenscast.prefs.SrtMode = guru.freberg.lenscast.prefs.SrtMode.CALLER,
+    srtHost: String = "",
+    srtPort: Int = 9710,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -80,10 +83,12 @@ fun ConnectionInfoCard(
                 Protocol.MJPEG  -> mjpegPort
                 Protocol.RTSP   -> rtspPort
                 Protocol.WEBRTC -> webControlPort
+                Protocol.SRT    -> srtPort
             }
             // HTTPS toggle now wraps both MJPEG (https://) and RTSP (rtsps://). WebRTC
             // reuses the web control HTTP(S) port for signalling.
             val scheme = when {
+                protocol == Protocol.SRT                   -> "srt"
                 protocol == Protocol.WEBRTC && httpsEnabled -> "https"
                 protocol == Protocol.WEBRTC               -> "http"
                 protocol == Protocol.MJPEG && httpsEnabled -> "https"
@@ -95,11 +100,19 @@ fun ConnectionInfoCard(
                 Protocol.MJPEG  -> "/video"
                 Protocol.WEBRTC -> "/webrtc/view"
                 Protocol.RTSP   -> ""
+                Protocol.SRT    -> ""
             }
             // Embed user:pass@ when the password is set — both servers ([Mjpeg|Rtsp]Server)
             // honour Basic auth with the same credentials.
             val auth = if (authPassword.isNotEmpty()) "${authUsername.ifBlank { "Lenscast" }}:$authPassword@" else ""
-            val wifiUrl = wifiIp?.let { "$scheme://$auth$it:$port$path" }
+            // For SRT, the URL shape depends on direction:
+            //   - LISTENER: receiver connects to the phone → srt://<phone-ip>:<srtPort>
+            //   - CALLER:   phone dials out → srt://<configured-host>:<srtPort> (no auth in URL)
+            val wifiUrl = when {
+                protocol == Protocol.SRT && srtMode == guru.freberg.lenscast.prefs.SrtMode.CALLER ->
+                    if (srtHost.isNotBlank()) "srt://$srtHost:$srtPort" else null
+                else -> wifiIp?.let { "$scheme://$auth$it:$port$path" }
+            }
             UrlRow(
                 icon = if (wifiIp != null) Icons.Outlined.Wifi else Icons.Outlined.WifiOff,
                 label = stringResource(R.string.card_connection_wifi),
