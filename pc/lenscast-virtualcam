@@ -132,9 +132,13 @@ trap 'echo; echo "stopping..."; exit 0' INT TERM
 # Reconnect with a short backoff so unplug/replug "just works".
 while true; do
   # MJPEG decodes to yuvj420p (JPEG full-range YUV); v4l2 consumers expect yuv420p
-  # (BT.601 limited-range). The explicit scale filter does that conversion without
-  # the implicit-range swscaler warning that ffmpeg prints otherwise.
-  ffmpeg -hide_banner -loglevel warning \
+  # (BT.601 limited-range). The explicit scale filter does the range conversion.
+  #
+  # loglevel=error (not "warning") on purpose: libswscale emits a deprecation notice
+  # for every yuvj420p frame it touches — that's just the deprecated-format name
+  # being flagged, nothing the user can act on. Real errors (stream gone, device
+  # busy, etc.) still print, and our outer reconnect loop handles stream drops.
+  ffmpeg -hide_banner -loglevel error \
     -fflags nobuffer -flags low_delay \
     -f mjpeg -i "$URL" \
     "${FPS_FLAG[@]}" \
