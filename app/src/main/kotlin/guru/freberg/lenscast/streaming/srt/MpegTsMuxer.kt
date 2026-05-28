@@ -49,9 +49,12 @@ class MpegTsMuxer(
             sentFirstVideoKeyframe = true
         }
         maybeWritePsi()
-        // Convert NALs to Annex-B (each preceded by 0x00 0x00 0x00 0x01). If this is the
-        // first packet of the keyframe, also prepend SPS + PPS so decoders can sync.
+        // Convert NALs to Annex-B (each preceded by 0x00 0x00 0x00 0x01). Prepend an
+        // Access Unit Delimiter NAL (type 9) so MPEG-TS demuxers can find frame
+        // boundaries without sniffing slice headers; on keyframes, also prepend SPS+PPS
+        // so receivers that joined mid-stream can sync without waiting for the next IDR.
         val annexB = mutableListOf<ByteArray>()
+        annexB += AUD_NAL
         if (isKeyframe) {
             sps?.let { annexB += it }
             pps?.let { annexB += it }
@@ -78,7 +81,12 @@ class MpegTsMuxer(
     }
 
     private fun maybeWritePsi() {
-        if (packetCountSincePsi == 0) {
+        // `<= 0`, not `== 0`: a single 4 K keyframe burns ~500 TS packets, taking the
+        // counter well into negative territory. Comparing for equality meant we sent PSI
+        // exactly once at start and never again, leaving any receiver that joined after
+        // the initial PAT/PMT permanently without tables and triggering an endless
+        // "Packet corrupt"/"non-existing PPS 0 referenced" stream on the receiver.
+        if (packetCountSincePsi <= 0) {
             sink(buildPat())
             sink(buildPmt())
             packetCountSincePsi = PSI_INTERVAL_PACKETS
@@ -317,5 +325,12 @@ class MpegTsMuxer(
         private const val STREAM_ID_VIDEO = 0xE0
         private const val STREAM_ID_AUDIO = 0xC0
         private const val PSI_INTERVAL_PACKETS = 50 // Send PAT+PMT roughly every 50 TS packets.
+
+        /**
+         * Access Unit Delimiter NAL: nal_unit_type=9, primary_pic_type=0xF0 (all types).
+         * Two bytes — 0x09 (forbidden=0, nri=0, type=9) + 0xF0. Telling the decoder
+         * "this is a new access unit" without forcing it to sniff slice_header bits.
+         */
+        private val AUD_NAL = byteArrayOf(0x09, 0xF0.toByte())
     }
 }

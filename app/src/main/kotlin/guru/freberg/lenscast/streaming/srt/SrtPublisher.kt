@@ -148,7 +148,12 @@ class SrtPublisher(
                     System.arraycopy(pkt, 0, bundle, bundleOffset, 188)
                     bundleOffset += 188
                     if (bundleOffset >= TS_BUNDLE_BYTES) {
-                        val n = s.send(bundle)
+                        // copyOf() defensively — srtdroid's send() *should* be synchronous
+                        // (libsrt's srt_send copies into the SRT send buffer and returns)
+                        // but if it ever queues asynchronously, reusing `bundle` while it's
+                        // in-flight would corrupt the bytes on the wire. ~10 KB/s of
+                        // allocation at typical SRT rates is negligible vs. the risk.
+                        val n = s.send(bundle.copyOf())
                         if (n > 0) bytesSent += n
                         bytesSentLog += n
                         bundleOffset = 0
@@ -156,8 +161,7 @@ class SrtPublisher(
                 } else if (bundleOffset > 0) {
                     // No new packet in 5 ms — flush whatever's buffered so the receiver
                     // doesn't sit waiting for the bundle to fill.
-                    val partial = bundle.copyOf(bundleOffset)
-                    val n = s.send(partial)
+                    val n = s.send(bundle.copyOf(bundleOffset))
                     if (n > 0) bytesSent += n
                     bytesSentLog += n
                     bundleOffset = 0
