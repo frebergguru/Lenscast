@@ -40,6 +40,7 @@ class SettingsRepository(private val context: Context) {
             prefs[K_EV] = next.exposureEv
             prefs[K_WB] = next.whiteBalance.ordinal
             prefs[K_AB] = next.antiBanding.ordinal
+            prefs[K_USERNAME] = next.streamUsername.ifBlank { "Lenscast" }
             prefs[K_PASSWORD] = next.streamPassword
             prefs[K_AUTO_START] = next.autoStart
             prefs[K_RTSP_BITRATE] = next.rtspBitrateKbps.coerceIn(0, 50_000)
@@ -82,6 +83,7 @@ class SettingsRepository(private val context: Context) {
         exposureEv = p[K_EV] ?: 0,
         whiteBalance = WhiteBalance.entries.getOrNull(p[K_WB] ?: 0) ?: WhiteBalance.AUTO,
         antiBanding = AntiBanding.entries.getOrNull(p[K_AB] ?: 0) ?: AntiBanding.AUTO,
+        streamUsername = (p[K_USERNAME] ?: "Lenscast").ifBlank { "Lenscast" },
         streamPassword = p[K_PASSWORD] ?: "",
         autoStart = p[K_AUTO_START] ?: false,
         rtspBitrateKbps = (p[K_RTSP_BITRATE] ?: 0).coerceIn(0, 50_000),
@@ -150,6 +152,7 @@ class SettingsRepository(private val context: Context) {
         val K_EV = intPreferencesKey("ev")
         val K_WB = intPreferencesKey("wb")
         val K_AB = intPreferencesKey("ab")
+        val K_USERNAME = stringPreferencesKey("username")
         val K_PASSWORD = stringPreferencesKey("password")
         val K_AUTO_START = booleanPreferencesKey("auto_start")
         val K_RTSP_BITRATE = intPreferencesKey("rtsp_bitrate")

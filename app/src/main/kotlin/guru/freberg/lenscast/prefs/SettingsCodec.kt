@@ -32,6 +32,7 @@ object SettingsCodec {
             put("exposureEv", s.exposureEv)
             put("whiteBalance", s.whiteBalance.name)
             put("antiBanding", s.antiBanding.name)
+            put("streamUsername", s.streamUsername)
             put("streamPassword", s.streamPassword)
             put("autoStart", s.autoStart)
             put("rtspBitrateKbps", s.rtspBitrateKbps)
@@ -93,6 +94,7 @@ object SettingsCodec {
             exposureEv = o.optInt("exposureEv", d.exposureEv),
             whiteBalance = enumByName(o, "whiteBalance", d.whiteBalance),
             antiBanding = enumByName(o, "antiBanding", d.antiBanding),
+            streamUsername = o.optString("streamUsername", d.streamUsername).ifBlank { "Lenscast" },
             streamPassword = o.optString("streamPassword", d.streamPassword),
             autoStart = o.optBoolean("autoStart", d.autoStart),
             rtspBitrateKbps = o.optInt("rtspBitrateKbps", d.rtspBitrateKbps).coerceIn(0, 50_000),

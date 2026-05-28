@@ -397,6 +397,7 @@ class StreamingService : LifecycleService() {
 
         val server = MjpegServer(
             broadcaster, settings.mjpegPort, settings.fps.value,
+            username = settings.streamUsername,
             password = settings.streamPassword,
             audioBroadcaster = audioBroadcaster,
             sslContext = if (settings.httpsEnabled) TlsManager.forContext(this).sslContext() else null,
@@ -742,6 +743,17 @@ class StreamingService : LifecycleService() {
                     val p = value.toIntOrNull()?.takeIf { it in 1024..65535 } ?: return null
                     Pair({ it.copy(rtspPort = p) }, false)
                 }
+                "streamUsername" -> {
+                    if (streaming) return null
+                    // Coerce blank back to the default so the user can never lock
+                    // themselves out of an auth-gated URL by saving an empty user.
+                    val u = value.trim().ifBlank { "Lenscast" }
+                    Pair({ it.copy(streamUsername = u) }, false)
+                }
+                "streamPassword" -> {
+                    if (streaming) return null
+                    Pair({ it.copy(streamPassword = value) }, false)
+                }
                 else -> null
             }
         }
@@ -780,7 +792,18 @@ class StreamingService : LifecycleService() {
                 this@StreamingService, s.lens, s.resolution, s.protocol,
             ).joinToString(",")
             fun lower(any: Any) = any.toString().lowercase()
-            // Hand-rolled JSON — values are well-known primitives, no escaping needed.
+            fun jsonEscape(t: String): String = buildString(t.length) {
+                for (c in t) when {
+                    c == '"'  -> append("\\\"")
+                    c == '\\' -> append("\\\\")
+                    c == '\n' -> append("\\n")
+                    c == '\r' -> append("\\r")
+                    c == '\t' -> append("\\t")
+                    c.code < 0x20 -> append("\\u%04x".format(c.code))
+                    else -> append(c)
+                }
+            }
+            // Hand-rolled JSON — fixed primitives plus jsonEscape for free-text fields.
             return "{" +
                 """"state":"$st","protocol":"$protoLabel","lens":"$lensLabel",""" +
                 """"torch":${torchIsOn()},""" +
@@ -802,6 +825,7 @@ class StreamingService : LifecycleService() {
                 """"httpsEnabled":${s.httpsEnabled},""" +
                 """"tlsFingerprint":"${TlsManager.forContext(this@StreamingService).fingerprintSha256() ?: ""}",""" +
                 """"callBehavior":"${lower(s.callBehavior)}",""" +
+                """"streamUsername":"${jsonEscape(s.streamUsername)}",""" +
                 """"persistentWebControl":${s.persistentWebControl},""" +
                 """"supportsManualSensor":${CameraCapabilities.supportsManualSensor(this@StreamingService, s.lens)},""" +
                 """"isoRange":${CameraCapabilities.isoRange(this@StreamingService, s.lens)?.let { "[${it.lower},${it.upper}]" } ?: "null"},""" +

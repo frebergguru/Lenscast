@@ -78,7 +78,9 @@ class MjpegServer(
     private val broadcaster: FrameBroadcaster,
     private val port: Int,
     private val targetFps: Int,
-    /** Optional HTTP Basic auth passcode. Empty = open. Username fixed to `lenscast`. */
+    /** HTTP Basic auth username — only meaningful when [password] is non-empty. */
+    private val username: String = "Lenscast",
+    /** Optional HTTP Basic auth password. Empty = open access; [username] is then unused. */
     private val password: String = "",
     /** Non-null when MJPEG-path audio is also being streamed. Drives the `/audio` endpoint. */
     private val audioBroadcaster: AudioBroadcaster? = null,
@@ -192,7 +194,7 @@ class MjpegServer(
         if (colon < 0) return false
         val user = decoded.substring(0, colon)
         val pwd = decoded.substring(colon + 1)
-        return user == AUTH_USER && pwd == password
+        return user == username && pwd == password
     }
 
     private fun writeUnauthorized(out: OutputStream) {
@@ -390,7 +392,6 @@ class MjpegServer(
     companion object {
         private const val TAG = "MjpegServer"
         private const val BOUNDARY = "lenscastframe"
-        const val AUTH_USER = "lenscast"
         private val TRAILER = "\r\n".toByteArray(Charsets.US_ASCII)
 
         private val STREAM_RESPONSE_HEADER = (

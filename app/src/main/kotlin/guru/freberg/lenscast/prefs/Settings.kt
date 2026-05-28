@@ -104,10 +104,12 @@ data class Settings(
     val whiteBalance: WhiteBalance = WhiteBalance.AUTO,
     val antiBanding: AntiBanding = AntiBanding.AUTO,
     /**
-     * Optional HTTP Basic auth passcode for the MJPEG endpoints. Empty string = open access
-     * (current behaviour). Username is fixed to `lenscast`; receivers can put it in the URL
-     * as `http://lenscast:<pwd>@<ip>:4747/video`.
+     * Optional HTTP Basic auth for the MJPEG endpoints. Empty password = open access
+     * (username is irrelevant in that case). Default username is "Lenscast"; users can
+     * change it. Receivers embed both in the URL as
+     * `http://<user>:<pwd>@<ip>:4747/video`.
      */
+    val streamUsername: String = "Lenscast",
     val streamPassword: String = "",
     val autoStart: Boolean = false,
     /** RTSP encoder bitrate cap in kbps. 0 = use the resolution+fps heuristic. */

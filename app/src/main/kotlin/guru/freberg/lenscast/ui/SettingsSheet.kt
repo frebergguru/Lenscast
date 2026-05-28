@@ -625,6 +625,23 @@ fun SettingsSheet(
 
             SettingsGroup(title = "Security & access") {
             SectionLabel(stringResource(R.string.settings_security_section))
+            var user by remember(settings.streamUsername) { mutableStateOf(settings.streamUsername) }
+            OutlinedTextField(
+                value = user,
+                onValueChange = { newUser ->
+                    user = newUser
+                    // Persist whatever the user types; the repository / status JSON
+                    // already coerce blank back to "Lenscast" so an empty box doesn't
+                    // lock anyone out of a passworded URL.
+                    onChange(settings.copy(streamUsername = newUser))
+                },
+                label = { Text(stringResource(R.string.settings_username)) },
+                singleLine = true,
+                enabled = !streaming,
+                supportingText = { Text(stringResource(R.string.settings_username_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
             var pwd by remember(settings.streamPassword) { mutableStateOf(settings.streamPassword) }
             OutlinedTextField(
                 value = pwd,
