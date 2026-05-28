@@ -14,7 +14,7 @@ screen locks or the app is backgrounded.
 Single `app/` Gradle module. Source tree:
 
 ```
-app/src/main/kotlin/dev/lenscast/
+app/src/main/kotlin/guru/freberg/lenscast/
 ├── LenscastApp.kt            # Application — creates the FGS notification channel
 ├── MainActivity.kt           # Compose host; binds StreamingService
 ├── camera/

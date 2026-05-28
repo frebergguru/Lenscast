@@ -25,7 +25,7 @@ a private discussion thread tied to the repo with an embargo timeline.
 Please include:
 
 - The Lenscast version you're testing (`Settings sheet → bottom of the sheet`,
-  or `adb shell dumpsys package dev.lenscast | grep versionName`).
+  or `adb shell dumpsys package guru.freberg.lenscast | grep versionName`).
 - Phone make / model and Android version.
 - A reproduction recipe — what URL you hit, what payload, what you observed.
 - Impact: what an attacker can do (read frames? execute code? drain battery?).

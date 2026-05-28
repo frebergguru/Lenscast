@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "dev.lenscast"
+    namespace = "guru.freberg.lenscast"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "dev.lenscast"
+        applicationId = "guru.freberg.lenscast"
         minSdk = 26
         targetSdk = 35
         versionCode = 2
@@ -69,7 +69,10 @@ android {
                 "/META-INF/{AL2.0,LGPL2.1}",
                 "/META-INF/DEPENDENCIES",
                 "/META-INF/LICENSE*",
-                "/META-INF/NOTICE*"
+                "/META-INF/NOTICE*",
+                // Bouncy Castle ships per-Java-version OSGI manifests that conflict
+                // across bcprov, bcpkix and bcutil. We don't use OSGi.
+                "/META-INF/versions/9/OSGI-INF/MANIFEST.MF",
             )
         }
     }
@@ -99,4 +102,12 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
 
     implementation(libs.kotlinx.coroutines.android)
+
+    // HTTPS — software-side cert + RSA key generation. AndroidKeyStore's TLS server
+    // story is unreliable across vendor keymasters (Conscrypt's RSA upcalls hit
+    // KM_TAG digest restrictions that can't be satisfied even with the broadest
+    // KeyGenParameterSpec on some devices). Bouncy Castle builds the cert; the key
+    // lives in a PKCS12 file in app-private storage.
+    implementation(libs.bouncycastle.bcprov)
+    implementation(libs.bouncycastle.bcpkix)
 }

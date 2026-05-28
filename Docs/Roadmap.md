@@ -231,7 +231,7 @@ shows a note that only landscape orientation is supported, so users know to rota
 phone before tapping Start.
 
 The MJPEG path rotates each frame per `imageProxy.imageInfo.rotationDegrees` in
-[`YuvToJpeg`](../app/src/main/kotlin/dev/lenscast/camera/YuvToJpeg.kt), so MJPEG output
+[`YuvToJpeg`](../app/src/main/kotlin/guru/freberg/lenscast/camera/YuvToJpeg.kt), so MJPEG output
 is always upright regardless of how the phone is held.
 
 The RTSP path doesn't, because the H.264 encoder is fed by the camera's Surface

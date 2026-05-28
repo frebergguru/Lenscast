@@ -56,14 +56,14 @@ else or if you prefer to use `$JAVA_HOME`.
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The installed package id is `dev.lenscast` for both debug and release variants — the
+The installed package id is `guru.freberg.lenscast` for both debug and release variants — the
 debug build deliberately shares the applicationId so `adb install -r` upgrades whichever
 copy is already on the device.
 
 To start the app remotely after install:
 
 ```bash
-adb shell monkey -p dev.lenscast -c android.intent.category.LAUNCHER 1
+adb shell monkey -p guru.freberg.lenscast -c android.intent.category.LAUNCHER 1
 ```
 
 ## What gets downloaded on first build
