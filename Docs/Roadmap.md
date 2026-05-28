@@ -90,6 +90,11 @@
 - **Web control — JPEG quality slider** — debounced `POST /control/quality?v=NN`
   endpoint; the slider in the landing page updates `CameraController.jpegQuality`
   live without rebinding the camera.
+- **Light-theme surface tones.** The light scheme now overrides
+  `surfaceContainer{,High,Highest}`, `surfaceVariant`, `onSurfaceVariant`,
+  `primaryContainer`, `onPrimaryContainer` and `outline` with violet-tinted whites
+  so the connection card and URL row stack have proper layered contrast in light
+  mode. Six new colour constants in `theme/Color.kt`.
 - **Settings export / import.** `SettingsCodec` (hand-rolled with `org.json`,
   versioned, tolerant of missing fields) gives JSON in/out for the whole
   `Settings` blob. Phone Settings sheet has Export/Import buttons via SAF
@@ -97,6 +102,13 @@
   download link plus a paste-in textarea backed by `GET /export` and
   `POST /import`. `WebControlServer.handle` now reads the request body when
   `Content-Length` is present so the import endpoint receives the JSON.
+- **Linux helper: GTK GUI.** `pc/lenscast-virtualcam-gui` — single-file Python/GTK3
+  wrapper around the bash helper. URL field with mDNS discovery (avahi-browse),
+  loopback dropdown auto-detected from `v4l2-ctl`, audio + insecure toggles, a
+  Start/Stop button with a live log pane. Settings persist to
+  `~/.config/lenscast/gui.json`. GTK3 (not GTK4) for the widest desktop
+  compatibility; no tray icon since AppIndicator is unreliable across modern
+  GNOME/KDE/Wayland.
 - **Linux helper: audio + HTTPS.** `lenscast-virtualcam -a` creates a PulseAudio
   null sink and forwards `/audio` (PCM-16LE WAV) into it via a parallel ffmpeg
   with the same auto-reconnect loop as video; downstream apps pick
@@ -226,8 +238,5 @@ lands, the Settings sheet shows users a note that RTSP is landscape-only.
 
 ### Minor polish
 
-- **Light theme polish.** The Material 3 light scheme is wired but rarely used; tweak
-  contrast on the connection card.
-
-(Tap-to-focus, pinch-to-zoom, snapshot button, encoder bitrate cap and the QS tile
-all landed — see *Done* above.)
+(Tap-to-focus, pinch-to-zoom, snapshot button, encoder bitrate cap, the QS tile and
+the light-theme surface tones all landed — see *Done* above.)

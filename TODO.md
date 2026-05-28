@@ -182,7 +182,11 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
       enforced server-side.
 - [x] **Encoder bitrate cap** — RTSP-only slider in Settings (0 kbps = use the
       resolution+fps heuristic).
-- [ ] **Light theme polish** — already in [Roadmap → Minor polish](Docs/Roadmap.md).
+- [x] **Light theme polish** — fill out the `lightColorScheme` with brand-tinted
+      surface tones (surfaceContainer / surfaceContainerHigh / surfaceContainerHighest /
+      surfaceVariant / primaryContainer / outline / onSurfaceVariant). The default M3
+      light scheme left those at pure-white grays, collapsing the URL row stack inside
+      the connection card. Six new colour constants in `theme/Color.kt`.
 
 ## Desktop / PC-side
 
@@ -194,9 +198,14 @@ has the Linux v4l2loopback helper only.
       out as out-of-scope in the roadmap; track here so the gap is explicit.
 - [ ] **macOS virtual-camera System Extension** — same shape as Windows. Needs
       Apple notarization.
-- [ ] **GUI for the Linux helper** — `lenscast-virtualcam` is CLI today. A small
-      tray app (start/stop, pick device, pick stream URL) closes most of the gap
-      with the Droidcam desktop UX.
+- [x] **GUI for the Linux helper** — `pc/lenscast-virtualcam-gui` is a
+      single-file Python/GTK3 wrapper. URL field with **Find on LAN**
+      (mDNS discovery via `avahi-browse`), loopback dropdown
+      (auto-detected from `v4l2-ctl`), audio + insecure toggles, Start/Stop
+      with a streaming log view. Settings persist to
+      `~/.config/lenscast/gui.json`. No tray icon (Ayatana AppIndicator is
+      finicky across desktops), but the window is small enough to live on a
+      workspace by itself.
 - [x] **Linux helper — audio + HTTPS.** `lenscast-virtualcam -a` creates a
       PulseAudio null sink (`lenscast`) and runs a parallel ffmpeg pulling
       `/audio` (PCM-16LE WAV) into it; apps pick "Monitor of Lenscast" as a

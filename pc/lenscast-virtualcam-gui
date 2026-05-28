@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""
+lenscast-virtualcam-gui — small GTK3 window around the lenscast-virtualcam shell
+script. Lets the user pick a stream URL, loopback device, audio + HTTPS options,
+and start/stop the bridge without touching a terminal. mDNS auto-discovers any
+Lenscast phones on the LAN via avahi-browse.
+
+Why GTK3 + PyGObject specifically:
+  - PyGObject is preinstalled on virtually every desktop Linux distro that ships
+    GNOME, KDE, XFCE, MATE or Cinnamon — so most users can just run this.
+  - GTK3 (not GTK4) because some distros (Mint LMDE, Debian stable) still pin
+    pygobject to GTK3-only. The UI is plain enough that the GTK3 look fits.
+  - No tray-icon support: Ayatana AppIndicator is hit-and-miss across GNOME
+    versions and Wayland sessions. The window is small enough to live on a
+    workspace by itself.
+
+The Settings sheet:
+  - Persists to ~/.config/lenscast/gui.json so reopening the app remembers what
+    you streamed last.
+  - mDNS discoveries appear as a dropdown next to the URL field. avahi-browse
+    is optional — without it the dropdown just stays empty and the user types
+    the URL by hand.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import signal
+import subprocess
+import threading
+from pathlib import Path
+
+import gi  # type: ignore[import-not-found]
+gi.require_version("Gtk", "3.0")
+gi.require_version("GLib", "2.0")
+from gi.repository import GLib, Gtk  # noqa: E402  pylint: disable=wrong-import-position
+
+# Resolve the bash helper relative to this script so a `git clone && cd pc && ./...gui`
+# workflow works without PATH setup.
+SCRIPT_PATH = (
+    shutil.which("lenscast-virtualcam")
+    or str(Path(__file__).resolve().parent / "lenscast-virtualcam")
+)
+
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "lenscast"
+CONFIG_FILE = CONFIG_DIR / "gui.json"
+
+
+def load_config() -> dict:
+    try:
+        return json.loads(CONFIG_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_config(cfg: dict) -> None:
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        CONFIG_FILE.write_text(json.dumps(cfg, indent=2))
+    except OSError:
+        pass  # not worth surfacing — the user can still operate the app
+
+
+def discover_lenscast(timeout: float = 2.0) -> list[str]:
+    """
+    Use avahi-browse to find Lenscast advertisements on the LAN. Returns a list of
+    URL hints like 'http://192.168.1.42:4747/video'. Empty list if avahi-browse
+    isn't installed or no instances are visible.
+    """
+    if not shutil.which("avahi-browse"):
+        return []
+    try:
+        out = subprocess.run(
+            ["avahi-browse", "--resolve", "--parsable", "--terminate", "_http._tcp"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        ).stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return []
+    hits: list[str] = []
+    for line in out.splitlines():
+        # Resolved-record lines start with '=' (parsable output). Fields are
+        # ;-separated: =;iface;proto;name;type;domain;hostname;ip;port;txt
+        if not line.startswith("=") or "Lenscast" not in line:
+            continue
+        parts = line.split(";")
+        if len(parts) < 9:
+            continue
+        ip, port = parts[7], parts[8]
+        if ":" in ip:  # IPv6 — bracket it
+            ip = f"[{ip}]"
+        url = f"http://{ip}:{port}/video"
+        if url not in hits:
+            hits.append(url)
+    return hits
+
+
+def detect_loopback() -> str:
+    """Pick the first v4l2loopback device the kernel exposes, or fall back to /dev/video10."""
+    if not shutil.which("v4l2-ctl"):
+        return "/dev/video10"
+    try:
+        out = subprocess.run(
+            ["v4l2-ctl", "--list-devices"], capture_output=True, text=True, timeout=2.0
+        ).stdout
+    except (subprocess.TimeoutExpired, OSError):
+        return "/dev/video10"
+    capturing = False
+    for line in out.splitlines():
+        if "v4l2loopback" in line.lower():
+            capturing = True
+            continue
+        if capturing and line.startswith("\t"):
+            return line.strip()
+        if capturing and line.strip() == "":
+            capturing = False
+    return "/dev/video10"
+
+
+class LenscastGUI:
+    def __init__(self) -> None:
+        cfg = load_config()
+        self.process: subprocess.Popen | None = None
+        self.window = Gtk.Window(title="Lenscast — virtual camera")
+        self.window.set_default_size(560, 420)
+        self.window.set_border_width(12)
+        self.window.connect("destroy", self._on_destroy)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.window.add(outer)
+
+        grid = Gtk.Grid(column_spacing=8, row_spacing=8)
+        outer.pack_start(grid, False, False, 0)
+
+        # URL field + discover button
+        grid.attach(Gtk.Label(label="Stream URL", xalign=0.0), 0, 0, 1, 1)
+        self.url_entry = Gtk.Entry()
+        self.url_entry.set_hexpand(True)
+        self.url_entry.set_placeholder_text("http://192.168.1.42:4747/video")
+        self.url_entry.set_text(cfg.get("url", ""))
+        grid.attach(self.url_entry, 1, 0, 1, 1)
+        discover_btn = Gtk.Button(label="Find on LAN")
+        discover_btn.set_tooltip_text(
+            "Run avahi-browse to find Lenscast instances advertising via mDNS"
+        )
+        discover_btn.connect("clicked", self._on_discover)
+        grid.attach(discover_btn, 2, 0, 1, 1)
+
+        # Device dropdown
+        grid.attach(Gtk.Label(label="Loopback", xalign=0.0), 0, 1, 1, 1)
+        self.device_combo = Gtk.ComboBoxText.new_with_entry()
+        self.device_combo.set_hexpand(True)
+        for d in ("/dev/video10", "/dev/video20", "/dev/video30"):
+            self.device_combo.append_text(d)
+        # Auto-detect, fall back to last-saved or the canonical default.
+        self.device_combo.get_child().set_text(cfg.get("device", detect_loopback()))
+        grid.attach(self.device_combo, 1, 1, 2, 1)
+
+        # Toggles
+        self.audio_check = Gtk.CheckButton(label="Forward audio → virtual mic (PulseAudio)")
+        self.audio_check.set_active(cfg.get("audio", False))
+        outer.pack_start(self.audio_check, False, False, 0)
+        self.insecure_check = Gtk.CheckButton(
+            label="Accept self-signed HTTPS certs (use with https:// URLs)"
+        )
+        self.insecure_check.set_active(cfg.get("insecure", False))
+        outer.pack_start(self.insecure_check, False, False, 0)
+
+        # Start/Stop row
+        button_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        outer.pack_start(button_row, False, False, 0)
+        self.start_button = Gtk.Button(label="Start streaming")
+        self.start_button.connect("clicked", self._on_start_stop)
+        button_row.pack_start(self.start_button, True, True, 0)
+        self.status_label = Gtk.Label(label="idle")
+        self.status_label.set_xalign(0.0)
+        button_row.pack_end(self.status_label, False, False, 0)
+
+        # Log pane
+        outer.pack_start(Gtk.Label(label="Output:", xalign=0.0), False, False, 0)
+        log_scroll = Gtk.ScrolledWindow()
+        log_scroll.set_vexpand(True)
+        log_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        self.log_view = Gtk.TextView()
+        self.log_view.set_editable(False)
+        self.log_view.set_monospace(True)
+        self.log_buffer = self.log_view.get_buffer()
+        log_scroll.add(self.log_view)
+        outer.pack_start(log_scroll, True, True, 0)
+
+        self.window.show_all()
+
+    # ─── UI handlers ───────────────────────────────────────────────────────
+
+    def _on_discover(self, _btn: Gtk.Button) -> None:
+        self._append_log("Scanning LAN for Lenscast instances…\n")
+        # Run discovery off the UI thread; avahi-browse blocks for `--terminate`.
+        def worker() -> None:
+            hits = discover_lenscast()
+            GLib.idle_add(self._apply_discover, hits)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_discover(self, hits: list[str]) -> bool:
+        if not hits:
+            self._append_log("  (no Lenscast advertisements found — type the URL manually)\n")
+            return False
+        for h in hits:
+            self._append_log(f"  found: {h}\n")
+        # Pre-fill the URL field with the first hit if the user hasn't typed anything.
+        if not self.url_entry.get_text():
+            self.url_entry.set_text(hits[0])
+        return False
+
+    def _on_start_stop(self, _btn: Gtk.Button) -> None:
+        if self.process is None:
+            self._start()
+        else:
+            self._stop()
+
+    def _start(self) -> None:
+        url = self.url_entry.get_text().strip()
+        if not url:
+            self._append_log("error: stream URL is empty\n")
+            return
+        device = (self.device_combo.get_child().get_text() or "").strip() or "/dev/video10"
+        cmd = [SCRIPT_PATH, "-d", device]
+        if self.audio_check.get_active():
+            cmd.append("-a")
+        if self.insecure_check.get_active():
+            cmd.append("--insecure")
+        cmd.append(url)
+        self._append_log(f"$ {' '.join(cmd)}\n")
+        try:
+            self.process = subprocess.Popen(  # pylint: disable=consider-using-with
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,  # so we can SIGTERM the whole process group on stop
+                text=True,
+                bufsize=1,
+            )
+        except OSError as e:
+            self._append_log(f"start failed: {e}\n")
+            self.process = None
+            return
+        self.start_button.set_label("Stop streaming")
+        self.status_label.set_text("running")
+        save_config(self._collect_cfg())
+        threading.Thread(target=self._reader, daemon=True).start()
+
+    def _stop(self) -> None:
+        proc = self.process
+        if proc is None:
+            return
+        try:
+            # The script spawns ffmpeg + an optional background audio loop. SIGTERM
+            # to the process group catches all of them cleanly.
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+        # The reader thread will notice the close and reset state.
+
+    def _reader(self) -> None:
+        proc = self.process
+        if proc is None or proc.stdout is None:
+            return
+        for line in proc.stdout:
+            GLib.idle_add(self._append_log, line)
+        proc.wait()
+        GLib.idle_add(self._on_proc_done)
+
+    def _on_proc_done(self) -> bool:
+        self.process = None
+        self.start_button.set_label("Start streaming")
+        self.status_label.set_text("idle")
+        self._append_log("--- stopped ---\n")
+        return False
+
+    def _append_log(self, text: str) -> bool:
+        # Bounded log: keep the last ~2000 lines so a long-running bridge doesn't
+        # eat memory.
+        end = self.log_buffer.get_end_iter()
+        self.log_buffer.insert(end, text)
+        if self.log_buffer.get_line_count() > 2000:
+            start = self.log_buffer.get_start_iter()
+            trim = self.log_buffer.get_iter_at_line(self.log_buffer.get_line_count() - 2000)
+            self.log_buffer.delete(start, trim)
+        # Auto-scroll to the bottom.
+        end = self.log_buffer.get_end_iter()
+        mark = self.log_buffer.create_mark(None, end, False)
+        self.log_view.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
+        self.log_buffer.delete_mark(mark)
+        return False
+
+    def _collect_cfg(self) -> dict:
+        return {
+            "url": self.url_entry.get_text(),
+            "device": (self.device_combo.get_child().get_text() or "").strip(),
+            "audio": self.audio_check.get_active(),
+            "insecure": self.insecure_check.get_active(),
+        }
+
+    def _on_destroy(self, _w: Gtk.Window) -> None:
+        save_config(self._collect_cfg())
+        self._stop()
+        Gtk.main_quit()
+
+
+def main() -> int:
+    if not Path(SCRIPT_PATH).exists():
+        print(
+            f"lenscast-virtualcam-gui: helper script not found at {SCRIPT_PATH}.\n"
+            "Install it on $PATH or run the GUI from the same dir as the bash script.",
+            flush=True,
+        )
+        return 2
+    LenscastGUI()
+    Gtk.main()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

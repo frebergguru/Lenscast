@@ -116,6 +116,34 @@ verification (which can't work for a self-signed cert anyway).
 lenscast-virtualcam -a https://192.168.1.42:4747/video --insecure
 ```
 
+## GUI wrapper
+
+`lenscast-virtualcam-gui` is a single-file Python/GTK3 wrapper around the bash
+script — useful if you'd rather not remember CLI flags. It gives you:
+
+- A URL field with a **Find on LAN** button (mDNS / Bonjour scan via `avahi-browse`).
+- A loopback-device dropdown, auto-detected from `v4l2-ctl --list-devices`.
+- Checkboxes for **audio forwarding** (`-a`) and **HTTPS** (`--insecure`).
+- Start / Stop with live log output.
+- Settings persist to `~/.config/lenscast/gui.json` so the window remembers your
+  last setup.
+
+Run it from the repo:
+
+```bash
+./pc/lenscast-virtualcam-gui
+```
+
+Or symlink it onto your `$PATH` next to the CLI script:
+
+```bash
+sudo ln -s "$PWD/pc/lenscast-virtualcam-gui" /usr/local/bin/lenscast-virtualcam-gui
+```
+
+Dependencies: Python 3, **PyGObject** + **GTK 3** (preinstalled on most desktop
+distros that ship GNOME, KDE, XFCE, MATE, or Cinnamon). Optional: `avahi-browse`
+for the **Find on LAN** button.
+
 ## How it works
 
 ```
