@@ -15,28 +15,42 @@ Single `app/` Gradle module. Source tree:
 
 ```
 app/src/main/kotlin/guru/freberg/lenscast/
-├── LenscastApp.kt            # Application — creates the FGS notification channel
-├── MainActivity.kt           # Compose host; binds StreamingService
+├── LenscastApp.kt            # Application — creates streaming + web-control FGS channels
+├── MainActivity.kt           # Compose host; binds StreamingService; PiP entry
 ├── camera/
 │   ├── CameraController.kt   # CameraX wrapper (Preview + ImageAnalysis use cases)
-│   └── YuvToJpeg.kt          # YUV_420_888 → tight NV21 → rotated JPEG
+│   ├── CameraCapabilities.kt # Per-lens capability queries (FPS, resolutions, ranges)
+│   └── YuvToJpeg.kt          # YUV_420_888 → tight NV21 → rotated/mirrored JPEG
 ├── streaming/
-│   ├── StreamingService.kt   # LifecycleService, foreground service, camera owner
+│   ├── StreamingService.kt   # LifecycleService; FGS; camera/server orchestrator
 │   ├── FrameBroadcaster.kt   # Lock-free latest-frame slot (AtomicReference)
-│   ├── MjpegServer.kt        # ServerSocket + multipart writer
+│   ├── MjpegServer.kt        # ServerSocket; /video, /shot, /audio (PCM WAV)
+│   ├── AudioBroadcaster.kt   # Per-client Channel fan-out for the PCM audio sidecar
+│   ├── PcmCapture.kt         # AudioRecord → PCM-16LE producer with mute/gain
 │   ├── RtspManager.kt        # Lifecycle wrapper over the RTSP server
+│   ├── RecordingMuxer.kt     # Optional MP4 sink fed by the RTSP encoders
+│   ├── WebControlServer.kt   # Independent HTTP control panel on its own port
 │   └── rtsp/                 # Hand-rolled RTSP: server, Camera2 driver,
 │                             # H.264 + AAC encoders, RTP packetizers, SDP, GL rotation
-├── prefs/
-│   ├── Settings.kt           # Data classes (Lens, Resolution, Fps, mjpegPort, rtspPort, …)
-│   └── SettingsRepository.kt # DataStore wrapper; ports validated to 1024–65535
 ├── net/
-│   └── NetworkUtils.kt       # Wi-Fi IPv4 lookup, port-free check
+│   ├── NetworkUtils.kt       # Wi-Fi IPv4 lookup, port-free check
+│   ├── NsdAdvertiser.kt      # mDNS / Bonjour registration for the streams
+│   └── TlsManager.kt         # Software RSA + Bouncy Castle X.509 in PKCS12 (HTTPS)
+├── system/
+│   ├── BootReceiver.kt       # BOOT_COMPLETED → start stream or persistent web FGS
+│   ├── StreamingTileService.kt # Quick Settings tile
+│   ├── SystemWebcam.kt       # DeviceAsWebcam deep-link (Android 14+)
+│   └── TelephonyMonitor.kt   # Call-state listener (privacy / mute / drop)
+├── prefs/
+│   ├── Settings.kt           # Data classes; everything user-configurable
+│   ├── SettingsRepository.kt # DataStore wrapper; ports + values validated
+│   └── SettingsCodec.kt      # JSON export/import via org.json
 └── ui/                       # Material 3 + Jetpack Compose
-    ├── theme/                # Color, Type, Theme
+    ├── theme/                # Color, Type, Theme (dark + light)
     ├── MainScreen.kt
-    ├── SettingsSheet.kt
-    └── components/           # ConnectionInfoCard, PermissionGate, PreviewSurface, StatPill
+    ├── SettingsSheet.kt      # Collapsible SettingsGroup cards
+    └── components/           # ConnectionInfoCard, PermissionGate, PreviewSurface,
+                              # StatPill, VuMeter
 ```
 
 ## Key design decisions

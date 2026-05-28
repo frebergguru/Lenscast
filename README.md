@@ -39,8 +39,9 @@ Full setup, USB tethering, and troubleshooting are in
   PCM-16LE WAV stream at `/audio` with near-zero receiver-side buffering
 - **Local recording** — RTSP-only toggle that mirrors the live encoders to an MP4 in
   `Movies/Lenscast/` while you stream
-- **HTTPS toggle** — self-signed cert generated via AndroidKeyStore, fingerprint shown
-  in the app and on the web panel
+- **HTTPS toggle** — self-signed RSA-2048 cert generated with Bouncy Castle and
+  persisted as PKCS12 in app-private storage; SHA-256 fingerprint shown in the app
+  and on the web panel
 - **HTTP Basic auth** passcode for the MJPEG endpoints (`/video`, `/shot.jpg`, `/audio`)
 - **mDNS / NSD advertisement** — OBS, VLC and Bonjour-aware tools discover the phone
   without typing an IP
