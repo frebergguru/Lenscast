@@ -190,14 +190,6 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
 
 ## Desktop / PC-side
 
-Droidcam ships native Windows and macOS clients with a virtual-camera driver. Lenscast
-has the Linux v4l2loopback helper only.
-
-- [ ] **Windows virtual-camera driver** — DirectShow filter or MediaFoundation
-      virtual camera reading the MJPEG / RTSP stream. Code-signing required, called
-      out as out-of-scope in the roadmap; track here so the gap is explicit.
-- [ ] **macOS virtual-camera System Extension** — same shape as Windows. Needs
-      Apple notarization.
 - [x] **GUI for the Linux helper** — `pc/lenscast-virtualcam-gui` is a
       single-file Python/GTK3 wrapper. URL field with **Find on LAN**
       (mDNS discovery via `avahi-browse`), loopback dropdown
@@ -242,6 +234,12 @@ has the Linux v4l2loopback helper only.
 
 - **Native UVC gadget from inside Lenscast** — covered and rejected in
   [Roadmap → Planned](Docs/Roadmap.md#native-uvc-gadget-from-inside-lenscast--not-feasible-from-a-third-party-app).
+- **Native Windows DirectShow / MediaFoundation virtual camera and macOS
+  Camera Extension.** Technical work is moderate but the EV code-signing
+  (~$300/yr), Apple Developer Program ($99/yr) and ongoing
+  notarization / WHQL maintenance overhead aren't a fit for a hobby
+  project. OBS Virtual Camera already covers both platforms by
+  consuming the MJPEG URL — that's the recommended path.
   Droidcam doesn't actually do this either; the gap is the same on both sides.
 - **>30 fps MJPEG** — architectural cap in
   [Roadmap → Known architectural cap](Docs/Roadmap.md#known-architectural-cap-mjpeg--30-fps).
