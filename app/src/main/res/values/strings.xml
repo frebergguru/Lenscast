@@ -388,6 +388,32 @@
     <string name="web_footer_panel">control panel</string>
     <string name="web_stream_locked_hint">Stop the stream to change these settings.</string>
 
+    <!-- Settings sheet — collapsible section titles. -->
+    <string name="settings_group_streaming_basics">Streaming basics</string>
+    <string name="settings_group_image">Image</string>
+    <string name="settings_group_stream_output_audio">Stream output &amp; audio</string>
+    <string name="settings_group_security_access">Security &amp; access</string>
+    <string name="settings_group_automation">Automation</string>
+    <string name="settings_group_web_control">Web control panel</string>
+    <string name="settings_group_presets">Presets</string>
+    <string name="settings_group_system_webcam">System webcam</string>
+    <string name="settings_group_language">Language</string>
+    <string name="settings_group_backup">Backup</string>
+
+    <!-- Settings sheet — accessibility labels + intent chooser title. -->
+    <string name="cd_collapse">Collapse</string>
+    <string name="cd_expand">Expand</string>
+    <string name="share_diagnostics_chooser">Share diagnostics</string>
+
+    <!-- Snapshot button content description (with the long-press hint). -->
+    <string name="cd_snapshot">Save snapshot (long-press for burst)</string>
+    <string name="cd_turn_flash_on">Turn flash on</string>
+    <string name="cd_turn_flash_off">Turn flash off</string>
+
+    <!-- QR code dialog. -->
+    <string name="qr_dialog_title">Scan to open</string>
+    <string name="qr_dialog_close">Close</string>
+
     <!-- Help tooltips shown when the user clicks the `?` icon next to a setting on the
          web panel. Each one explains a single field in 1–2 sentences. Keyed by the
          setting's name (lowercased, no underscores) — the key lives in the HTML as

@@ -212,7 +212,7 @@ data class Settings(
      *  - **LISTENER**: the phone listens on [srtPort]; receivers (OBS, ffmpeg)
      *    pull via `srt://<phone-ip>:<port>`.
      */
-    val srtMode: SrtMode = SrtMode.CALLER,
+    val srtMode: SrtMode = SrtMode.LISTENER,
     val srtHost: String = "",
     val srtPort: Int = 9710,
     /**

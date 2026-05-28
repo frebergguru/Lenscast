@@ -108,7 +108,7 @@ fun SettingsSheet(
             // context — it's used in capability checks across multiple cards.
             val context = LocalContext.current
 
-            SettingsGroup(title = "Streaming basics", initiallyExpanded = true) {
+            SettingsGroup(title = stringResource(R.string.settings_group_streaming_basics), initiallyExpanded = true) {
             // Protocol — picking RTSP unlocks high fps + audio.
             SectionLabel(stringResource(R.string.settings_protocol))
             SegmentedRow(
@@ -245,7 +245,7 @@ fun SettingsSheet(
             }
             } // ← close Streaming basics card
 
-            SettingsGroup(title = "Image", initiallyExpanded = true) {
+            SettingsGroup(title = stringResource(R.string.settings_group_image), initiallyExpanded = true) {
             // Image controls — MJPEG path only on the current pass (RTSP encoder consumes the
             // camera Surface directly and uses sensor defaults; matching these into the RTSP
             // CaptureRequest is a planned follow-up).
@@ -488,7 +488,7 @@ fun SettingsSheet(
 
             } // ← close Image card
 
-            SettingsGroup(title = "Stream output & audio") {
+            SettingsGroup(title = stringResource(R.string.settings_group_stream_output_audio)) {
             // Server port — editable per active protocol. Disabled while streaming since the
             // server is already bound; user has to Stop first.
             SectionLabel(stringResource(R.string.settings_port_section))
@@ -671,7 +671,7 @@ fun SettingsSheet(
 
             } // ← close Stream output & audio card
 
-            SettingsGroup(title = "Security & access") {
+            SettingsGroup(title = stringResource(R.string.settings_group_security_access)) {
             SectionLabel(stringResource(R.string.settings_security_section))
             var user by remember(settings.streamUsername) { mutableStateOf(settings.streamUsername) }
             OutlinedTextField(
@@ -816,7 +816,7 @@ fun SettingsSheet(
 
             } // ← close Security & access card
 
-            SettingsGroup(title = "Automation") {
+            SettingsGroup(title = stringResource(R.string.settings_group_automation)) {
             SectionLabel(stringResource(R.string.settings_automation_section))
             ToggleRow(
                 title = stringResource(R.string.settings_auto_start),
@@ -839,7 +839,7 @@ fun SettingsSheet(
 
             } // ← close Automation card
 
-            SettingsGroup(title = "Web control panel") {
+            SettingsGroup(title = stringResource(R.string.settings_group_web_control)) {
             SectionLabel(stringResource(R.string.settings_web_control_section))
             ToggleRow(
                 title = stringResource(R.string.settings_web_control_enabled),
@@ -870,12 +870,12 @@ fun SettingsSheet(
 
             } // ← close Web control panel card
 
-            SettingsGroup(title = "Presets") {
+            SettingsGroup(title = stringResource(R.string.settings_group_presets)) {
                 PresetsSection(settings, streaming, onChange)
             }
 
             if (SystemWebcam.isSupported(context)) {
-                SettingsGroup(title = "System webcam") {
+                SettingsGroup(title = stringResource(R.string.settings_group_system_webcam)) {
                     SectionLabel(stringResource(R.string.settings_system_webcam_title))
                     Text(
                         text = stringResource(R.string.settings_system_webcam_explainer),
@@ -889,11 +889,11 @@ fun SettingsSheet(
                 }
             }
 
-            SettingsGroup(title = "Language") {
+            SettingsGroup(title = stringResource(R.string.settings_group_language)) {
                 LanguageSection(settings, onChange)
             }
 
-            SettingsGroup(title = "Backup") {
+            SettingsGroup(title = stringResource(R.string.settings_group_backup)) {
                 BackupSection(settings, streaming, onChange)
             }
 
@@ -965,7 +965,7 @@ private fun SettingsGroup(
             )
             Icon(
                 imageVector = Icons.Outlined.ExpandMore,
-                contentDescription = if (expanded) "Collapse" else "Expand",
+                contentDescription = if (expanded) stringResource(R.string.cd_collapse) else stringResource(R.string.cd_expand),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .size(20.dp)
@@ -1434,7 +1434,7 @@ private fun shareDiagnostics(ctx: android.content.Context) {
         putExtra(android.content.Intent.EXTRA_STREAM, uri)
         addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
-    ctx.startActivity(android.content.Intent.createChooser(intent, "Share diagnostics"))
+    ctx.startActivity(android.content.Intent.createChooser(intent, ctx.getString(R.string.share_diagnostics_chooser)))
 }
 
 @Composable

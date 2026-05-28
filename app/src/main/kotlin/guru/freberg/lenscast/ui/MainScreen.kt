@@ -419,21 +419,21 @@ fun MainScreen(
                         if (!cameraLocked) {
                             OverlayIconButton(
                                 icon = Icons.Outlined.Cameraswitch,
-                                contentDescription = "Switch camera",
+                                contentDescription = stringResource(R.string.action_switch_camera),
                                 enabled = true,
                                 onClick = st.onSwitchCamera,
                             )
                         }
                         OverlayIconButton(
                             icon = if (st.torchOn) Icons.Outlined.FlashOn else Icons.Outlined.FlashOff,
-                            contentDescription = if (st.torchOn) "Turn flash off" else "Turn flash on",
+                            contentDescription = if (st.torchOn) stringResource(R.string.cd_turn_flash_off) else stringResource(R.string.cd_turn_flash_on),
                             enabled = st.lens == Lens.BACK,
                             highlighted = st.torchOn,
                             onClick = st.onToggleTorch,
                         )
                         OverlayIconButton(
                             icon = Icons.Outlined.CameraAlt,
-                            contentDescription = "Save snapshot (long-press for burst)",
+                            contentDescription = stringResource(R.string.cd_snapshot),
                             enabled = true,
                             onClick = st.onSnapshot,
                             onLongClick = st.onSnapshotBurst,

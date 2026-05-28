@@ -386,6 +386,28 @@
     <string name="web_footer_panel">kontrollpanel</string>
     <string name="web_stream_locked_hint">Stopp strømmen for å endre disse innstillingene.</string>
 
+    <string name="settings_group_streaming_basics">Strømming – grunnleggende</string>
+    <string name="settings_group_image">Bilde</string>
+    <string name="settings_group_stream_output_audio">Strømutgang &amp; lyd</string>
+    <string name="settings_group_security_access">Sikkerhet &amp; tilgang</string>
+    <string name="settings_group_automation">Automatisering</string>
+    <string name="settings_group_web_control">Webkontrollpanel</string>
+    <string name="settings_group_presets">Forhåndsinnstillinger</string>
+    <string name="settings_group_system_webcam">System-webkamera</string>
+    <string name="settings_group_language">Språk</string>
+    <string name="settings_group_backup">Sikkerhetskopi</string>
+
+    <string name="cd_collapse">Skjul</string>
+    <string name="cd_expand">Vis</string>
+    <string name="share_diagnostics_chooser">Del diagnostikk</string>
+
+    <string name="cd_snapshot">Ta stillbilde (hold for serie)</string>
+    <string name="cd_turn_flash_on">Slå på lommelykt</string>
+    <string name="cd_turn_flash_off">Slå av lommelykt</string>
+
+    <string name="qr_dialog_title">Skann for å åpne</string>
+    <string name="qr_dialog_close">Lukk</string>
+
     <!-- Verktøytips for webpanelet — én forklaring per innstilling. -->
     <string name="web_help_lens">Hvilket fysisk kamera som brukes. Front = selfie-kamera; bak = hovedkamera.</string>
     <string name="web_help_resolution">Bildestørrelse. Høyere = skarpere bilde, mer båndbredde, mer batteri.</string>

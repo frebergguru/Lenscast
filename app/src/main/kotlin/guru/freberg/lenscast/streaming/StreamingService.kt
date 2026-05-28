@@ -1122,6 +1122,9 @@ class StreamingService : LifecycleService() {
             guru.freberg.lenscast.prefs.SrtMode.CALLER   -> guru.freberg.lenscast.streaming.srt.SrtPublisher.Mode.CALLER
             guru.freberg.lenscast.prefs.SrtMode.LISTENER -> guru.freberg.lenscast.streaming.srt.SrtPublisher.Mode.LISTENER
         }
+        if (srtMode == guru.freberg.lenscast.streaming.srt.SrtPublisher.Mode.CALLER && settings.srtHost.isBlank()) {
+            throw IllegalStateException("SRT caller mode needs a remote host. Set Settings → SRT host, or switch to Listener.")
+        }
         val mgr = guru.freberg.lenscast.streaming.srt.SrtManager(this).also { srtManager = it }
         val plan = mgr.start(
             guru.freberg.lenscast.streaming.srt.SrtManager.Config(

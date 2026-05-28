@@ -12,7 +12,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.net.InetSocketAddress
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -51,7 +52,7 @@ class SrtPublisher(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var connectJob: Job? = null
     private var pumpJob: Job? = null
-    private val queue = ConcurrentLinkedQueue<ByteArray>()
+    private val queue = LinkedBlockingQueue<ByteArray>(MAX_QUEUE + 1)
     private val running = AtomicBoolean(false)
     @Volatile private var socket: SrtSocket? = null
     @Volatile private var clientSocket: SrtSocket? = null
@@ -132,10 +133,8 @@ class SrtPublisher(
     private fun pumpUntilClosed(s: SrtSocket) {
         try {
             while (running.get() && s.isValid) {
-                val pkt = queue.poll() ?: run {
-                    try { Thread.sleep(1) } catch (_: InterruptedException) {}
-                    return@run null
-                } ?: continue
+                val pkt = try { queue.poll(50, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { return }
+                    ?: continue
                 val n = s.send(pkt)
                 if (n > 0) bytesSent += n
             }
@@ -150,8 +149,12 @@ class SrtPublisher(
      */
     fun send(tsPacket: ByteArray) {
         if (!running.get()) return
-        if (queue.size > MAX_QUEUE) queue.poll()
-        queue.add(tsPacket)
+        // Drop oldest under back-pressure so the queue can't grow unbounded if the receiver
+        // stalls. `offer` returns false when the bounded queue is full.
+        if (!queue.offer(tsPacket)) {
+            queue.poll()
+            queue.offer(tsPacket)
+        }
     }
 
     fun stop() {

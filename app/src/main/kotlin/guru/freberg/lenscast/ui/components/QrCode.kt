@@ -37,7 +37,7 @@ import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 fun QrCodeDialog(url: String, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Scan to open") },
+        title = { Text(androidx.compose.ui.res.stringResource(guru.freberg.lenscast.R.string.qr_dialog_title)) },
         text = {
             Column {
                 // White card so the QR has a quiet zone regardless of theme — scanners
@@ -65,7 +65,7 @@ fun QrCodeDialog(url: String, onDismiss: () -> Unit) {
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            TextButton(onClick = onDismiss) { Text(androidx.compose.ui.res.stringResource(guru.freberg.lenscast.R.string.qr_dialog_close)) }
         },
     )
 }
