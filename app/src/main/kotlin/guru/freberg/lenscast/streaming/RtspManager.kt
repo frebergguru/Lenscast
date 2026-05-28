@@ -43,6 +43,8 @@ class RtspManager(
         val noiseSuppress: Boolean = false,
         val echoCancel: Boolean = false,
         val recordLocally: Boolean = false,
+        val authUsername: String = "Lenscast",
+        val authPassword: String = "",
     )
 
     private var videoEncoder: H264Encoder? = null
@@ -143,7 +145,12 @@ class RtspManager(
 
         camDriver.start(plan, cameraTargetSurface, previewSurface)
 
-        val srv = RtspServer(config.port, streamProvider).also { it.start() }
+        val srv = RtspServer(
+            config.port,
+            streamProvider,
+            authUsername = config.authUsername,
+            authPassword = config.authPassword,
+        ).also { it.start() }
         server = srv
 
         return plan

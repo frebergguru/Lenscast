@@ -928,6 +928,8 @@ class StreamingService : LifecycleService() {
                 noiseSuppress = settings.noiseSuppress,
                 echoCancel = settings.echoCancel,
                 recordLocally = settings.recordLocally,
+                authUsername = settings.streamUsername,
+                authPassword = settings.streamPassword,
             ),
             previewSurface = null,
         )

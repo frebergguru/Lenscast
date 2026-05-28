@@ -54,6 +54,8 @@ fun ConnectionInfoCard(
     webControlEnabled: Boolean = false,
     webControlPort: Int = 8080,
     httpsEnabled: Boolean = false,
+    authUsername: String = "",
+    authPassword: String = "",
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -75,7 +77,10 @@ fun ConnectionInfoCard(
             // RTSP is plain RTSP for now (no RTSPS); HTTPS only affects MJPEG.
             val scheme = if (protocol == Protocol.MJPEG) (if (httpsEnabled) "https" else "http") else "rtsp"
             val path = if (protocol == Protocol.MJPEG) "/video" else ""
-            val wifiUrl = wifiIp?.let { "$scheme://$it:$port$path" }
+            // Embed user:pass@ when the password is set — both servers ([Mjpeg|Rtsp]Server)
+            // honour Basic auth with the same credentials.
+            val auth = if (authPassword.isNotEmpty()) "${authUsername.ifBlank { "Lenscast" }}:$authPassword@" else ""
+            val wifiUrl = wifiIp?.let { "$scheme://$auth$it:$port$path" }
             UrlRow(
                 icon = if (wifiIp != null) Icons.Outlined.Wifi else Icons.Outlined.WifiOff,
                 label = stringResource(R.string.card_connection_wifi),
@@ -85,7 +90,7 @@ fun ConnectionInfoCard(
             Spacer(Modifier.height(12.dp))
 
             // USB row
-            val usbUrl = "$scheme://localhost:$port$path"
+            val usbUrl = "$scheme://${auth}localhost:$port$path"
             UrlRow(
                 icon = Icons.Outlined.Usb,
                 label = stringResource(R.string.card_connection_usb),

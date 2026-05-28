@@ -810,11 +810,11 @@ class WebControlServer(
                     </div>
                     <div class="divider"></div>
                     <div class="field">
-                      <div class="l">Stream username (MJPEG)<small>Defaults to Lenscast; used with the passcode below.</small></div>
+                      <div class="l">Stream username<small>Defaults to Lenscast; used with the passcode below.</small></div>
                       <div class="c"><input type="text" data-setting="streamUsername" placeholder="Lenscast"></div>
                     </div>
                     <div class="field">
-                      <div class="l">Stream passcode (MJPEG)<small>Empty = open access</small></div>
+                      <div class="l">Stream passcode<small>Applies to MJPEG and RTSP. Empty = open access.</small></div>
                       <div class="c"><input type="text" data-setting="streamPassword"></div>
                     </div>
                     <div class="divider"></div>

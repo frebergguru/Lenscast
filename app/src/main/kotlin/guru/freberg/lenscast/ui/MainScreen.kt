@@ -480,6 +480,8 @@ fun MainScreen(
                 webControlEnabled = settings.webControlEnabled,
                 webControlPort = settings.webControlPort,
                 httpsEnabled = settings.httpsEnabled,
+                authUsername = settings.streamUsername,
+                authPassword = settings.streamPassword,
             )
         }
 

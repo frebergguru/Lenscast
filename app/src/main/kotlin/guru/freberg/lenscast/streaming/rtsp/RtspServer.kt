@@ -37,6 +37,9 @@ import kotlin.random.Random
 class RtspServer(
     private val port: Int,
     private val streamProvider: StreamProvider,
+    /** Optional HTTP Basic auth credentials. Empty password = open access. */
+    private val authUsername: String = "Lenscast",
+    private val authPassword: String = "",
 ) {
     /** Provides per-session information: SDP, the SPS/PPS bytes, and a starter hook. */
     interface StreamProvider {
@@ -114,7 +117,7 @@ class RtspServer(
 
     private suspend fun handle(socket: Socket) {
         Log.i(TAG, "Client connected from ${socket.remoteSocketAddress}")
-        val session = RtspSession(socket, streamProvider)
+        val session = RtspSession(socket, streamProvider, authUsername, authPassword)
         try {
             session.serve()
         } catch (_: SocketException) {
@@ -140,6 +143,8 @@ class RtspServer(
 class RtspSession(
     private val socket: Socket,
     private val provider: RtspServer.StreamProvider,
+    private val authUsername: String = "Lenscast",
+    private val authPassword: String = "",
 ) {
     private enum class State { INIT, READY, PLAYING, TEARDOWN }
 
@@ -265,7 +270,15 @@ class RtspSession(
 
     private fun handle(req: Request) {
         android.util.Log.i("RtspSession", "${req.method} ${req.uri} transport=${req.headers["transport"]}")
-        when (req.method.uppercase()) {
+        val method = req.method.uppercase()
+        // OPTIONS stays unauthenticated so clients can negotiate before the user types
+        // creds — mirrors every IP camera (Hikvision, Axis, Reolink). Everything else
+        // requires Basic auth when a password is set.
+        if (method != "OPTIONS" && !isAuthorized(req)) {
+            respondUnauthorized(req)
+            return
+        }
+        when (method) {
             "OPTIONS" -> respond(req, 200, "OK", extra = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER\r\n")
             "DESCRIBE" -> handleDescribe(req)
             "SETUP" -> handleSetup(req)
@@ -285,6 +298,22 @@ class RtspSession(
             }
             else -> respond(req, 501, "Not Implemented")
         }
+    }
+
+    private fun isAuthorized(req: Request): Boolean {
+        if (authPassword.isEmpty()) return true
+        val header = req.headers["authorization"] ?: return false
+        if (!header.startsWith("Basic ", ignoreCase = true)) return false
+        val decoded = try {
+            String(android.util.Base64.decode(header.substringAfter(' ').trim(), android.util.Base64.NO_WRAP))
+        } catch (_: Throwable) { return false }
+        val colon = decoded.indexOf(':')
+        if (colon < 0) return false
+        return decoded.substring(0, colon) == authUsername && decoded.substring(colon + 1) == authPassword
+    }
+
+    private fun respondUnauthorized(req: Request) {
+        respond(req, 401, "Unauthorized", extra = "WWW-Authenticate: Basic realm=\"Lenscast\"\r\n")
     }
 
     private fun handleDescribe(req: Request) {

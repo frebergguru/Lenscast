@@ -98,10 +98,10 @@
     <string name="snapshot_failed">Snapshot failed — no frame yet?</string>
 
     <string name="settings_security_section">Access control</string>
-    <string name="settings_username">Stream username (MJPEG)</string>
+    <string name="settings_username">Stream username</string>
     <string name="settings_username_hint">Defaults to Lenscast. Used together with the passcode below.</string>
-    <string name="settings_password">Stream passcode (MJPEG)</string>
-    <string name="settings_password_hint">Leave blank for open access (the username is then ignored).</string>
+    <string name="settings_password">Stream passcode</string>
+    <string name="settings_password_hint">Leave blank for open access (username is then ignored). Applies to both MJPEG and RTSP — receivers embed as rtsp://user:pass@host…</string>
     <string name="settings_https">HTTPS (self-signed cert)</string>
     <string name="settings_https_hint">Receivers will see a "self-signed" warning the first time — click through. Cert fingerprint:</string>
     <string name="settings_call_behavior">When a phone call comes in</string>
