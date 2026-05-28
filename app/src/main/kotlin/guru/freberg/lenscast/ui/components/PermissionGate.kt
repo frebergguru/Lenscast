@@ -27,7 +27,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +35,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -49,9 +52,22 @@ data class PermissionStatus(val granted: Boolean, val missing: List<String>)
 @Composable
 fun rememberPermissionStatus(needAudio: Boolean): PermissionStatus {
     val ctx = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     var status by remember(needAudio) { mutableStateOf(checkPermissions(ctx, needAudio)) }
-    // Re-check on resume — simplified by triggering a re-evaluation each composition.
-    LaunchedEffect(needAudio) { status = checkPermissions(ctx, needAudio) }
+    // Re-evaluate on every ON_RESUME — the previous LaunchedEffect approach only fired
+    // when needAudio changed, so a permission granted via the system dialog wouldn't
+    // flip the gate from "missing" to "granted" until the user manually restarted the
+    // app. ON_RESUME catches both the dialog dismiss path and the user returning from
+    // the per-app Settings screen.
+    DisposableEffect(lifecycle, needAudio) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                status = checkPermissions(ctx, needAudio)
+            }
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     return status
 }
 
