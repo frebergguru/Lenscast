@@ -27,11 +27,13 @@
     <string name="stat_fps">FPS</string>
     <string name="stat_clients">Clients</string>
     <string name="stat_protocol">Protocol</string>
+    <string name="stat_bitrate">Bitrate</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_protocol">Streaming protocol</string>
     <string name="settings_protocol_mjpeg">MJPEG over HTTP</string>
     <string name="settings_protocol_rtsp">RTSP (H.264 + AAC)</string>
+    <string name="settings_protocol_webrtc">WebRTC (browser, H.264)</string>
     <string name="settings_resolution">Resolution</string>
     <string name="settings_fps">Target FPS</string>
     <string name="settings_quality">JPEG quality</string>
@@ -89,6 +91,8 @@
     <string name="settings_ab_60">60 Hz</string>
     <string name="settings_ab_off">Off</string>
     <string name="settings_image_mjpeg_only_note">Image controls apply to the MJPEG path. The RTSP encoder uses the camera defaults.</string>
+    <string name="settings_watermark">Watermark</string>
+    <string name="settings_watermark_hint">Drawn onto every MJPEG frame. Leave blank to disable. `%t` expands to the current HH:mm:ss.</string>
     <string name="settings_manual_exposure">Manual exposure (ISO + shutter)</string>
     <string name="settings_manual_exposure_unavailable">Not supported on this lens (no MANUAL_SENSOR capability).</string>
     <string name="settings_iso">ISO</string>
@@ -109,6 +113,7 @@
     <string name="call_ignore">Ignore (audio keeps flowing)</string>
     <string name="call_mute">Mute the stream during the call</string>
     <string name="call_drop">Drop the call automatically</string>
+    <string name="settings_call_permission_missing">Phone permission not granted — the chosen call behavior won\'t actually trigger when a call comes in.</string>
 
     <string name="settings_backup_section">Backup</string>
     <string name="settings_export">Export settings</string>
@@ -116,6 +121,8 @@
     <string name="settings_export_done">Settings exported</string>
     <string name="settings_import_done">Settings imported</string>
     <string name="settings_import_failed">Import failed (invalid JSON?)</string>
+    <string name="settings_share_diagnostics">Share diagnostics</string>
+    <string name="settings_share_diagnostics_empty">No crash report yet — nothing to share.</string>
     <string name="settings_automation_section">Automation</string>
     <string name="settings_auto_start">Start streaming on app launch</string>
     <string name="settings_rtsp_bitrate">RTSP bitrate cap (kbps, 0 = auto)</string>
@@ -190,9 +197,242 @@
     <string name="settings_preset_lens_back">back</string>
     <string name="settings_preset_lens_front">front</string>
 
+    <string name="settings_mjpeg_sidecar">MJPEG sidecar (browser preview)</string>
+    <string name="settings_mjpeg_sidecar_hint">Adds /video on the MJPEG port so a browser &lt;img&gt; works alongside the OBS RTSP feed. Same camera; ≤15 fps for the sidecar to keep the encoder cool.</string>
+    <string name="settings_mjpeg_sidecar_highspeed_note">Available at ≤30 fps only — high-speed Camera2 sessions reject extra outputs.</string>
     <string name="settings_record_locally">Record to MP4 while streaming (RTSP only)</string>
     <string name="settings_record_locally_hint">Saves to Movies/Lenscast/. Encoded once; no extra battery cost beyond the file write.</string>
     <string name="recording_saved">Recording saved to Movies/Lenscast</string>
+
+    <string name="settings_sftp_section">SFTP upload</string>
+    <string name="settings_sftp_enabled">Auto-upload finished recordings</string>
+    <string name="settings_sftp_hint">Each recording is queued and uploaded after the stream stops. Failures retry 3× with backoff.</string>
+    <string name="settings_sftp_host">Host</string>
+    <string name="settings_sftp_port">Port</string>
+    <string name="settings_sftp_user">Username</string>
+    <string name="settings_sftp_password">Password</string>
+    <string name="settings_sftp_dir">Remote directory</string>
+    <string name="settings_sftp_dir_hint">Blank = your home directory. Created if missing.</string>
+    <string name="settings_sftp_fingerprint">Host-key fingerprint (optional)</string>
+    <string name="settings_sftp_fingerprint_hint">Pin to defeat MITM. SHA-256 hex or base64 (with or without the SHA256: prefix). Blank = trust on first connect.</string>
+
+    <string name="settings_language_section">Language</string>
+    <string name="settings_language">App language</string>
+    <string name="settings_language_system">Follow system</string>
+    <string name="settings_language_en">English</string>
+    <string name="settings_language_nb">Norsk (Bokmål)</string>
+    <string name="settings_language_hint">Changes apply immediately on Android 13+, or after the next launch on older devices.</string>
+
+    <!-- Web control panel — every user-visible string in WebControlServer's HTML. Prefixed
+         `web_` so the namespace is obvious; resolved via `context.getString` at render
+         time so the panel follows the per-app language picker. -->
+    <string name="web_title">Lenscast Control</string>
+    <string name="web_state_idle">idle</string>
+    <string name="web_hero_title">Live preview</string>
+    <string name="web_idle_pick">Pick a streaming protocol and tap Start.</string>
+    <string name="web_proto_mjpeg_desc">Universal: browser &lt;img&gt;, OBS, VLC. PCM audio sidecar. ≤30 fps.</string>
+    <string name="web_proto_rtsp_desc">H.264 + AAC. OBS / VLC / ffmpeg. Up to 240 fps. Landscape only.</string>
+    <string name="web_proto_webrtc_desc">Sub-100 ms latency in the browser. Open /webrtc/view after Start. No audio yet.</string>
+    <string name="web_start">Start streaming</string>
+    <string name="web_rtsp_live_title">RTSP is live</string>
+    <string name="web_rtsp_live_note">Open in OBS / VLC / ffmpeg — browsers can\'t render RTSP natively.</string>
+    <string name="web_webrtc_view_link">Open the standalone viewer →</string>
+    <string name="web_status_h">Status</string>
+    <string name="web_stat_audio_peak">Audio peak</string>
+    <string name="web_stat_connected_clients">Connected clients</string>
+    <string name="web_quick_h">Quick controls</string>
+    <string name="web_btn_switch_camera">Switch camera</string>
+    <string name="web_btn_torch">Torch</string>
+    <string name="web_btn_mirror">Mirror</string>
+    <string name="web_btn_continuous_af">Continuous AF</string>
+    <string name="web_btn_snapshot">Snapshot</string>
+    <string name="web_btn_stop_streaming">Stop streaming</string>
+    <string name="web_btn_speedtest">Run LAN speed test</string>
+    <string name="web_lbl_jpeg_quality">JPEG quality</string>
+    <string name="web_hint_mjpeg_only">MJPEG only</string>
+    <string name="web_settings_h">Settings</string>
+    <string name="web_tab_camera">Camera</string>
+    <string name="web_tab_image">Image</string>
+    <string name="web_tab_audio">Audio</string>
+    <string name="web_tab_stream">Stream</string>
+    <string name="web_tab_ux">UX</string>
+    <string name="web_tab_system">System</string>
+    <string name="web_lbl_lens">Lens</string>
+    <string name="web_lens_back">Back</string>
+    <string name="web_lens_front">Front</string>
+    <string name="web_lbl_resolution">Resolution</string>
+    <string name="web_hint_res_from_caps">Available list comes from the active lens\'s capability map</string>
+    <string name="web_lbl_fps">FPS</string>
+    <string name="web_hint_fps_range">Valid range depends on lens × resolution × protocol</string>
+    <string name="web_lbl_rotation_lock">Rotation lock</string>
+    <string name="web_hint_rotation_lock">MJPEG output direction</string>
+    <string name="web_rotation_auto">Auto</string>
+    <string name="web_rotation_portrait">Portrait</string>
+    <string name="web_rotation_landscape_left">Landscape ←</string>
+    <string name="web_rotation_landscape_right">Landscape →</string>
+    <string name="web_rotation_portrait_upside">Portrait ⤓</string>
+    <string name="web_lbl_mirror">Mirror (horizontal flip)</string>
+    <string name="web_lbl_continuous_af">Continuous autofocus</string>
+    <string name="web_lbl_watermark">Watermark</string>
+    <string name="web_hint_watermark">MJPEG only · `%%t` expands to HH:mm:ss</string>
+    <string name="web_lbl_exposure">Exposure compensation</string>
+    <string name="web_lbl_white_balance">White balance</string>
+    <string name="web_wb_incandescent">Tungsten</string>
+    <string name="web_wb_fluorescent">Fluorescent</string>
+    <string name="web_wb_daylight">Daylight</string>
+    <string name="web_wb_cloudy">Cloudy</string>
+    <string name="web_wb_shade">Shade</string>
+    <string name="web_lbl_antibanding">Anti-flicker</string>
+    <string name="web_ab_off">Off</string>
+    <string name="web_lbl_effect">Effect</string>
+    <string name="web_effect_none">None</string>
+    <string name="web_effect_mono">Mono</string>
+    <string name="web_effect_negative">Negative</string>
+    <string name="web_effect_sepia">Sepia</string>
+    <string name="web_effect_aqua">Aqua</string>
+    <string name="web_effect_solarize">Solarize</string>
+    <string name="web_effect_posterize">Posterize</string>
+    <string name="web_effect_blackboard">Blackboard</string>
+    <string name="web_effect_whiteboard">Whiteboard</string>
+    <string name="web_lbl_scene">Scene mode</string>
+    <string name="web_scene_off">Off</string>
+    <string name="web_scene_action">Action</string>
+    <string name="web_scene_portrait">Portrait</string>
+    <string name="web_scene_landscape">Landscape</string>
+    <string name="web_scene_night">Night</string>
+    <string name="web_scene_sports">Sports</string>
+    <string name="web_scene_theatre">Theatre</string>
+    <string name="web_scene_fireworks">Fireworks</string>
+    <string name="web_scene_beach">Beach</string>
+    <string name="web_scene_snow">Snow</string>
+    <string name="web_scene_sunset">Sunset</string>
+    <string name="web_lbl_manual_focus">Manual focus</string>
+    <string name="web_lbl_focus_distance">Focus distance</string>
+    <string name="web_hint_focus_zero_inf">0 = infinity</string>
+    <string name="web_lbl_manual_exposure">Manual exposure</string>
+    <string name="web_hint_manual_exp_unsupported">Not supported on this lens</string>
+    <string name="web_lbl_iso">ISO</string>
+    <string name="web_lbl_shutter">Shutter (µs)</string>
+    <string name="web_lbl_stream_mic">Stream microphone audio</string>
+    <string name="web_lbl_mic_source">Mic source</string>
+    <string name="web_mic_camcorder">Camcorder</string>
+    <string name="web_mic_default">Default mic</string>
+    <string name="web_mic_voice_recog">Voice recognition</string>
+    <string name="web_mic_voice_comm">Voice communication</string>
+    <string name="web_mic_unprocessed">Unprocessed</string>
+    <string name="web_lbl_gain">Gain</string>
+    <string name="web_lbl_noise_suppress">Noise suppression</string>
+    <string name="web_lbl_echo_cancel">Echo cancellation</string>
+    <string name="web_hint_mjpeg_output">MJPEG output</string>
+    <string name="web_lbl_rtsp_bitrate_cap">RTSP bitrate cap</string>
+    <string name="web_hint_rtsp_bitrate_auto">0 = auto from resolution × fps</string>
+    <string name="web_lbl_mjpeg_sidecar">MJPEG sidecar</string>
+    <string name="web_hint_mjpeg_sidecar">RTSP only · ≤30 fps · /video also served alongside RTSP</string>
+    <string name="web_lbl_record_mp4">Record to MP4 while streaming</string>
+    <string name="web_hint_record_rtsp_only">RTSP only · saves to Movies/Lenscast/</string>
+    <string name="web_lbl_sftp_auto_upload">SFTP auto-upload</string>
+    <string name="web_hint_sftp_auto_upload">Recordings are queued after the stream stops.</string>
+    <string name="web_lbl_sftp_host">SFTP host</string>
+    <string name="web_lbl_sftp_port">SFTP port</string>
+    <string name="web_lbl_sftp_user">SFTP user</string>
+    <string name="web_lbl_sftp_password">SFTP password</string>
+    <string name="web_lbl_sftp_remote_dir">Remote directory</string>
+    <string name="web_hint_sftp_remote_dir">Blank = home dir; created if missing.</string>
+    <string name="web_lbl_sftp_fingerprint">Host-key fingerprint</string>
+    <string name="web_hint_sftp_fingerprint">Pin SHA-256 to defeat MITM. Blank = trust on first connect.</string>
+    <string name="web_lbl_sftp_status">SFTP status</string>
+    <string name="web_btn_sftp_retry">Upload last recording now</string>
+    <string name="web_lbl_keep_screen_on">Keep screen on while streaming</string>
+    <string name="web_lbl_blank_preview">Hide preview while streaming</string>
+    <string name="web_hint_battery_saver">Battery saver</string>
+    <string name="web_lbl_auto_start">Auto-start streaming on app launch</string>
+    <string name="web_lbl_start_on_boot">Start on device boot</string>
+    <string name="web_lbl_mjpeg_port">MJPEG port</string>
+    <string name="web_lbl_rtsp_port">RTSP port</string>
+    <string name="web_lbl_https">HTTPS</string>
+    <string name="web_hint_https">Self-signed cert; receivers click through the warning once</string>
+    <string name="web_lbl_cert_fp">Cert fingerprint</string>
+    <string name="web_lbl_stream_user">Stream username</string>
+    <string name="web_hint_stream_user">Defaults to Lenscast; used with the passcode below.</string>
+    <string name="web_lbl_stream_pass">Stream passcode</string>
+    <string name="web_hint_stream_pass">Applies to MJPEG and RTSP. Empty = open access.</string>
+    <string name="web_lbl_call_behavior">Incoming call behavior</string>
+    <string name="web_hint_call_behavior">Needs READ_PHONE_STATE; DROP also needs ANSWER_PHONE_CALLS</string>
+    <string name="web_call_ignore">Ignore (audio keeps flowing)</string>
+    <string name="web_call_mute">Mute the stream</string>
+    <string name="web_call_drop">Drop the call</string>
+    <string name="web_lbl_persistent_web">Keep web panel reachable in background</string>
+    <string name="web_hint_persistent_web">Adds a persistent low-priority notification</string>
+    <string name="web_lbl_export">Export settings</string>
+    <string name="web_btn_download_json">Download JSON</string>
+    <string name="web_lbl_import">Import settings</string>
+    <string name="web_hint_import_replaces">Replaces the current settings — stream must be stopped first</string>
+    <string name="web_ph_import_json">Paste exported JSON here, then click Import</string>
+    <string name="web_btn_import">Import</string>
+    <string name="web_footer_panel">control panel</string>
+    <string name="web_stream_locked_hint">Stop the stream to change these settings.</string>
+
+    <!-- Help tooltips shown when the user clicks the `?` icon next to a setting on the
+         web panel. Each one explains a single field in 1–2 sentences. Keyed by the
+         setting's name (lowercased, no underscores) — the key lives in the HTML as
+         `data-help="…"`. -->
+    <string name="web_help_lens">Which physical camera to use. Front = selfie camera; back = main camera.</string>
+    <string name="web_help_resolution">Frame size. Higher = sharper picture, more bandwidth, more battery.</string>
+    <string name="web_help_fps">Frames per second. 30 is the standard. 60 and above need the RTSP protocol and a high-speed-capable lens.</string>
+    <string name="web_help_rotation_lock">Forces the MJPEG stream to a specific orientation no matter how the phone is held.</string>
+    <string name="web_help_mirror">Flips the picture left-right. Common for selfie/vlog setups so on-screen text reads normally on your phone.</string>
+    <string name="web_help_continuous_af">When on, the camera continuously refocuses on the scene. When off, focus is locked at the last tap point.</string>
+    <string name="web_help_watermark">Burns a text label into every MJPEG frame. The literal `%t` is replaced with the current HH:mm:ss.</string>
+    <string name="web_help_exposure">Brightens (+) or darkens (−) the picture without changing ISO or shutter speed.</string>
+    <string name="web_help_white_balance">Adjusts colour temperature for the lighting type. Auto works in most rooms.</string>
+    <string name="web_help_antibanding">Removes the horizontal flicker bands you sometimes see under fluorescent or mains-powered lights. Match your country\'s mains: 50 Hz in Europe, 60 Hz in North America.</string>
+    <string name="web_help_effect">Built-in colour effects baked into the stream. \"None\" is normal video.</string>
+    <string name="web_help_scene">Hints the camera about what kind of scene you\'re shooting so it can tune exposure / focus automatically.</string>
+    <string name="web_help_manual_focus">Disables autofocus and uses the Focus distance slider instead.</string>
+    <string name="web_help_focus_distance">How far the camera is focused. 0 = infinity, higher values = closer to the lens. Only used while Manual focus is on.</string>
+    <string name="web_help_manual_exposure">Disables auto-exposure and uses the ISO and Shutter sliders instead. Useful for fixed-lighting scenes where AE keeps drifting.</string>
+    <string name="web_help_iso">Sensor sensitivity. Lower = cleaner picture, needs more light. Only used while Manual exposure is on.</string>
+    <string name="web_help_shutter">How long each frame is exposed, in microseconds. Shorter = sharper motion, dimmer picture. Only used while Manual exposure is on.</string>
+    <string name="web_help_stream_mic">Sends the phone\'s microphone audio alongside the video. Requires the Microphone permission.</string>
+    <string name="web_help_mic_source">Which Android microphone preset to use. Camcorder is good for most cases; Voice communication adds aggressive echo/noise cancel for calls.</string>
+    <string name="web_help_gain">Amplifies the microphone signal in software. +6 dB doubles the loudness; clipping happens above 0 dBFS on the meter.</string>
+    <string name="web_help_noise_suppress">Lets Android\'s built-in noise suppressor try to remove background hum and hiss. Quality varies by device.</string>
+    <string name="web_help_echo_cancel">Lets Android\'s built-in echo canceller remove playback echo from the mic. Mostly useful in two-way calls.</string>
+    <string name="web_help_jpeg_quality">JPEG compression level for the MJPEG stream. Higher = sharper picture, larger frames, more bandwidth. 80 is a good default.</string>
+    <string name="web_help_rtsp_bitrate">Target bitrate for the H.264 encoder. 0 lets Lenscast pick from resolution × FPS. Lower it for slow Wi-Fi.</string>
+    <string name="web_help_mjpeg_sidecar">When on, the MJPEG /video endpoint runs alongside RTSP using the same camera capture. Lets a browser preview while OBS pulls RTSP. Capped at ≤30 fps.</string>
+    <string name="web_help_record_mp4">Saves the RTSP stream to an MP4 file in Movies/Lenscast/ while streaming. Encoded once, no extra battery cost.</string>
+    <string name="web_help_sftp_auto_upload">When the recording finishes, queue it for SFTP upload to the server you configure below.</string>
+    <string name="web_help_sftp_host">Hostname or IP of the SSH/SFTP server.</string>
+    <string name="web_help_sftp_port">SSH port. 22 is the default.</string>
+    <string name="web_help_sftp_user">Username on the SFTP server.</string>
+    <string name="web_help_sftp_password">Password on the SFTP server. Key-auth isn\'t supported yet.</string>
+    <string name="web_help_sftp_remote_dir">Folder on the server to upload into. Created if missing. Blank = the user\'s home directory.</string>
+    <string name="web_help_sftp_fingerprint">Pin the server\'s SHA-256 fingerprint to defeat MITM. Blank = trust whatever key the server presents (LAN-only setups).</string>
+    <string name="web_help_keep_screen_on">Prevents the phone screen from sleeping while streaming. Higher battery cost.</string>
+    <string name="web_help_blank_preview">Saves battery by not rendering the preview on the phone while streaming. The stream itself still goes out.</string>
+    <string name="web_help_auto_start">Start streaming immediately whenever the app is opened, with the last-used settings.</string>
+    <string name="web_help_start_on_boot">Start streaming automatically when the phone finishes booting. Requires the app to be excluded from battery optimisation.</string>
+    <string name="web_help_mjpeg_port">TCP port the MJPEG server listens on. Receivers connect to <code>&lt;phone-ip&gt;:&lt;this-port&gt;/video</code>.</string>
+    <string name="web_help_rtsp_port">TCP port the RTSP server listens on. OBS / VLC / ffmpeg connect to <code>rtsp://&lt;phone-ip&gt;:&lt;this-port&gt;/lenscast</code>.</string>
+    <string name="web_help_https">Wraps the MJPEG and web-control ports in TLS. Receivers will see a self-signed-cert warning the first time.</string>
+    <string name="web_help_stream_user">Username the receiver will be asked for. Defaults to \"Lenscast\" when blank.</string>
+    <string name="web_help_stream_pass">Password the receiver will be asked for. Blank = open access to anyone on your network.</string>
+    <string name="web_help_call_behavior">What should happen to the stream when a phone call comes in. Mute and Drop require the Phone permission.</string>
+    <string name="web_help_persistent_web">Keeps this web control panel reachable when the app is backgrounded. Adds a persistent low-priority notification.</string>
+    <string name="web_help_export">Download every setting as a JSON file you can re-import on another phone.</string>
+    <string name="web_help_import">Replace every setting with a previously-exported JSON blob. Stream must be stopped.</string>
+
+    <!-- WebRTC viewer (the standalone /webrtc/view page) -->
+    <string name="web_viewer_title">Lenscast — WebRTC</string>
+    <string name="web_viewer_h1">Lenscast — WebRTC viewer</string>
+    <string name="web_viewer_note">Make sure the stream is started in WebRTC mode in Settings.</string>
+    <string name="web_viewer_btn_connect">Connect</string>
+    <string name="web_viewer_status_idle">idle</string>
+    <string name="web_viewer_status_creating">creating peer connection…</string>
+    <string name="web_viewer_status_streaming">streaming</string>
+    <string name="web_viewer_status_exchanging">exchanging SDP…</string>
+    <string name="web_viewer_status_answer">answer applied — waiting for media</string>
 
     <string name="settings_web_control_section">Web control panel</string>
     <string name="settings_web_control_enabled">Run the web control panel</string>

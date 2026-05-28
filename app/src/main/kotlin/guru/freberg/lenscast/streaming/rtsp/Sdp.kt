@@ -1,6 +1,6 @@
 package guru.freberg.lenscast.streaming.rtsp
 
-import android.util.Base64
+import java.util.Base64
 
 /**
  * Generates the SDP body that describes our RTSP stream(s) to the client (e.g., OBS).
@@ -45,8 +45,8 @@ object Sdp {
         val profileLevelIdHex = if (video.sps.size >= 4) "%02x%02x%02x".format(
             video.sps[1].toInt() and 0xFF, video.sps[2].toInt() and 0xFF, video.sps[3].toInt() and 0xFF,
         ) else "42001f"
-        val spsB64 = Base64.encodeToString(video.sps, Base64.NO_WRAP)
-        val ppsB64 = Base64.encodeToString(video.pps, Base64.NO_WRAP)
+        val spsB64 = Base64.getEncoder().encodeToString(video.sps)
+        val ppsB64 = Base64.getEncoder().encodeToString(video.pps)
         sb.append("a=fmtp:").append(video.payloadType)
             .append(" packetization-mode=1;profile-level-id=").append(profileLevelIdHex)
             .append(";sprop-parameter-sets=").append(spsB64).append(',').append(ppsB64).append("\r\n")

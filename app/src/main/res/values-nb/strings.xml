@@ -1,0 +1,438 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lenscast</string>
+
+    <string name="title_main">Lenscast</string>
+    <string name="subtitle_idle">Klar til å strømme</string>
+    <string name="subtitle_streaming">Direkte</string>
+
+    <string name="action_start">Start strømming</string>
+    <string name="action_stop">Stopp strømming</string>
+    <string name="action_settings">Innstillinger</string>
+    <string name="action_copy">Kopier</string>
+    <string name="action_copied">Kopiert</string>
+    <string name="action_switch_camera">Bytt kamera</string>
+    <string name="action_toggle_flash">Lommelykt</string>
+
+    <string name="card_connection_title">Koble OBS til denne URL-en</string>
+    <string name="card_connection_wifi">Wi-Fi (LAN)</string>
+    <string name="card_connection_usb">USB (adb forward)</string>
+    <string name="card_connection_usb_hint">Kjør på PC-en først:</string>
+    <string name="card_connection_no_wifi">Ikke koblet til Wi-Fi</string>
+    <string name="card_connection_obs_hint">I OBS: Legg til → Mediekilde → fjern \"Lokal fil\" → lim inn URL over</string>
+    <string name="card_connection_audio">Lyd (PCM-16LE WAV)</string>
+    <string name="card_connection_web_control">Webkontrollpanel</string>
+
+    <string name="stat_resolution">Oppløsning</string>
+    <string name="stat_fps">FPS</string>
+    <string name="stat_clients">Klienter</string>
+    <string name="stat_protocol">Protokoll</string>
+    <string name="stat_bitrate">Bitrate</string>
+
+    <string name="settings_title">Innstillinger</string>
+    <string name="settings_protocol">Strømmeprotokoll</string>
+    <string name="settings_protocol_mjpeg">MJPEG over HTTP</string>
+    <string name="settings_protocol_rtsp">RTSP (H.264 + AAC)</string>
+    <string name="settings_protocol_webrtc">WebRTC (nettleser, H.264)</string>
+    <string name="settings_resolution">Oppløsning</string>
+    <string name="settings_fps">FPS-mål</string>
+    <string name="settings_quality">JPEG-kvalitet</string>
+    <string name="settings_quality_summary">%1$d%%</string>
+    <string name="settings_camera">Kamera</string>
+    <string name="settings_camera_back">Bak</string>
+    <string name="settings_camera_front">Front</string>
+    <string name="settings_audio">Strøm mikrofonlyd</string>
+    <string name="settings_keep_screen_on">Hold skjermen på under strømming</string>
+    <string name="settings_mjpeg_port">MJPEG-port</string>
+    <string name="settings_rtsp_port">RTSP-port</string>
+    <string name="settings_port_section">Tjenerport</string>
+    <string name="settings_port_range_hint">Porten må være 1024–65535</string>
+    <string name="settings_rtsp_landscape_note">RTSP støtter kun liggende retning — snu telefonen før du starter.</string>
+    <string name="settings_mjpeg_rotation_note">Rotasjonen låses ved Start. For å endre orientering: Stopp strømmen, snu telefonen, og Start på nytt.</string>
+
+    <string name="settings_system_webcam_title">Bruk som USB-webkamera (system)</string>
+    <string name="settings_system_webcam_explainer">Enheten din støtter system-modusen DeviceAsWebcam. Koble til via USB, velg deretter \"Webkamera\" i USB-innstillingene — telefonen vises som et vanlig webkamera i Zoom, Chrome osv. Merk: bildet kommer fra Android, ikke fra Lenscast.</string>
+    <string name="settings_system_webcam_open">Åpne USB-innstillinger</string>
+    <string name="settings_version">Lenscast v%1$s</string>
+
+    <string name="permission_camera_title">Kameratillatelse kreves</string>
+    <string name="permission_camera_message">Lenscast trenger kameratilgang for å fange og strømme video. Gi tillatelsen for å fortsette.</string>
+    <string name="permission_open_settings">Åpne app-innstillinger</string>
+    <string name="permission_grant">Tillat</string>
+
+    <string name="notif_channel_streaming">Strømming</string>
+    <string name="notif_channel_streaming_description">Vises mens Lenscast aktivt strømmer til PC-en din.</string>
+    <string name="notif_channel_web_control">Webkontrollpanel</string>
+    <string name="notif_channel_web_control_description">Vedvarende varsel med lav prioritet vises mens webkontrollpanelet kan nås i bakgrunnen.</string>
+    <string name="notif_title_web_control">Webkontrollpanel kjører</string>
+    <string name="notif_text_web_control">http://%1$s:%2$d/  ·  trykk for å åpne Lenscast</string>
+    <string name="notif_title_streaming">Lenscast strømmer</string>
+    <string name="notif_text_streaming">%1$s på port %2$d</string>
+    <string name="notif_action_stop">Stopp</string>
+
+    <string name="preview_rtsp_streaming_title">Strømmer direkte</string>
+    <string name="preview_rtsp_streaming_description">Kamerasignalet går til OBS via RTSP. Forhåndsvisning på enheten er deaktivert mens strømmen er aktiv for å holde rotasjonen stabil.</string>
+
+    <string name="settings_image_section">Bilde</string>
+    <string name="settings_mirror">Speil horisontalt</string>
+    <string name="settings_continuous_af">Kontinuerlig autofokus</string>
+    <string name="settings_exposure">Eksponeringskompensasjon</string>
+    <string name="settings_exposure_summary">EV %1$+d</string>
+    <string name="settings_white_balance">Hvitbalanse</string>
+    <string name="settings_wb_auto">Auto</string>
+    <string name="settings_wb_incandescent">Glødelampe</string>
+    <string name="settings_wb_fluorescent">Lysrør</string>
+    <string name="settings_wb_daylight">Dagslys</string>
+    <string name="settings_wb_cloudy">Overskyet</string>
+    <string name="settings_wb_shade">Skygge</string>
+    <string name="settings_antibanding">Antiflimmer</string>
+    <string name="settings_ab_auto">Auto</string>
+    <string name="settings_ab_50">50 Hz</string>
+    <string name="settings_ab_60">60 Hz</string>
+    <string name="settings_ab_off">Av</string>
+    <string name="settings_image_mjpeg_only_note">Bildekontrollene gjelder MJPEG-banen. RTSP-koderen bruker kameraets standardverdier.</string>
+    <string name="settings_watermark">Vannmerke</string>
+    <string name="settings_watermark_hint">Tegnes på hver MJPEG-ramme. La det stå tomt for å deaktivere. `%t` byttes ut med klokkeslettet HH:mm:ss.</string>
+    <string name="settings_manual_exposure">Manuell eksponering (ISO + lukker)</string>
+    <string name="settings_manual_exposure_unavailable">Ikke støttet på denne linsen (mangler MANUAL_SENSOR).</string>
+    <string name="settings_iso">ISO</string>
+    <string name="settings_shutter">Lukker (µs)</string>
+
+    <string name="snapshot_saved">Lagret i Pictures/Lenscast</string>
+    <string name="snapshot_failed">Stillbilde mislyktes — ingen ramme ennå?</string>
+
+    <string name="settings_security_section">Tilgangskontroll</string>
+    <string name="settings_username">Strømmebrukernavn</string>
+    <string name="settings_username_hint">Standard er Lenscast. Brukes sammen med passordet nedenfor.</string>
+    <string name="settings_password">Strømmepassord</string>
+    <string name="settings_password_hint">La det stå tomt for åpen tilgang (brukernavn ignoreres da). Gjelder både MJPEG og RTSP — mottakere bygger inn rtsp://bruker:pass@vert…</string>
+    <string name="settings_https">HTTPS (selvsignert sertifikat)</string>
+    <string name="settings_https_hint">Mottakere vil se en \"selvsignert\"-advarsel første gang — klikk videre. Sertifikatets fingeravtrykk:</string>
+    <string name="settings_call_behavior">Når noen ringer</string>
+    <string name="settings_call_behavior_hint">Krever telefontillatelse for å oppdage anrop. \"Avvis anrop\" krever også ANSWER_PHONE_CALLS — enkelte OEM-ROM-er overser dette.</string>
+    <string name="call_ignore">Ignorer (lyden fortsetter)</string>
+    <string name="call_mute">Demp strømmen under samtalen</string>
+    <string name="call_drop">Avvis anropet automatisk</string>
+    <string name="settings_call_permission_missing">Telefontillatelse ikke gitt — den valgte anropsoppførselen vil ikke aktiveres når et anrop kommer inn.</string>
+
+    <string name="settings_backup_section">Sikkerhetskopi</string>
+    <string name="settings_export">Eksporter innstillinger</string>
+    <string name="settings_import">Importer innstillinger</string>
+    <string name="settings_export_done">Innstillinger eksportert</string>
+    <string name="settings_import_done">Innstillinger importert</string>
+    <string name="settings_import_failed">Import mislyktes (ugyldig JSON?)</string>
+    <string name="settings_share_diagnostics">Del diagnostikk</string>
+    <string name="settings_share_diagnostics_empty">Ingen krasjrapport ennå — ingenting å dele.</string>
+    <string name="settings_automation_section">Automatisering</string>
+    <string name="settings_auto_start">Start strømming ved appstart</string>
+    <string name="settings_rtsp_bitrate">RTSP bitrate-tak (kbps, 0 = auto)</string>
+    <string name="settings_rtsp_bitrate_hint">Overstyr oppløsning+fps-heuristikken. Nyttig på treg Wi-Fi.</string>
+
+    <string name="tile_label">Lenscast</string>
+    <string name="tile_subtitle_idle">Trykk for å strømme</string>
+    <string name="tile_subtitle_live">Strømmer</string>
+
+    <string name="settings_blank_preview">Skjul forhåndsvisning under strømming (batterisparer)</string>
+    <string name="settings_rotation_lock">Rotasjonslås</string>
+    <string name="settings_rotation_auto">Auto</string>
+    <string name="settings_rotation_portrait">Stående</string>
+    <string name="settings_rotation_landscape_left">Liggende ←</string>
+    <string name="settings_rotation_landscape_right">Liggende →</string>
+    <string name="settings_rotation_portrait_down">Stående ⤓</string>
+
+    <string name="settings_effect">Effekt</string>
+    <string name="effect_none">Ingen</string>
+    <string name="effect_mono">Sort/hvit</string>
+    <string name="effect_negative">Negativ</string>
+    <string name="effect_sepia">Sepia</string>
+    <string name="effect_aqua">Aqua</string>
+    <string name="effect_solarize">Solarisert</string>
+    <string name="effect_posterize">Posterisert</string>
+    <string name="effect_blackboard">Tavle</string>
+    <string name="effect_whiteboard">Whiteboard</string>
+
+    <string name="settings_scene">Scene</string>
+    <string name="scene_disabled">Av</string>
+    <string name="scene_action">Action</string>
+    <string name="scene_portrait">Portrett</string>
+    <string name="scene_landscape">Landskap</string>
+    <string name="scene_night">Natt</string>
+    <string name="scene_sports">Sport</string>
+    <string name="scene_theatre">Teater</string>
+    <string name="scene_fireworks">Fyrverkeri</string>
+    <string name="scene_beach">Strand</string>
+    <string name="scene_snow">Snø</string>
+    <string name="scene_sunset">Solnedgang</string>
+
+    <string name="settings_manual_focus">Manuell fokus</string>
+    <string name="settings_focus_distance">Fokusavstand</string>
+    <string name="settings_focus_infinity">∞</string>
+    <string name="settings_focus_close">nær</string>
+
+    <string name="settings_start_on_boot">Start strømming når enheten slås på</string>
+    <string name="settings_start_on_boot_hint">Krever at appen er ekskludert fra batterioptimalisering for at oppstartsmottakeren skal kjøre pålitelig.</string>
+
+    <string name="snapshot_burst_done">Lagret %1$d bilder</string>
+
+    <string name="settings_audio_section">Lyd</string>
+    <string name="settings_mic_source">Mikrofonkilde</string>
+    <string name="mic_camcorder">Camcorder</string>
+    <string name="mic_mic">Standardmikrofon</string>
+    <string name="mic_voice_recognition">Talegjenkjenning</string>
+    <string name="mic_voice_communication">Talekommunikasjon</string>
+    <string name="mic_unprocessed">Ubehandlet</string>
+    <string name="settings_audio_gain">Mikrofonforsterkning</string>
+    <string name="settings_audio_gain_summary">%1$+d dB</string>
+    <string name="settings_noise_suppress">Støydemping</string>
+    <string name="settings_echo_cancel">Ekkokansellering</string>
+
+    <string name="stat_audio">Lyd</string>
+
+    <string name="settings_presets_section">Forhåndsinnstillinger</string>
+    <string name="settings_preset_save">Lagre gjeldende som forhåndsinnstilling</string>
+    <string name="settings_preset_name_hint">Navn</string>
+    <string name="settings_preset_apply">Bruk</string>
+    <string name="settings_preset_delete">Slett</string>
+    <string name="settings_preset_summary">%1$s @ %2$s · %3$d fps · %4$s</string>
+    <string name="settings_preset_lens_back">bak</string>
+    <string name="settings_preset_lens_front">front</string>
+
+    <string name="settings_mjpeg_sidecar">MJPEG-sidekanal (nettleserforhåndsvisning)</string>
+    <string name="settings_mjpeg_sidecar_hint">Eksponerer /video på MJPEG-porten slik at en nettleser-&lt;img&gt; fungerer parallelt med RTSP-strømmen. Samme kamera; maks 15 fps for sidekanalen.</string>
+    <string name="settings_mjpeg_sidecar_highspeed_note">Kun tilgjengelig ved ≤30 fps — Camera2 høyhastighetsøkter avviser ekstra utganger.</string>
+    <string name="settings_record_locally">Lagre til MP4 mens du strømmer (kun RTSP)</string>
+    <string name="settings_record_locally_hint">Lagres i Movies/Lenscast/. Kodes én gang; ingen ekstra batterikostnad utover filskrivingen.</string>
+    <string name="recording_saved">Opptak lagret i Movies/Lenscast</string>
+
+    <string name="settings_sftp_section">SFTP-opplasting</string>
+    <string name="settings_sftp_enabled">Last opp ferdige opptak automatisk</string>
+    <string name="settings_sftp_hint">Hvert opptak legges i kø og lastes opp når strømmen stopper. Feil prøves på nytt 3 ganger.</string>
+    <string name="settings_sftp_host">Vert</string>
+    <string name="settings_sftp_port">Port</string>
+    <string name="settings_sftp_user">Brukernavn</string>
+    <string name="settings_sftp_password">Passord</string>
+    <string name="settings_sftp_dir">Fjernkatalog</string>
+    <string name="settings_sftp_dir_hint">Tom = hjemmekatalogen. Opprettes hvis den mangler.</string>
+    <string name="settings_sftp_fingerprint">Vertsnøkkel-fingeravtrykk (valgfritt)</string>
+    <string name="settings_sftp_fingerprint_hint">Pinne for å beskytte mot MITM. SHA-256 hex eller base64 (med eller uten SHA256:-prefiks). Tom = stol på ved første tilkobling.</string>
+
+    <string name="settings_language_section">Språk</string>
+    <string name="settings_language">App-språk</string>
+    <string name="settings_language_system">Følg systemet</string>
+    <string name="settings_language_en">Engelsk</string>
+    <string name="settings_language_nb">Norsk (Bokmål)</string>
+    <string name="settings_language_hint">Endres umiddelbart på Android 13+, eller ved neste start på eldre enheter.</string>
+
+    <!-- Webkontrollpanel — alle synlige strenger fra WebControlServers HTML. -->
+    <string name="web_title">Lenscast-kontroll</string>
+    <string name="web_state_idle">inaktiv</string>
+    <string name="web_hero_title">Direkte forhåndsvisning</string>
+    <string name="web_idle_pick">Velg en strømmeprotokoll og trykk Start.</string>
+    <string name="web_proto_mjpeg_desc">Universell: nettleser-&lt;img&gt;, OBS, VLC. PCM-lyd-sidekanal. ≤30 fps.</string>
+    <string name="web_proto_rtsp_desc">H.264 + AAC. OBS / VLC / ffmpeg. Opptil 240 fps. Kun liggende retning.</string>
+    <string name="web_proto_webrtc_desc">Under 100 ms forsinkelse i nettleseren. Åpne /webrtc/view etter Start. Ingen lyd ennå.</string>
+    <string name="web_start">Start strømming</string>
+    <string name="web_rtsp_live_title">RTSP er aktiv</string>
+    <string name="web_rtsp_live_note">Åpne i OBS / VLC / ffmpeg — nettlesere kan ikke vise RTSP direkte.</string>
+    <string name="web_webrtc_view_link">Åpne den frittstående visningen →</string>
+    <string name="web_status_h">Status</string>
+    <string name="web_stat_audio_peak">Lydtopp</string>
+    <string name="web_stat_connected_clients">Tilkoblede klienter</string>
+    <string name="web_quick_h">Hurtigkontroller</string>
+    <string name="web_btn_switch_camera">Bytt kamera</string>
+    <string name="web_btn_torch">Lommelykt</string>
+    <string name="web_btn_mirror">Speil</string>
+    <string name="web_btn_continuous_af">Kontinuerlig AF</string>
+    <string name="web_btn_snapshot">Stillbilde</string>
+    <string name="web_btn_stop_streaming">Stopp strømming</string>
+    <string name="web_btn_speedtest">Kjør LAN-hastighetstest</string>
+    <string name="web_lbl_jpeg_quality">JPEG-kvalitet</string>
+    <string name="web_hint_mjpeg_only">Kun MJPEG</string>
+    <string name="web_settings_h">Innstillinger</string>
+    <string name="web_tab_camera">Kamera</string>
+    <string name="web_tab_image">Bilde</string>
+    <string name="web_tab_audio">Lyd</string>
+    <string name="web_tab_stream">Strøm</string>
+    <string name="web_tab_ux">UX</string>
+    <string name="web_tab_system">System</string>
+    <string name="web_lbl_lens">Linse</string>
+    <string name="web_lens_back">Bak</string>
+    <string name="web_lens_front">Front</string>
+    <string name="web_lbl_resolution">Oppløsning</string>
+    <string name="web_hint_res_from_caps">Listen kommer fra kapasiteten til den aktive linsen</string>
+    <string name="web_lbl_fps">FPS</string>
+    <string name="web_hint_fps_range">Gyldig område avhenger av linse × oppløsning × protokoll</string>
+    <string name="web_lbl_rotation_lock">Rotasjonslås</string>
+    <string name="web_hint_rotation_lock">MJPEG-utgangsretning</string>
+    <string name="web_rotation_auto">Auto</string>
+    <string name="web_rotation_portrait">Stående</string>
+    <string name="web_rotation_landscape_left">Liggende ←</string>
+    <string name="web_rotation_landscape_right">Liggende →</string>
+    <string name="web_rotation_portrait_upside">Stående ⤓</string>
+    <string name="web_lbl_mirror">Speil (horisontalt)</string>
+    <string name="web_lbl_continuous_af">Kontinuerlig autofokus</string>
+    <string name="web_lbl_watermark">Vannmerke</string>
+    <string name="web_hint_watermark">Kun MJPEG · `%%t` byttes ut med HH:mm:ss</string>
+    <string name="web_lbl_exposure">Eksponeringskompensasjon</string>
+    <string name="web_lbl_white_balance">Hvitbalanse</string>
+    <string name="web_wb_incandescent">Glødelampe</string>
+    <string name="web_wb_fluorescent">Lysrør</string>
+    <string name="web_wb_daylight">Dagslys</string>
+    <string name="web_wb_cloudy">Overskyet</string>
+    <string name="web_wb_shade">Skygge</string>
+    <string name="web_lbl_antibanding">Antiflimmer</string>
+    <string name="web_ab_off">Av</string>
+    <string name="web_lbl_effect">Effekt</string>
+    <string name="web_effect_none">Ingen</string>
+    <string name="web_effect_mono">Sort/hvit</string>
+    <string name="web_effect_negative">Negativ</string>
+    <string name="web_effect_sepia">Sepia</string>
+    <string name="web_effect_aqua">Aqua</string>
+    <string name="web_effect_solarize">Solarisert</string>
+    <string name="web_effect_posterize">Posterisert</string>
+    <string name="web_effect_blackboard">Tavle</string>
+    <string name="web_effect_whiteboard">Whiteboard</string>
+    <string name="web_lbl_scene">Scene</string>
+    <string name="web_scene_off">Av</string>
+    <string name="web_scene_action">Action</string>
+    <string name="web_scene_portrait">Portrett</string>
+    <string name="web_scene_landscape">Landskap</string>
+    <string name="web_scene_night">Natt</string>
+    <string name="web_scene_sports">Sport</string>
+    <string name="web_scene_theatre">Teater</string>
+    <string name="web_scene_fireworks">Fyrverkeri</string>
+    <string name="web_scene_beach">Strand</string>
+    <string name="web_scene_snow">Snø</string>
+    <string name="web_scene_sunset">Solnedgang</string>
+    <string name="web_lbl_manual_focus">Manuell fokus</string>
+    <string name="web_lbl_focus_distance">Fokusavstand</string>
+    <string name="web_hint_focus_zero_inf">0 = uendelig</string>
+    <string name="web_lbl_manual_exposure">Manuell eksponering</string>
+    <string name="web_hint_manual_exp_unsupported">Støttes ikke på denne linsen</string>
+    <string name="web_lbl_iso">ISO</string>
+    <string name="web_lbl_shutter">Lukker (µs)</string>
+    <string name="web_lbl_stream_mic">Strøm mikrofonlyd</string>
+    <string name="web_lbl_mic_source">Mikrofonkilde</string>
+    <string name="web_mic_camcorder">Camcorder</string>
+    <string name="web_mic_default">Standardmikrofon</string>
+    <string name="web_mic_voice_recog">Talegjenkjenning</string>
+    <string name="web_mic_voice_comm">Talekommunikasjon</string>
+    <string name="web_mic_unprocessed">Ubehandlet</string>
+    <string name="web_lbl_gain">Forsterkning</string>
+    <string name="web_lbl_noise_suppress">Støydemping</string>
+    <string name="web_lbl_echo_cancel">Ekkokansellering</string>
+    <string name="web_hint_mjpeg_output">MJPEG-utgang</string>
+    <string name="web_lbl_rtsp_bitrate_cap">RTSP bitrate-tak</string>
+    <string name="web_hint_rtsp_bitrate_auto">0 = auto fra oppløsning × fps</string>
+    <string name="web_lbl_mjpeg_sidecar">MJPEG-sidekanal</string>
+    <string name="web_hint_mjpeg_sidecar">Kun RTSP · ≤30 fps · /video serveres også parallelt med RTSP</string>
+    <string name="web_lbl_record_mp4">Ta opp til MP4 mens du strømmer</string>
+    <string name="web_hint_record_rtsp_only">Kun RTSP · lagres i Movies/Lenscast/</string>
+    <string name="web_lbl_sftp_auto_upload">SFTP automatisk opplasting</string>
+    <string name="web_hint_sftp_auto_upload">Opptak legges i kø når strømmen stopper.</string>
+    <string name="web_lbl_sftp_host">SFTP-vert</string>
+    <string name="web_lbl_sftp_port">SFTP-port</string>
+    <string name="web_lbl_sftp_user">SFTP-bruker</string>
+    <string name="web_lbl_sftp_password">SFTP-passord</string>
+    <string name="web_lbl_sftp_remote_dir">Fjernkatalog</string>
+    <string name="web_hint_sftp_remote_dir">Tom = hjemmekatalog; opprettes hvis den mangler.</string>
+    <string name="web_lbl_sftp_fingerprint">Vertsnøkkel-fingeravtrykk</string>
+    <string name="web_hint_sftp_fingerprint">Pinne SHA-256 for å beskytte mot MITM. Tom = stol på ved første tilkobling.</string>
+    <string name="web_lbl_sftp_status">SFTP-status</string>
+    <string name="web_btn_sftp_retry">Last opp siste opptak nå</string>
+    <string name="web_lbl_keep_screen_on">Hold skjermen på under strømming</string>
+    <string name="web_lbl_blank_preview">Skjul forhåndsvisning under strømming</string>
+    <string name="web_hint_battery_saver">Batterisparer</string>
+    <string name="web_lbl_auto_start">Start strømming når appen åpnes</string>
+    <string name="web_lbl_start_on_boot">Start ved oppstart</string>
+    <string name="web_lbl_mjpeg_port">MJPEG-port</string>
+    <string name="web_lbl_rtsp_port">RTSP-port</string>
+    <string name="web_lbl_https">HTTPS</string>
+    <string name="web_hint_https">Selvsignert sertifikat; mottakere må godkjenne advarselen én gang</string>
+    <string name="web_lbl_cert_fp">Sertifikatets fingeravtrykk</string>
+    <string name="web_lbl_stream_user">Strømmebrukernavn</string>
+    <string name="web_hint_stream_user">Standard er Lenscast; brukes sammen med passordet under.</string>
+    <string name="web_lbl_stream_pass">Strømmepassord</string>
+    <string name="web_hint_stream_pass">Gjelder MJPEG og RTSP. Tom = åpen tilgang.</string>
+    <string name="web_lbl_call_behavior">Innkommende anrop</string>
+    <string name="web_hint_call_behavior">Krever READ_PHONE_STATE; DROP krever også ANSWER_PHONE_CALLS</string>
+    <string name="web_call_ignore">Ignorer (lyden fortsetter)</string>
+    <string name="web_call_mute">Demp strømmen</string>
+    <string name="web_call_drop">Avvis anropet</string>
+    <string name="web_lbl_persistent_web">Hold webpanelet tilgjengelig i bakgrunnen</string>
+    <string name="web_hint_persistent_web">Legger til et vedvarende varsel med lav prioritet</string>
+    <string name="web_lbl_export">Eksporter innstillinger</string>
+    <string name="web_btn_download_json">Last ned JSON</string>
+    <string name="web_lbl_import">Importer innstillinger</string>
+    <string name="web_hint_import_replaces">Erstatter gjeldende innstillinger — strømmen må være stoppet først</string>
+    <string name="web_ph_import_json">Lim inn eksportert JSON her, og trykk Importer</string>
+    <string name="web_btn_import">Importer</string>
+    <string name="web_footer_panel">kontrollpanel</string>
+    <string name="web_stream_locked_hint">Stopp strømmen for å endre disse innstillingene.</string>
+
+    <!-- Verktøytips for webpanelet — én forklaring per innstilling. -->
+    <string name="web_help_lens">Hvilket fysisk kamera som brukes. Front = selfie-kamera; bak = hovedkamera.</string>
+    <string name="web_help_resolution">Bildestørrelse. Høyere = skarpere bilde, mer båndbredde, mer batteri.</string>
+    <string name="web_help_fps">Bilder per sekund. 30 er standard. 60 og over krever RTSP-protokollen og en linse som støtter høyhastighet.</string>
+    <string name="web_help_rotation_lock">Tvinger MJPEG-strømmen til en bestemt orientering uavhengig av hvordan telefonen holdes.</string>
+    <string name="web_help_mirror">Speilvender bildet horisontalt. Vanlig for selfie/vlog så tekst på skjermen leses normalt.</string>
+    <string name="web_help_continuous_af">Når på, fokuserer kameraet løpende på motivet. Når av, er fokus låst der du sist trykket.</string>
+    <string name="web_help_watermark">Brenner tekst inn i hver MJPEG-ramme. `%t` byttes ut med gjeldende HH:mm:ss.</string>
+    <string name="web_help_exposure">Lysere (+) eller mørkere (−) bilde uten å endre ISO eller lukker.</string>
+    <string name="web_help_white_balance">Justerer fargetemperaturen for ulike lyskilder. Auto fungerer i de fleste rom.</string>
+    <string name="web_help_antibanding">Fjerner horisontale flimmerbånd du noen ganger ser under lysrør eller vekselstrømslamper. Tilpass landets strømfrekvens: 50 Hz i Europa, 60 Hz i Nord-Amerika.</string>
+    <string name="web_help_effect">Innebygde fargeeffekter som bakes inn i strømmen. \"Ingen\" er normalt bilde.</string>
+    <string name="web_help_scene">Forteller kameraet hva slags scene du filmer slik at det kan justere eksponering og fokus automatisk.</string>
+    <string name="web_help_manual_focus">Deaktiverer autofokus og bruker fokusavstand-glidebryteren under.</string>
+    <string name="web_help_focus_distance">Hvor langt kameraet er fokusert. 0 = uendelig, høyere verdier = nærmere linsen. Brukes kun når manuell fokus er på.</string>
+    <string name="web_help_manual_exposure">Deaktiverer automatisk eksponering og bruker ISO- og lukker-glidebryterne. Nyttig i scener med fast lys der AE driver.</string>
+    <string name="web_help_iso">Sensorfølsomhet. Lavere = renere bilde, men krever mer lys. Brukes kun når manuell eksponering er på.</string>
+    <string name="web_help_shutter">Hvor lenge hver ramme eksponeres, i mikrosekunder. Kortere = skarpere bevegelse, mørkere bilde. Brukes kun når manuell eksponering er på.</string>
+    <string name="web_help_stream_mic">Sender telefonens mikrofonlyd sammen med videoen. Krever mikrofontillatelse.</string>
+    <string name="web_help_mic_source">Hvilken Android-mikrofonprofil som brukes. Camcorder passer i de fleste tilfeller; Talekommunikasjon legger til aggressiv støy- og ekkokansellering for samtaler.</string>
+    <string name="web_help_gain">Forsterker mikrofonsignalet i programvare. +6 dB dobler lydstyrken; klipping skjer over 0 dBFS på måleren.</string>
+    <string name="web_help_noise_suppress">Lar Androids innebygde støydemper forsøke å fjerne bakgrunnsstøy. Kvaliteten varierer per enhet.</string>
+    <string name="web_help_echo_cancel">Lar Androids innebygde ekkokansellerer fjerne avspillingsekko fra mikrofonen. Mest nyttig i toveis samtaler.</string>
+    <string name="web_help_jpeg_quality">JPEG-komprimeringsnivå for MJPEG-strømmen. Høyere = skarpere bilde, større rammer, mer båndbredde. 80 er et godt utgangspunkt.</string>
+    <string name="web_help_rtsp_bitrate">Mål-bitrate for H.264-koderen. 0 lar Lenscast velge ut fra oppløsning × FPS. Senk den for treg Wi-Fi.</string>
+    <string name="web_help_mjpeg_sidecar">Når på, kjøres MJPEG /video-endepunktet parallelt med RTSP og deler samme kamera. Lar nettleser forhåndsvise mens OBS henter RTSP. Begrenset til ≤30 fps.</string>
+    <string name="web_help_record_mp4">Lagrer RTSP-strømmen som en MP4-fil i Movies/Lenscast/ mens du strømmer. Kodes én gang, ingen ekstra batterikostnad.</string>
+    <string name="web_help_sftp_auto_upload">Når opptaket er ferdig, settes det i kø for SFTP-opplasting til serveren du konfigurerer under.</string>
+    <string name="web_help_sftp_host">Vertsnavn eller IP til SSH/SFTP-serveren.</string>
+    <string name="web_help_sftp_port">SSH-port. Standard er 22.</string>
+    <string name="web_help_sftp_user">Brukernavn på SFTP-serveren.</string>
+    <string name="web_help_sftp_password">Passord på SFTP-serveren. Nøkkelautentisering støttes ikke ennå.</string>
+    <string name="web_help_sftp_remote_dir">Mappen på serveren det lastes opp til. Opprettes hvis den mangler. Tom = brukerens hjemmekatalog.</string>
+    <string name="web_help_sftp_fingerprint">Pinne serverens SHA-256-fingeravtrykk for å beskytte mot MITM. Tom = stol på hvilken nøkkel serveren enn presenterer (kun for LAN).</string>
+    <string name="web_help_keep_screen_on">Hindrer at telefonskjermen sovner under strømming. Høyere batteriforbruk.</string>
+    <string name="web_help_blank_preview">Sparer batteri ved å ikke tegne forhåndsvisningen på telefonen mens du strømmer. Selve strømmen går ut som vanlig.</string>
+    <string name="web_help_auto_start">Start strømming umiddelbart hver gang appen åpnes, med sist brukte innstillinger.</string>
+    <string name="web_help_start_on_boot">Start strømming automatisk når telefonen er ferdig å starte opp. Krever at appen er ekskludert fra batterioptimalisering.</string>
+    <string name="web_help_mjpeg_port">TCP-port MJPEG-tjeneren lytter på. Mottakere kobler til <code>&lt;telefon-ip&gt;:&lt;denne-porten&gt;/video</code>.</string>
+    <string name="web_help_rtsp_port">TCP-port RTSP-tjeneren lytter på. OBS / VLC / ffmpeg kobler til <code>rtsp://&lt;telefon-ip&gt;:&lt;denne-porten&gt;/lenscast</code>.</string>
+    <string name="web_help_https">Pakker MJPEG- og webkontroll-portene inn i TLS. Mottakere ser en advarsel om selvsignert sertifikat første gang.</string>
+    <string name="web_help_stream_user">Brukernavn mottakeren spørres om. Standard \"Lenscast\" når tomt.</string>
+    <string name="web_help_stream_pass">Passord mottakeren spørres om. Tomt = åpen tilgang for alle på nettverket.</string>
+    <string name="web_help_call_behavior">Hva som skal skje med strømmen når et anrop kommer inn. Demp og Avvis krever telefontillatelse.</string>
+    <string name="web_help_persistent_web">Holder dette webkontrollpanelet tilgjengelig når appen er i bakgrunnen. Legger til et vedvarende varsel med lav prioritet.</string>
+    <string name="web_help_export">Last ned alle innstillinger som en JSON-fil du kan importere på en annen telefon.</string>
+    <string name="web_help_import">Erstatt alle innstillinger med en tidligere eksportert JSON. Strømmen må være stoppet.</string>
+
+    <!-- WebRTC-visning -->
+    <string name="web_viewer_title">Lenscast — WebRTC</string>
+    <string name="web_viewer_h1">Lenscast — WebRTC-visning</string>
+    <string name="web_viewer_note">Sørg for at strømmen er startet i WebRTC-modus i Innstillinger.</string>
+    <string name="web_viewer_btn_connect">Koble til</string>
+    <string name="web_viewer_status_idle">inaktiv</string>
+    <string name="web_viewer_status_creating">oppretter peer-tilkobling…</string>
+    <string name="web_viewer_status_streaming">strømmer</string>
+    <string name="web_viewer_status_exchanging">utveksler SDP…</string>
+    <string name="web_viewer_status_answer">svar mottatt — venter på media</string>
+
+    <string name="settings_web_control_section">Webkontrollpanel</string>
+    <string name="settings_web_control_enabled">Kjør webkontrollpanelet</string>
+    <string name="settings_web_control_port">Webkontrollport</string>
+    <string name="settings_web_control_hint">Åpne <code>http://&lt;telefon-ip&gt;:%1$d/</code> på en hvilken som helst LAN-enhet for å starte/stoppe og justere strømmen.</string>
+    <string name="settings_persist_web">Hold webpanelet tilgjengelig i bakgrunnen</string>
+    <string name="settings_persist_web_hint">Legger til et vedvarende varsel med lav prioritet slik at panelet fortsetter å fungere når du bytter app. Uten dette kan OS-en avslutte tjeneren etter få sekunder.</string>
+</resources>

@@ -11,6 +11,7 @@ import guru.freberg.lenscast.streaming.rtsp.AacEncoder
 import guru.freberg.lenscast.streaming.rtsp.AacRtpPacketizer
 import guru.freberg.lenscast.streaming.rtsp.H264Encoder
 import guru.freberg.lenscast.streaming.rtsp.H264RtpPacketizer
+import guru.freberg.lenscast.streaming.rtsp.Rtcp
 import guru.freberg.lenscast.streaming.rtsp.RtpStream
 import guru.freberg.lenscast.streaming.rtsp.RtspCameraDriver
 import guru.freberg.lenscast.streaming.rtsp.RtspServer
@@ -45,6 +46,7 @@ class RtspManager(
         val recordLocally: Boolean = false,
         val authUsername: String = "Lenscast",
         val authPassword: String = "",
+        val sslContext: javax.net.ssl.SSLContext? = null,
     )
 
     private var videoEncoder: H264Encoder? = null
@@ -57,10 +59,27 @@ class RtspManager(
     private val videoStream = RtpStream(payloadType = 96, ssrc = Random.nextInt(), clockHz = 90_000)
     private var audioStream: RtpStream? = null
 
-    @Volatile private var activeSink: RtspServer.OutgoingPacketSink? = null
+    private val activeSinks = java.util.concurrent.CopyOnWriteArrayList<RtspServer.OutgoingPacketSink>()
+
+    // Adaptive bitrate state — see [adaptiveLoop]. Floor is 250 kbps so the picture doesn't
+    // dissolve entirely under bad conditions; ceiling is whatever the user / heuristic asked
+    // for via Config.videoBitrateBps.
+    @Volatile private var configuredBitrate: Int = 0
+    @Volatile private var currentBitrate: Int = 0
+    @Volatile private var worstRecentLoss: Double = 0.0
+    @Volatile private var lastLossReportAtMs: Long = 0
+    private var adaptiveThread: Thread? = null
+    private val adaptiveStop = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val abrFloorBps = 250_000
+    private val abrLossHigh = 0.05
+    private val abrLossLow = 0.01
 
     /** Plans + starts the entire pipeline. Returns the negotiated plan for diagnostics. */
-    suspend fun start(config: Config, previewSurface: Surface?): RtspCameraDriver.Plan? {
+    suspend fun start(
+        config: Config,
+        previewSurface: Surface?,
+        sidecarSurface: Surface? = null,
+    ): RtspCameraDriver.Plan? {
         stop()
         val camDriver = RtspCameraDriver(context).also { camera = it }
         val plan = camDriver.plan(config.lens, config.resolution, config.fps) ?: run {
@@ -115,9 +134,9 @@ class RtspManager(
             // SPS/PPS NALs do not advance frames; mark non-VCL with no marker, VCL last NAL gets marker.
             val markerOnLast = nalType in 1..5
             val packets = H264RtpPacketizer.packetize(videoStream, nal, ts, markerOnLast = markerOnLast)
-            val sink = activeSink ?: return@start
-            for (p in packets) sink.sendVideo(p)
-            if (isKey) Log.v(TAG, "Sent IDR (${packets.size} pkts, ${nal.size}B NAL)")
+            if (activeSinks.isEmpty()) return@start
+            for (sink in activeSinks) for (p in packets) sink.sendVideo(p)
+            if (isKey) Log.v(TAG, "Sent IDR (${packets.size} pkts, ${nal.size}B NAL) to ${activeSinks.size} client(s)")
         }
 
         if (config.audioEnabled) {
@@ -138,22 +157,80 @@ class RtspManager(
                 val stream = audioStream ?: return@start
                 val ts = stream.timestampFromUs(ptsUs)
                 val packets = AacRtpPacketizer.packetize(stream, au, ts)
-                val sink = activeSink ?: return@start
-                for (p in packets) sink.sendAudio(p)
+                if (activeSinks.isEmpty()) return@start
+                for (sink in activeSinks) for (p in packets) sink.sendAudio(p)
             }
         }
 
-        camDriver.start(plan, cameraTargetSurface, previewSurface)
+        camDriver.start(plan, cameraTargetSurface, previewSurface, sidecarSurface)
 
         val srv = RtspServer(
             config.port,
             streamProvider,
             authUsername = config.authUsername,
             authPassword = config.authPassword,
+            sslContext = config.sslContext,
         ).also { it.start() }
         server = srv
 
+        configuredBitrate = config.videoBitrateBps
+        currentBitrate = config.videoBitrateBps
+        startAdaptiveLoop()
+
         return plan
+    }
+
+    /**
+     * Simple AIMD on the H.264 bitrate driven by per-stream RTCP RR fraction-lost.
+     *
+     *  - When worst-case loss across all clients in the last window exceeds [abrLossHigh],
+     *    multiply the bitrate by 0.75 (down to the [abrFloorBps] floor).
+     *  - When worst-case loss drops below [abrLossLow] and we're under the configured
+     *    ceiling, add a fixed [abrFloorBps] / 4 step (≈ 62 kbps) so recovery isn't snappy
+     *    enough to oscillate.
+     *
+     * 2-second cadence picks up changes within ~1 RR cycle without thrashing the encoder.
+     */
+    private fun startAdaptiveLoop() {
+        adaptiveStop.set(false)
+        adaptiveThread = Thread({
+            var stableSeconds = 0
+            while (!adaptiveStop.get()) {
+                try { Thread.sleep(2_000) } catch (_: InterruptedException) { break }
+                val now = System.currentTimeMillis()
+                // No RR in the last 6 s — encoder is either idle (no clients PLAYing) or
+                // running TCP-only. Snap back to the configured ceiling; no point penalising.
+                if (now - lastLossReportAtMs > 6_000) {
+                    if (currentBitrate != configuredBitrate) {
+                        currentBitrate = configuredBitrate
+                        videoEncoder?.setBitrate(currentBitrate)
+                    }
+                    worstRecentLoss = 0.0
+                    continue
+                }
+                val loss = worstRecentLoss
+                worstRecentLoss = 0.0
+                when {
+                    loss > abrLossHigh && currentBitrate > abrFloorBps -> {
+                        currentBitrate = (currentBitrate * 3 / 4).coerceAtLeast(abrFloorBps)
+                        videoEncoder?.setBitrate(currentBitrate)
+                        Log.i(TAG, "ABR ↓ loss=${"%.1f".format(loss * 100)}% → ${currentBitrate / 1000} kbps")
+                        stableSeconds = 0
+                    }
+                    loss < abrLossLow && currentBitrate < configuredBitrate -> {
+                        stableSeconds += 2
+                        if (stableSeconds >= 8) {
+                            val step = (abrFloorBps / 4).coerceAtLeast(32_000)
+                            currentBitrate = (currentBitrate + step).coerceAtMost(configuredBitrate)
+                            videoEncoder?.setBitrate(currentBitrate)
+                            Log.i(TAG, "ABR ↑ loss=${"%.2f".format(loss * 100)}% → ${currentBitrate / 1000} kbps")
+                            stableSeconds = 0
+                        }
+                    }
+                    else -> { /* hold */ }
+                }
+            }
+        }, "LenscastAbr").apply { isDaemon = true; start() }
     }
 
     fun setTorch(on: Boolean) { camera?.setTorch(on) }
@@ -164,11 +241,20 @@ class RtspManager(
     /** Total H.264 VCL frames produced since [start]. */
     fun framesProduced(): Long = videoEncoder?.framesProduced() ?: 0L
 
-    /** 1 if a client is currently in PLAY state, 0 otherwise (single-client server). */
-    fun clientCount(): Int = if (activeSink != null) 1 else 0
+    /** Total bytes shipped over RTSP since [start]. */
+    fun bytesSent(): Long = server?.bytesSent() ?: 0L
+
+    fun clientAddresses(): List<String> = server?.clientAddresses() ?: emptyList()
+    fun kickClient(remote: String): Boolean = server?.kickClient(remote) ?: false
+
+    /** Number of RTSP clients currently in PLAY state. */
+    fun clientCount(): Int = activeSinks.size
 
     fun stop() {
-        activeSink = null
+        adaptiveStop.set(true)
+        adaptiveThread?.interrupt()
+        adaptiveThread = null
+        activeSinks.clear()
         try { server?.stop() } catch (_: Throwable) {}
         server = null
         try { camera?.stop() } catch (_: Throwable) {}
@@ -210,13 +296,24 @@ class RtspManager(
         }
 
         override fun onClientPlay(sink: RtspServer.OutgoingPacketSink) {
-            activeSink = sink
+            activeSinks.add(sink)
             // Force a keyframe so the new client can start decoding immediately.
             videoEncoder?.requestKeyframe()
         }
 
-        override fun onClientTeardown() {
-            activeSink = null
+        override fun onClientTeardown(sink: RtspServer.OutgoingPacketSink) {
+            activeSinks.remove(sink)
+        }
+
+        override fun onReceiverReport(report: Rtcp.ReceiverReport) {
+            // Only consider reports about our video stream (audio loss can spike without
+            // hurting picture quality and would falsely starve the video encoder).
+            if (report.sourceSsrc != videoStream.ssrc) return
+            val loss = report.fractionLostFraction
+            // Track the worst loss across all reporting clients in the current window;
+            // the loop resets this every tick.
+            if (loss > worstRecentLoss) worstRecentLoss = loss
+            lastLossReportAtMs = System.currentTimeMillis()
         }
     }
 

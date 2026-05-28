@@ -72,6 +72,16 @@ interface MjpegControl {
     /** Replace the saved settings from a JSON blob. Returns false on parse failure or
      *  when the swap is not allowed mid-stream. */
     fun importSettingsJson(body: String): Boolean
+    /** Close the streaming socket whose remote address matches `host:port`. Returns
+     *  false when nothing matched (already disconnected, racing, or typo). */
+    fun kickClient(remote: String): Boolean
+    /** Browser-side WebRTC handshake. Pass the offer SDP + the HTTP peer's host:port for
+     *  bookkeeping; receive back the SDP answer with all ICE candidates inlined. */
+    fun webRtcAnswer(offerSdp: String, remoteHostPort: String): String?
+    /** Re-queue the last finished MP4 for SFTP upload. Returns false if nothing to upload. */
+    fun retryLastSftpUpload(): Boolean
+    /** One-line JSON snapshot of the SFTP queue + last error / success. */
+    fun sftpStatusJson(): String
 }
 
 class MjpegServer(
@@ -91,6 +101,30 @@ class MjpegServer(
     private var server: ServerSocket? = null
     private var acceptJob: Job? = null
     @Volatile private var running = false
+    private val txBytes = java.util.concurrent.atomic.AtomicLong(0)
+
+    // Only sockets currently streaming /video or /audio — short-lived shot/landing/control
+    // requests would otherwise dominate the list and the "Drop client" button wouldn't do
+    // anything useful for the user.
+    private val streamingClients: MutableSet<Socket> =
+        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<Socket, Boolean>())
+
+    /** Total bytes shipped to clients (MJPEG + audio + landing/status) since [start]. */
+    fun bytesSent(): Long = txBytes.get()
+
+    /** `host:port` of every client currently consuming `/video` or `/audio`. */
+    fun clientAddresses(): List<String> = streamingClients.mapNotNull { s ->
+        (s.remoteSocketAddress as? InetSocketAddress)?.let { "${it.address.hostAddress}:${it.port}" }
+    }
+
+    /** Closes the streaming socket matching `host:port`. Returns true if one was closed. */
+    fun kickClient(remote: String): Boolean {
+        val match = streamingClients.firstOrNull { s ->
+            (s.remoteSocketAddress as? InetSocketAddress)?.let { "${it.address.hostAddress}:${it.port}" } == remote
+        } ?: return false
+        try { match.close() } catch (_: Throwable) {}
+        return true
+    }
 
     fun start() {
         if (running) return
@@ -159,6 +193,7 @@ class MjpegServer(
             when {
                 path.startsWith("/video") -> {
                     countedAsClient = true
+                    streamingClients.add(socket)
                     broadcaster.onClientConnected()
                     writeMjpegStream(out)
                 }
@@ -166,11 +201,13 @@ class MjpegServer(
                     val ab = audioBroadcaster
                     if (ab == null) writeAudioNotAvailable(out)
                     else {
+                        streamingClients.add(socket)
                         ab.onClientConnected()
                         try { writeAudioStream(out, ab) } finally { ab.onClientDisconnected() }
                     }
                 }
                 path.startsWith("/shot")  -> writeSingleShot(out)
+                path.startsWith("/speedtest") -> writeSpeedTest(out, path)
                 else -> writeSimpleLanding(out)
             }
         } catch (_: SocketException) {
@@ -178,6 +215,7 @@ class MjpegServer(
         } catch (t: Throwable) {
             Log.w(TAG, "Client handler error: ${t.message}")
         } finally {
+            streamingClients.remove(socket)
             try { socket.close() } catch (_: Throwable) {}
             if (countedAsClient) broadcaster.onClientDisconnected()
         }
@@ -241,6 +279,7 @@ class MjpegServer(
                 try {
                     out.write(packet)
                     out.flush()
+                    txBytes.addAndGet(packet.size.toLong())
                 } catch (_: IOException) {
                     return
                 }
@@ -249,6 +288,33 @@ class MjpegServer(
             val sleep = frameIntervalMs - elapsed
             if (sleep > 0) delay(sleep)
         }
+    }
+
+    /**
+     * Sinks `bytes=N` (default 10 MB, clamped to 100 MB) of zeros so the receiver can measure
+     * raw LAN throughput. Pure write loop — no camera frames involved. The body counts toward
+     * `bytesSent()` so it shows up in the stats bitrate chip if anyone runs the test live.
+     */
+    private fun writeSpeedTest(out: OutputStream, path: String) {
+        val requested = path.substringAfter('?', "").split('&')
+            .firstOrNull { it.startsWith("bytes=") }?.substringAfter('=')?.toLongOrNull()
+            ?: 10_000_000L
+        val total = requested.coerceIn(1_000L, 100_000_000L)
+        val header = ("HTTP/1.0 200 OK\r\n" +
+            "Cache-Control: no-cache, no-store\r\n" +
+            "Content-Type: application/octet-stream\r\n" +
+            "Content-Length: $total\r\n\r\n").toByteArray(Charsets.US_ASCII)
+        out.write(header)
+        txBytes.addAndGet(header.size.toLong())
+        val chunk = ByteArray(64 * 1024)
+        var remaining = total
+        while (remaining > 0) {
+            val n = minOf(chunk.size.toLong(), remaining).toInt()
+            out.write(chunk, 0, n)
+            remaining -= n
+            txBytes.addAndGet(n.toLong())
+        }
+        out.flush()
     }
 
     private fun writeSingleShot(out: OutputStream) {
@@ -301,6 +367,7 @@ class MjpegServer(
                 try {
                     out.write(chunk)
                     out.flush()
+                    txBytes.addAndGet(chunk.size.toLong())
                 } catch (_: IOException) { return }
             }
         } finally {

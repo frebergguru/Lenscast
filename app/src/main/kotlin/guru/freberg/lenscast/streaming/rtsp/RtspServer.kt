@@ -9,9 +9,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.BufferedOutputStream
-import java.io.BufferedReader
 import java.io.IOException
-import java.io.InputStreamReader
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -23,16 +21,13 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
 /**
- * Minimal single-client RTSP/1.0 server. The streaming path is **TCP-interleaved** —
+ * Minimal multi-client RTSP/1.0 server. The streaming path is **TCP-interleaved** —
  * RTP packets share the RTSP control TCP socket, framed by a 4-byte `$<channel><len16>`
- * preamble per RFC 2326 §10.12. Two-port UDP isn't supported (yet); it'd be a fairly
- * mechanical addition but TCP works through NAT and is what OBS uses by default.
+ * preamble per RFC 2326 §10.12. Two-port UDP is also supported per-session.
  *
- * Handles only one client at a time; a new connect closes the previous session.
- *
- * Wiring: the [RtspManager] supplies an [OutgoingPacketSink] hook that the producer
- * (encoder packetizers) calls; the server multiplexes those bytes onto the active client's
- * TCP socket. Channels are 0/1 for video RTP/RTCP and 2/3 for audio RTP/RTCP.
+ * Every new RTSP connection is served on its own coroutine; the manager fans each
+ * encoder NAL/AAC packet out to every active session's [OutgoingPacketSink]. Channels
+ * are 0/1 for video RTP/RTCP and 2/3 for audio RTP/RTCP.
  */
 class RtspServer(
     private val port: Int,
@@ -40,6 +35,9 @@ class RtspServer(
     /** Optional HTTP Basic auth credentials. Empty password = open access. */
     private val authUsername: String = "Lenscast",
     private val authPassword: String = "",
+    /** When non-null the server speaks `rtsps://` instead of `rtsp://` — uses the same
+     *  SSLContext we already built for HTTPS. */
+    private val sslContext: javax.net.ssl.SSLContext? = null,
 ) {
     /** Provides per-session information: SDP, the SPS/PPS bytes, and a starter hook. */
     interface StreamProvider {
@@ -55,8 +53,14 @@ class RtspServer(
          * outputs into the returned sink so packets flow.
          */
         fun onClientPlay(sink: OutgoingPacketSink)
-        /** Called when the client tears down or disconnects. */
-        fun onClientTeardown()
+        /** Called when this particular client tears down or disconnects. */
+        fun onClientTeardown(sink: OutgoingPacketSink)
+        /**
+         * Called whenever a client reports back via RTCP RR. Fed by the per-session RR
+         * reader (UDP path today; TCP-interleaved RR is still on the to-do). The manager
+         * uses these for the adaptive-bitrate loop.
+         */
+        fun onReceiverReport(report: Rtcp.ReceiverReport) {}
     }
 
     data class RtpInfo(val seq: Int, val rtpTime: Int, val ssrc: Int)
@@ -73,29 +77,39 @@ class RtspServer(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var server: ServerSocket? = null
     private var acceptJob: Job? = null
-    private var currentClient: Socket? = null
+    private val activeClients: MutableSet<Socket> =
+        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<Socket, Boolean>())
     @Volatile private var running = false
     @Volatile var playingClients: Int = 0
         private set
+    private val txBytes = AtomicLong(0)
+
+    /** Total bytes shipped to any RTSP client (RTP + RTSP responses) since [start]. */
+    fun bytesSent(): Long = txBytes.get()
 
     fun start() {
         if (running) return
         running = true
         acceptJob = scope.launch {
             try {
-                val s = ServerSocket().apply {
-                    reuseAddress = true
-                    bind(InetSocketAddress(port))
+                val s = if (sslContext != null) {
+                    sslContext.serverSocketFactory.createServerSocket().apply {
+                        reuseAddress = true
+                        bind(InetSocketAddress(port))
+                    }
+                } else {
+                    ServerSocket().apply {
+                        reuseAddress = true
+                        bind(InetSocketAddress(port))
+                    }
                 }
                 server = s
-                Log.i(TAG, "RTSP listening on 0.0.0.0:$port")
+                Log.i(TAG, "RTSP${if (sslContext != null) "S" else ""} listening on 0.0.0.0:$port")
                 while (running && isActive) {
                     val client = try { s.accept() } catch (_: IOException) { break }
                     client.tcpNoDelay = true
                     client.soTimeout = 0
-                    // Single client at a time — boot the old one.
-                    try { currentClient?.close() } catch (_: Throwable) {}
-                    currentClient = client
+                    activeClients.add(client)
                     launch { handle(client) }
                 }
             } catch (t: Throwable) {
@@ -106,8 +120,8 @@ class RtspServer(
 
     fun stop() {
         running = false
-        try { currentClient?.close() } catch (_: Throwable) {}
-        currentClient = null
+        for (c in activeClients) try { c.close() } catch (_: Throwable) {}
+        activeClients.clear()
         try { server?.close() } catch (_: Throwable) {}
         server = null
         acceptJob?.cancel()
@@ -117,7 +131,7 @@ class RtspServer(
 
     private suspend fun handle(socket: Socket) {
         Log.i(TAG, "Client connected from ${socket.remoteSocketAddress}")
-        val session = RtspSession(socket, streamProvider, authUsername, authPassword)
+        val session = RtspSession(socket, streamProvider, authUsername, authPassword, txBytes)
         try {
             session.serve()
         } catch (_: SocketException) {
@@ -127,9 +141,26 @@ class RtspServer(
         } finally {
             try { socket.close() } catch (_: Throwable) {}
             session.onClosed()
-            if (currentClient === socket) currentClient = null
+            activeClients.remove(socket)
             Log.i(TAG, "Client ${socket.remoteSocketAddress} disconnected")
         }
+    }
+
+    /** Number of TCP-connected RTSP clients (any state, including pre-PLAY). */
+    fun connectedClientCount(): Int = activeClients.size
+
+    /** Snapshot of every connected client's remote address, in `host:port` form. */
+    fun clientAddresses(): List<String> = activeClients.mapNotNull { sock ->
+        (sock.remoteSocketAddress as? InetSocketAddress)?.let { "${it.address.hostAddress}:${it.port}" }
+    }
+
+    /** Closes the socket whose remote address matches `host:port`. Returns true if one was closed. */
+    fun kickClient(remote: String): Boolean {
+        val match = activeClients.firstOrNull { sock ->
+            (sock.remoteSocketAddress as? InetSocketAddress)?.let { "${it.address.hostAddress}:${it.port}" } == remote
+        } ?: return false
+        try { match.close() } catch (_: Throwable) {}
+        return true
     }
 
     companion object {
@@ -145,6 +176,8 @@ class RtspSession(
     private val provider: RtspServer.StreamProvider,
     private val authUsername: String = "Lenscast",
     private val authPassword: String = "",
+    /** Shared with [RtspServer]; sessions add their own send counts here. */
+    private val serverTxBytes: AtomicLong = AtomicLong(0),
 ) {
     private enum class State { INIT, READY, PLAYING, TEARDOWN }
 
@@ -222,9 +255,43 @@ class RtspSession(
     private var rtcpThread: Thread? = null
 
     fun serve() {
-        val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.US_ASCII))
+        // PushbackInputStream lets us peek the first byte of each "message" so we can
+        // distinguish a `$<channel><len>` interleaved frame (binary, RTCP RR coming back
+        // from a TCP-only client like OBS) from an RTSP control line (text).
+        val raw = java.io.PushbackInputStream(java.io.BufferedInputStream(socket.getInputStream(), 8192), 1)
         while (!socket.isClosed) {
-            val request = readRequest(reader) ?: break
+            val first = raw.read()
+            if (first < 0) break
+            if (first == '$'.code) {
+                // Interleaved binary frame: channel (1B) + length (2B BE) + payload.
+                val channel = raw.read()
+                val hi = raw.read()
+                val lo = raw.read()
+                if (channel < 0 || hi < 0 || lo < 0) break
+                val len = (hi shl 8) or lo
+                val payload = ByteArray(len)
+                var off = 0
+                while (off < len) {
+                    val r = raw.read(payload, off, len - off)
+                    if (r < 0) return
+                    off += r
+                }
+                // Channels 1 + 3 are RTCP for video / audio respectively (RTP=0/2).
+                if (channel == 1 || channel == 3) {
+                    var o = 0
+                    while (o + 4 <= len) {
+                        val subLen = (((payload[o + 2].toInt() and 0xFF) shl 8) or
+                            (payload[o + 3].toInt() and 0xFF) + 1) * 4
+                        if (o + subLen > len) break
+                        for (r in Rtcp.parseReceiverReports(payload, o, subLen)) provider.onReceiverReport(r)
+                        o += subLen
+                    }
+                }
+                continue
+            }
+            // Text path: push the first byte back, read the request line + headers.
+            raw.unread(first)
+            val request = readRequest(raw) ?: break
             handle(request)
         }
     }
@@ -233,24 +300,28 @@ class RtspSession(
         sink = null
         rtcpThread?.interrupt()
         rtcpThread = null
+        for (t in rtcpReaderThreads) t.interrupt()
+        rtcpReaderThreads.clear()
         (videoTransport as? StreamTransport.Udp)?.let { it.rtpSocket.close(); it.rtcpSocket.close() }
         (audioTransport as? StreamTransport.Udp)?.let { it.rtpSocket.close(); it.rtcpSocket.close() }
         videoTransport = null
         audioTransport = null
-        if (state == State.PLAYING) {
+        val s = sink
+        if (state == State.PLAYING && s != null) {
             state = State.TEARDOWN
-            provider.onClientTeardown()
+            provider.onClientTeardown(s)
         }
+        sink = null
     }
 
     private data class Request(val method: String, val uri: String, val headers: Map<String, String>) {
         fun cseq(): String = headers["cseq"] ?: "0"
     }
 
-    private fun readRequest(reader: BufferedReader): Request? {
+    private fun readRequest(input: java.io.InputStream): Request? {
         var startLine: String? = null
         while (true) {
-            val l = reader.readLine() ?: return null
+            val l = readAsciiLine(input) ?: return null
             if (l.isNotBlank()) { startLine = l; break }
         }
         val parts = startLine!!.split(' ')
@@ -259,13 +330,27 @@ class RtspSession(
         val uri = parts[1]
         val headers = mutableMapOf<String, String>()
         while (true) {
-            val l = reader.readLine() ?: break
+            val l = readAsciiLine(input) ?: break
             if (l.isEmpty()) break
             val idx = l.indexOf(':')
             if (idx <= 0) continue
             headers[l.substring(0, idx).trim().lowercase()] = l.substring(idx + 1).trim()
         }
         return Request(method, uri, headers)
+    }
+
+    /** Reads bytes up to and including \n, returns the line minus trailing \r\n. */
+    private fun readAsciiLine(input: java.io.InputStream): String? {
+        val sb = StringBuilder(64)
+        while (true) {
+            val b = input.read()
+            if (b < 0) return if (sb.isEmpty()) null else sb.toString()
+            if (b == '\n'.code) {
+                if (sb.isNotEmpty() && sb[sb.length - 1] == '\r') sb.setLength(sb.length - 1)
+                return sb.toString()
+            }
+            sb.append(b.toChar())
+        }
     }
 
     private fun handle(req: Request) {
@@ -289,8 +374,9 @@ class RtspSession(
             "TEARDOWN" -> {
                 respond(req, 200, "OK", extra = "Session: $sessionId\r\n")
                 state = State.TEARDOWN
+                val s = sink
                 sink = null
-                provider.onClientTeardown()
+                if (s != null) provider.onClientTeardown(s)
                 try { socket.close() } catch (_: Throwable) {}
             }
             "GET_PARAMETER", "SET_PARAMETER" -> {
@@ -433,6 +519,39 @@ class RtspSession(
         respond(req, 200, "OK", extra = "Session: $sessionId\r\nRange: npt=0.000-\r\n$rtpInfoHeader")
         provider.onClientPlay(sink!!)
         startRtcp()
+        startUdpRtcpReader(videoTransport)
+        startUdpRtcpReader(audioTransport)
+    }
+
+    /**
+     * Per-UDP-session listener that reads RTCP RR packets back from the client. TCP-interleaved
+     * RR isn't routed here — adding it means demultiplexing `$<channel>` frames from the RTSP
+     * text stream, which is a bigger change. For now, UDP transports get adaptive bitrate;
+     * TCP transports just enjoy the static configured bitrate.
+     */
+    private val rtcpReaderThreads = mutableListOf<Thread>()
+    private fun startUdpRtcpReader(transport: StreamTransport?) {
+        if (transport !is StreamTransport.Udp) return
+        val sock = transport.rtcpSocket
+        val t = Thread({
+            val buf = ByteArray(2048)
+            val packet = java.net.DatagramPacket(buf, buf.size)
+            while (!sock.isClosed && state == State.PLAYING) {
+                try {
+                    sock.receive(packet)
+                    var o = packet.offset
+                    val end = packet.offset + packet.length
+                    while (o + 4 <= end) {
+                        val len = (((buf[o + 2].toInt() and 0xFF) shl 8) or (buf[o + 3].toInt() and 0xFF) + 1) * 4
+                        if (o + len > end) break
+                        for (r in Rtcp.parseReceiverReports(buf, o, len)) provider.onReceiverReport(r)
+                        o += len
+                    }
+                } catch (_: java.io.IOException) { break }
+                catch (_: Throwable) { /* swallow per-packet errors */ }
+            }
+        }, "LenscastRtcpReader").apply { isDaemon = true; start() }
+        rtcpReaderThreads.add(t)
     }
 
     /**
@@ -520,7 +639,9 @@ class RtspSession(
                 // a video access unit and on every audio packet.
                 val markerSet = payload.size >= 2 && (payload[1].toInt() and 0x80 != 0)
                 if (forceFlush || markerSet) out.flush()
-                bytesSent.addAndGet((4 + payload.size).toLong())
+                val n = (4 + payload.size).toLong()
+                bytesSent.addAndGet(n)
+                serverTxBytes.addAndGet(n)
                 return true
             } catch (_: IOException) {
                 return false
@@ -532,6 +653,7 @@ class RtspSession(
         return try {
             t.rtpSocket.send(DatagramPacket(payload, payload.size, t.clientHost, t.clientRtpPort))
             bytesSent.addAndGet(payload.size.toLong())
+            serverTxBytes.addAndGet(payload.size.toLong())
             true
         } catch (_: IOException) {
             false

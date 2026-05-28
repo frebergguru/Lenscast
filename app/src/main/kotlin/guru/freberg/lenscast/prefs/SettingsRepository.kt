@@ -65,6 +65,16 @@ class SettingsRepository(private val context: Context) {
             prefs[K_SHUTTER] = next.shutterUs
             prefs[K_HTTPS] = next.httpsEnabled
             prefs[K_CALL_BEHAVIOR] = next.callBehavior.ordinal
+            prefs[K_WATERMARK] = next.watermarkText.take(120)
+            prefs[K_SFTP_ENABLED] = next.sftpEnabled
+            prefs[K_SFTP_HOST] = next.sftpHost.trim().take(255)
+            prefs[K_SFTP_PORT] = next.sftpPort.coerceIn(1, 65535)
+            prefs[K_SFTP_USER] = next.sftpUser.trim().take(120)
+            prefs[K_SFTP_PASSWORD] = next.sftpPassword
+            prefs[K_SFTP_DIR] = next.sftpRemoteDir.trim().take(255)
+            prefs[K_SFTP_FP] = next.sftpHostKeyFingerprint.trim().take(120)
+            prefs[K_LANG] = next.languageTag.trim().take(16)
+            prefs[K_MJPEG_SIDECAR] = next.mjpegSidecar
         }
     }
 
@@ -109,6 +119,16 @@ class SettingsRepository(private val context: Context) {
         shutterUs = p[K_SHUTTER] ?: 16_666L,
         httpsEnabled = p[K_HTTPS] ?: false,
         callBehavior = CallBehavior.entries.getOrNull(p[K_CALL_BEHAVIOR] ?: 0) ?: CallBehavior.IGNORE,
+        watermarkText = (p[K_WATERMARK] ?: "").take(120),
+        sftpEnabled = p[K_SFTP_ENABLED] ?: false,
+        sftpHost = (p[K_SFTP_HOST] ?: "").trim(),
+        sftpPort = (p[K_SFTP_PORT] ?: 22).coerceIn(1, 65535),
+        sftpUser = (p[K_SFTP_USER] ?: "").trim(),
+        sftpPassword = p[K_SFTP_PASSWORD] ?: "",
+        sftpRemoteDir = (p[K_SFTP_DIR] ?: "").trim(),
+        sftpHostKeyFingerprint = (p[K_SFTP_FP] ?: "").trim(),
+        languageTag = (p[K_LANG] ?: "").trim(),
+        mjpegSidecar = p[K_MJPEG_SIDECAR] ?: false,
     )
 
     /**
@@ -177,5 +197,15 @@ class SettingsRepository(private val context: Context) {
         val K_SHUTTER = longPreferencesKey("shutter_us")
         val K_HTTPS = booleanPreferencesKey("https_enabled")
         val K_CALL_BEHAVIOR = intPreferencesKey("call_behavior")
+        val K_WATERMARK = stringPreferencesKey("watermark_text")
+        val K_SFTP_ENABLED = booleanPreferencesKey("sftp_enabled")
+        val K_SFTP_HOST = stringPreferencesKey("sftp_host")
+        val K_SFTP_PORT = intPreferencesKey("sftp_port")
+        val K_SFTP_USER = stringPreferencesKey("sftp_user")
+        val K_SFTP_PASSWORD = stringPreferencesKey("sftp_password")
+        val K_SFTP_DIR = stringPreferencesKey("sftp_dir")
+        val K_SFTP_FP = stringPreferencesKey("sftp_host_fingerprint")
+        val K_LANG = stringPreferencesKey("language_tag")
+        val K_MJPEG_SIDECAR = booleanPreferencesKey("mjpeg_sidecar")
     }
 }

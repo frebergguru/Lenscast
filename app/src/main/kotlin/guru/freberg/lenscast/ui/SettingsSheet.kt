@@ -2,6 +2,7 @@ package guru.freberg.lenscast.ui
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -28,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -37,12 +39,14 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -113,8 +117,9 @@ fun SettingsSheet(
                 enabled = !streaming,
                 labelOf = {
                     when (it) {
-                        Protocol.MJPEG -> stringResource(R.string.settings_protocol_mjpeg)
-                        Protocol.RTSP  -> stringResource(R.string.settings_protocol_rtsp)
+                        Protocol.MJPEG  -> stringResource(R.string.settings_protocol_mjpeg)
+                        Protocol.RTSP   -> stringResource(R.string.settings_protocol_rtsp)
+                        Protocol.WEBRTC -> stringResource(R.string.settings_protocol_webrtc)
                     }
                 },
                 onSelect = { onChange(settings.copy(protocol = it)) },
@@ -248,6 +253,21 @@ fun SettingsSheet(
                 title = stringResource(R.string.settings_continuous_af),
                 checked = settings.continuousAf,
                 onCheckedChange = { onChange(settings.copy(continuousAf = it)) },
+            )
+
+            Spacer(Modifier.height(8.dp))
+            var watermark by remember(settings.watermarkText) { mutableStateOf(settings.watermarkText) }
+            OutlinedTextField(
+                value = watermark,
+                onValueChange = {
+                    val clipped = it.take(120)
+                    watermark = clipped
+                    onChange(settings.copy(watermarkText = clipped))
+                },
+                label = { Text(stringResource(R.string.settings_watermark)) },
+                singleLine = true,
+                supportingText = { Text(stringResource(R.string.settings_watermark_hint)) },
+                modifier = Modifier.fillMaxWidth(),
             )
 
             Spacer(Modifier.height(8.dp))
@@ -582,6 +602,27 @@ fun SettingsSheet(
 
             if (settings.protocol == Protocol.RTSP) {
                 ToggleRow(
+                    title = stringResource(R.string.settings_mjpeg_sidecar),
+                    checked = settings.mjpegSidecar,
+                    enabled = !streaming && settings.fps.value <= 30,
+                    onCheckedChange = { onChange(settings.copy(mjpegSidecar = it)) },
+                )
+                if (settings.fps.value > 30) {
+                    Text(
+                        text = stringResource(R.string.settings_mjpeg_sidecar_highspeed_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+                    )
+                } else if (settings.mjpegSidecar) {
+                    Text(
+                        text = stringResource(R.string.settings_mjpeg_sidecar_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+                    )
+                }
+                ToggleRow(
                     title = stringResource(R.string.settings_record_locally),
                     checked = settings.recordLocally,
                     enabled = !streaming,
@@ -594,6 +635,7 @@ fun SettingsSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
                     )
+                    SftpSection(settings = settings, onChange = onChange)
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -719,6 +761,51 @@ fun SettingsSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+                // Live permission re-check — fires on every ON_RESUME so a grant via the
+                // system dialog (or via System Settings) immediately clears the warning
+                // without the user having to navigate back into this sheet.
+                val ctx2 = LocalContext.current
+                val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+                val needed = remember(settings.callBehavior) {
+                    buildList {
+                        add(android.Manifest.permission.READ_PHONE_STATE)
+                        if (settings.callBehavior == CallBehavior.DROP_CALL) {
+                            add(android.Manifest.permission.ANSWER_PHONE_CALLS)
+                        }
+                    }
+                }
+                var missing by remember { mutableStateOf(neededMissing(ctx2, needed)) }
+                DisposableEffect(lifecycle, needed) {
+                    val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+                        if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                            missing = neededMissing(ctx2, needed)
+                        }
+                    }
+                    lifecycle.addObserver(obs)
+                    onDispose { lifecycle.removeObserver(obs) }
+                }
+                if (missing.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.errorContainer)
+                            .padding(12.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.settings_call_permission_missing),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(onClick = { phonePermLauncher.launch(missing.toTypedArray()) }) {
+                            Text(stringResource(R.string.permission_grant))
+                        }
+                    }
+                }
             }
 
             } // ← close Security & access card
@@ -794,6 +881,10 @@ fun SettingsSheet(
                         Text(stringResource(R.string.settings_system_webcam_open))
                     }
                 }
+            }
+
+            SettingsGroup(title = "Language") {
+                LanguageSection(settings, onChange)
             }
 
             SettingsGroup(title = "Backup") {
@@ -1078,6 +1169,97 @@ private fun PresetsSection(
 }
 
 @Composable
+private fun LanguageSection(settings: Settings, onChange: (Settings) -> Unit) {
+    SectionLabel(stringResource(R.string.settings_language_section))
+    // Trio: System (empty tag), English ("en"), Norsk ("nb"). Each persists the BCP-47 tag
+    // into Settings.languageTag; the Application observer applies it via AppCompatDelegate.
+    val options = listOf("" to stringResource(R.string.settings_language_system),
+        "en" to stringResource(R.string.settings_language_en),
+        "nb" to stringResource(R.string.settings_language_nb))
+    EnumDropdown(
+        label = stringResource(R.string.settings_language),
+        options = options.map { it.first },
+        selected = settings.languageTag,
+        labelOf = { tag -> options.firstOrNull { it.first == tag }?.second ?: tag },
+        onSelect = { onChange(settings.copy(languageTag = it)) },
+    )
+    Text(
+        text = stringResource(R.string.settings_language_hint),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp),
+    )
+}
+
+@Composable
+private fun SftpSection(settings: Settings, onChange: (Settings) -> Unit) {
+    Spacer(Modifier.height(8.dp))
+    SectionLabel(stringResource(R.string.settings_sftp_section))
+    ToggleRow(
+        title = stringResource(R.string.settings_sftp_enabled),
+        checked = settings.sftpEnabled,
+        onCheckedChange = { onChange(settings.copy(sftpEnabled = it)) },
+    )
+    if (settings.sftpEnabled) {
+        Text(
+            text = stringResource(R.string.settings_sftp_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 2.dp, bottom = 8.dp),
+        )
+        OutlinedTextField(
+            value = settings.sftpHost,
+            onValueChange = { onChange(settings.copy(sftpHost = it)) },
+            label = { Text(stringResource(R.string.settings_sftp_host)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = settings.sftpPort.toString(),
+            onValueChange = { onChange(settings.copy(sftpPort = it.toIntOrNull() ?: settings.sftpPort)) },
+            label = { Text(stringResource(R.string.settings_sftp_port)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = settings.sftpUser,
+            onValueChange = { onChange(settings.copy(sftpUser = it)) },
+            label = { Text(stringResource(R.string.settings_sftp_user)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = settings.sftpPassword,
+            onValueChange = { onChange(settings.copy(sftpPassword = it)) },
+            label = { Text(stringResource(R.string.settings_sftp_password)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = settings.sftpRemoteDir,
+            onValueChange = { onChange(settings.copy(sftpRemoteDir = it)) },
+            label = { Text(stringResource(R.string.settings_sftp_dir)) },
+            singleLine = true,
+            supportingText = { Text(stringResource(R.string.settings_sftp_dir_hint)) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = settings.sftpHostKeyFingerprint,
+            onValueChange = { onChange(settings.copy(sftpHostKeyFingerprint = it)) },
+            label = { Text(stringResource(R.string.settings_sftp_fingerprint)) },
+            singleLine = true,
+            supportingText = { Text(stringResource(R.string.settings_sftp_fingerprint_hint)) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
 private fun BackupSection(
     settings: Settings,
     streaming: Boolean,
@@ -1139,6 +1321,38 @@ private fun BackupSection(
             modifier = Modifier.weight(1f),
         ) { Text(stringResource(R.string.settings_import)) }
     }
+    Spacer(Modifier.height(12.dp))
+    OutlinedButton(
+        onClick = { shareDiagnostics(ctx) },
+        modifier = Modifier.fillMaxWidth(),
+    ) { Text(stringResource(R.string.settings_share_diagnostics)) }
+}
+
+/** Filter `wanted` down to the entries the user hasn't granted yet. */
+private fun neededMissing(ctx: android.content.Context, wanted: List<String>): List<String> =
+    wanted.filter {
+        androidx.core.content.ContextCompat.checkSelfPermission(ctx, it) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+private fun shareDiagnostics(ctx: android.content.Context) {
+    val file = guru.freberg.lenscast.system.CrashReporter.reportFile(ctx)
+    if (!file.exists()) {
+        android.widget.Toast.makeText(
+            ctx, ctx.getString(R.string.settings_share_diagnostics_empty),
+            android.widget.Toast.LENGTH_SHORT,
+        ).show()
+        return
+    }
+    val uri = androidx.core.content.FileProvider.getUriForFile(
+        ctx, "guru.freberg.lenscast.fileprovider", file,
+    )
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    ctx.startActivity(android.content.Intent.createChooser(intent, "Share diagnostics"))
 }
 
 @Composable

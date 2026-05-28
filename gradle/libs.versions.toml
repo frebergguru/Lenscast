@@ -9,6 +9,11 @@ compose-bom = "2024.10.01"
 camerax = "1.4.0"
 datastore = "1.1.1"
 bouncycastle = "1.78.1"
+zxing = "3.5.3"
+webrtc = "125.6422.07"
+sshj = "0.39.0"
+slf4j = "2.0.16"
+appcompat = "1.7.0"
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
@@ -42,3 +47,8 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 
 bouncycastle-bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bouncycastle" }
 bouncycastle-bcpkix = { group = "org.bouncycastle", name = "bcpkix-jdk18on", version.ref = "bouncycastle" }
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
+webrtc-android = { group = "io.github.webrtc-sdk", name = "android", version.ref = "webrtc" }
+sshj = { group = "com.hierynomus", name = "sshj", version.ref = "sshj" }
+slf4j-nop = { group = "org.slf4j", name = "slf4j-nop", version.ref = "slf4j" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }

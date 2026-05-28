@@ -33,6 +33,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
+        android:localeConfig="@xml/locales_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.Lenscast"
         tools:targetApi="35">
@@ -50,6 +51,18 @@
             </intent-filter>
         </activity>
 
+        <!-- For Share diagnostics — grants a temporary URI to the receiving app for
+             the crash report text file. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="guru.freberg.lenscast.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <service
             android:name=".streaming.StreamingService"
             android:exported="false"
@@ -58,6 +71,19 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Long-running HTTP control panel that lets the user start, stop and tune a stream from any browser on the LAN, even while the Lenscast app is backgrounded." />
+        </service>
+
+        <!-- Required by `AppCompatDelegate.setApplicationLocales`. The metadata flag tells
+             AppCompat to persist the chosen locale itself so it survives process death
+             and gets restored before the first Activity is created — without it, the
+             call apparently succeeds but the UI keeps showing the system locale. -->
+        <service
+            android:name="androidx.appcompat.app.AppLocalesMetadataHolderService"
+            android:enabled="false"
+            android:exported="false">
+            <meta-data
+                android:name="autoStoredLocales"
+                android:value="true" />
         </service>
 
         <receiver

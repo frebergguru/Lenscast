@@ -58,6 +58,8 @@ class CameraController(
 
     @Volatile var jpegQuality: Int = 80
     @Volatile var mirror: Boolean = false
+    /** Optional text drawn on every outgoing MJPEG frame. `%t` expands to wall-clock time. */
+    @Volatile var watermarkText: String = ""
     @Volatile var torchOn: Boolean = false
         set(value) {
             field = value
@@ -149,7 +151,7 @@ class CameraController(
                 .also {
                     it.setAnalyzer(analysisExecutor) { proxy ->
                         try {
-                            val jpeg = YuvToJpeg.encode(proxy, jpegQuality, mirror)
+                            val jpeg = YuvToJpeg.encode(proxy, jpegQuality, mirror, watermarkText)
                             broadcaster.publish(jpeg)
                         } catch (t: Throwable) {
                             Log.w(TAG, "Frame encode failed: ${t.message}")

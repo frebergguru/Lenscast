@@ -58,6 +58,7 @@ class RtspCameraDriver(
     private var currentPlan: Plan? = null
     private var encoderSurface: Surface? = null
     private var previewSurface: Surface? = null
+    private var sidecarSurface: Surface? = null
 
     /** Instance method delegates to the companion for backwards compatibility. */
     fun plan(lens: Lens, requested: Size, targetFps: Int): Plan? =
@@ -69,8 +70,20 @@ class RtspCameraDriver(
      * high-speed sessions (Surfaces from MediaCodec's input surface are sized at config
      * time; the preview SurfaceView must use [SurfaceHolder.setFixedSize] to match).
      */
+    /**
+     * @param sidecarSurface an optional extra output (typically an ImageReader's surface) the
+     *   capture session writes to in parallel with [encoderSurface]. Only legal for standard
+     *   sessions (fps ≤ 30) — high-speed sessions reject anything but encoder/preview Surfaces.
+     *   When [plan.highSpeed] is true and a sidecar is supplied, the sidecar is silently
+     *   ignored so the high-speed path keeps working.
+     */
     @SuppressLint("MissingPermission")
-    suspend fun start(plan: Plan, encoderSurface: Surface, previewSurface: Surface?) {
+    suspend fun start(
+        plan: Plan,
+        encoderSurface: Surface,
+        previewSurface: Surface?,
+        sidecarSurface: Surface? = null,
+    ) {
         check(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             "CAMERA permission must be granted before RtspCameraDriver.start"
         }
@@ -78,6 +91,7 @@ class RtspCameraDriver(
         currentPlan = plan
         this.encoderSurface = encoderSurface
         this.previewSurface = previewSurface
+        this.sidecarSurface = if (plan.highSpeed) null else sidecarSurface
 
         val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val opened = suspendCancellableCoroutine<CameraDevice> { cont ->
@@ -100,7 +114,7 @@ class RtspCameraDriver(
         }
         device = opened
 
-        val outputs = listOfNotNull(encoderSurface, previewSurface)
+        val outputs = listOfNotNull(encoderSurface, previewSurface, this.sidecarSurface)
         if (plan.highSpeed) startHighSpeed(opened, outputs)
         else                startStandard(opened, outputs)
     }
@@ -191,6 +205,7 @@ class RtspCameraDriver(
             val builder = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                 encoderSurface?.let { addTarget(it) }
                 previewSurface?.let { addTarget(it) }
+                sidecarSurface?.let { addTarget(it) }
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, plan.fpsRange)
                 applyTorch(this, torchOn)
             }
@@ -219,6 +234,7 @@ class RtspCameraDriver(
         device = null
         encoderSurface = null
         previewSurface = null
+        sidecarSurface = null
     }
 
     fun shutdown() {

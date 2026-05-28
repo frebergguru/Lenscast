@@ -10,7 +10,9 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import android.util.Size
+import android.view.Surface
 import android.content.ContentValues
+import guru.freberg.lenscast.camera.YuvToJpeg
 import android.net.Uri
 import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
@@ -71,6 +73,8 @@ class StreamingService : LifecycleService() {
     private var mjpegAudioBroadcaster: AudioBroadcaster? = null
     private var mjpegAudioCapture: PcmCapture? = null
     private var rtspManager: RtspManager? = null
+    /** Background SFTP queue for finished MP4 recordings — see [stopStreaming]. */
+    private val sftpUploader by lazy { guru.freberg.lenscast.upload.SftpUploader(this) }
     private var nsd: NsdAdvertiser? = null
     private var webControlServer: WebControlServer? = null
     private var webControlSettings: Triple<Boolean, Int, Boolean>? = null
@@ -135,7 +139,10 @@ class StreamingService : LifecycleService() {
         lifecycleScope.launch {
             repo.flow
                 .distinctUntilChanged()
-                .collect { s -> _status.value = _status.value.copy(settings = s) }
+                .collect { s ->
+                    _status.value = _status.value.copy(settings = s)
+                    sftpUploader.updateSettings(s)
+                }
         }
         // Privacy / call-handling — observe the setting and start/stop the monitor.
         lifecycleScope.launch {
@@ -275,6 +282,7 @@ class StreamingService : LifecycleService() {
         webControlServer = null
         if (enabled) {
             val srv = WebControlServer(
+                context = this,
                 port = port,
                 control = mjpegControl,
                 mjpegPort = { _status.value.settings.mjpegPort },
@@ -326,8 +334,9 @@ class StreamingService : LifecycleService() {
         lifecycleScope.launch {
             try {
                 when (settings.protocol) {
-                    Protocol.MJPEG -> startMjpeg(settings)
-                    Protocol.RTSP  -> startRtsp(settings)
+                    Protocol.MJPEG  -> startMjpeg(settings)
+                    Protocol.RTSP   -> startRtsp(settings)
+                    Protocol.WEBRTC -> startWebRtc(settings)
                 }
                 _status.value = _status.value.copy(state = State.STREAMING, errorMessage = null)
             } catch (t: Throwable) {
@@ -361,6 +370,7 @@ class StreamingService : LifecycleService() {
         bindCameraIfNeeded(
             settings.lens, settings.resolution, settings.fps.value, settings.jpegQuality,
             mirror = settings.mirror,
+            watermarkText = settings.watermarkText,
             whiteBalance = settings.whiteBalance,
             antiBanding = settings.antiBanding,
             continuousAf = settings.continuousAf,
@@ -377,7 +387,10 @@ class StreamingService : LifecycleService() {
         // by MjpegServer as a streaming WAV. Skipping AAC removes ~20 ms of codec
         // lookahead and dodges receiver-side AAC buffering (browsers/VLC pile up half a
         // second of AUs before playing). Bandwidth is ~88 KB/s mono — trivial.
-        val audioBroadcaster = if (settings.audioEnabled) {
+        val audioPermitted = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val audioBroadcaster = if (settings.audioEnabled && audioPermitted) {
             val ab = AudioBroadcaster()
             ab.sampleRate = 44_100
             ab.channels = 1
@@ -566,9 +579,10 @@ class StreamingService : LifecycleService() {
 
         override fun setProtocol(value: String): Boolean {
             val target = when (value.lowercase()) {
-                "mjpeg" -> Protocol.MJPEG
-                "rtsp"  -> Protocol.RTSP
-                else    -> return false
+                "mjpeg"  -> Protocol.MJPEG
+                "rtsp"   -> Protocol.RTSP
+                "webrtc" -> Protocol.WEBRTC
+                else     -> return false
             }
             // Can't swap protocols mid-stream — the encoders and server differ.
             if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
@@ -612,6 +626,7 @@ class StreamingService : LifecycleService() {
         private fun applyLiveTweakables(key: String, s: Settings) {
             when (key) {
                 "mirror"        -> cameraController?.mirror = s.mirror
+                "watermarkText" -> cameraController?.watermarkText = s.watermarkText
                 "exposureEv"    -> cameraController?.applyExposureEv(s.exposureEv)
                 "jpegQuality"   -> cameraController?.jpegQuality = s.jpegQuality
                 "audioGainDb"   -> {
@@ -641,6 +656,20 @@ class StreamingService : LifecycleService() {
                     Pair({ it.copy(lens = lens) }, true)
                 }
                 "mirror"        -> Pair({ it.copy(mirror = b) }, false)
+                "watermarkText" -> Pair({ it.copy(watermarkText = value.take(120)) }, false)
+                "sftpEnabled"    -> Pair({ it.copy(sftpEnabled = b) }, false)
+                "sftpHost"       -> Pair({ it.copy(sftpHost = value.trim().take(255)) }, false)
+                "sftpPort"       -> {
+                    val p = value.toIntOrNull() ?: return null
+                    if (p !in 1..65535) return null
+                    Pair({ it.copy(sftpPort = p) }, false)
+                }
+                "sftpUser"       -> Pair({ it.copy(sftpUser = value.trim().take(120)) }, false)
+                "sftpPassword"   -> Pair({ it.copy(sftpPassword = value) }, false)
+                "sftpRemoteDir"  -> Pair({ it.copy(sftpRemoteDir = value.trim().take(255)) }, false)
+                "sftpHostKeyFingerprint" -> Pair({ it.copy(sftpHostKeyFingerprint = value.trim().take(120)) }, false)
+                "languageTag"   -> Pair({ it.copy(languageTag = value.trim().take(16)) }, false)
+                "mjpegSidecar"  -> Pair({ it.copy(mjpegSidecar = b) }, false)
                 "continuousAf"  -> Pair({ it.copy(continuousAf = b) }, true)
                 "exposureEv"    -> {
                     val ev = value.toIntOrNull() ?: return null
@@ -771,6 +800,14 @@ class StreamingService : LifecycleService() {
             return true
         }
 
+        override fun kickClient(remote: String): Boolean = this@StreamingService.kickClient(remote)
+
+        override fun webRtcAnswer(offerSdp: String, remoteHostPort: String): String? =
+            this@StreamingService.webRtcAnswer(offerSdp, remoteHostPort)
+
+        override fun retryLastSftpUpload(): Boolean = this@StreamingService.retryLastSftpUpload()
+        override fun sftpStatusJson(): String = this@StreamingService.sftpStatusJson()
+
         override fun startStream(): Boolean {
             if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
             // Reuse the QS tile's code path: a startForegroundService kicks off
@@ -785,24 +822,13 @@ class StreamingService : LifecycleService() {
             val s = _status.value.settings
             val st = _status.value.state.name.lowercase()
             val lensLabel = if (s.lens == guru.freberg.lenscast.prefs.Lens.BACK) "back" else "front"
-            val protoLabel = if (s.protocol == Protocol.MJPEG) "mjpeg" else "rtsp"
+            val protoLabel = s.protocol.name.lowercase()
             val res = CameraCapabilities.supportedResolutions(this@StreamingService, s.lens)
                 .joinToString(",") { "\"${it.label}\"" }
             val fps = CameraCapabilities.supportedFps(
                 this@StreamingService, s.lens, s.resolution, s.protocol,
             ).joinToString(",")
             fun lower(any: Any) = any.toString().lowercase()
-            fun jsonEscape(t: String): String = buildString(t.length) {
-                for (c in t) when {
-                    c == '"'  -> append("\\\"")
-                    c == '\\' -> append("\\\\")
-                    c == '\n' -> append("\\n")
-                    c == '\r' -> append("\\r")
-                    c == '\t' -> append("\\t")
-                    c.code < 0x20 -> append("\\u%04x".format(c.code))
-                    else -> append(c)
-                }
-            }
             // Hand-rolled JSON — fixed primitives plus jsonEscape for free-text fields.
             return "{" +
                 """"state":"$st","protocol":"$protoLabel","lens":"$lensLabel",""" +
@@ -811,6 +837,9 @@ class StreamingService : LifecycleService() {
                 """"availableResolutions":[$res],"availableFps":[$fps],""" +
                 """"fps":${framesPerSecondNow()},"targetFps":${s.fps.value},""" +
                 """"clients":${connectedClientCount()},"audioPeakDbfs":${audioPeakDbfs()},""" +
+                """"clientList":[${clientAddresses().joinToString(",") { "\"${jsonEscape(it)}\"" }}],""" +
+                """"txKbps":${txKbpsNow()},""" +
+                """"health":${healthJson()},""" +
                 // image controls
                 """"mirror":${s.mirror},"continuousAf":${s.continuousAf},""" +
                 """"zoom":${currentZoomRatio()},"ev":${s.exposureEv},""" +
@@ -825,6 +854,15 @@ class StreamingService : LifecycleService() {
                 """"httpsEnabled":${s.httpsEnabled},""" +
                 """"tlsFingerprint":"${TlsManager.forContext(this@StreamingService).fingerprintSha256() ?: ""}",""" +
                 """"callBehavior":"${lower(s.callBehavior)}",""" +
+                """"watermarkText":"${jsonEscape(s.watermarkText)}",""" +
+                """"sftpEnabled":${s.sftpEnabled},""" +
+                """"sftpHost":"${jsonEscape(s.sftpHost)}",""" +
+                """"sftpPort":${s.sftpPort},""" +
+                """"sftpUser":"${jsonEscape(s.sftpUser)}",""" +
+                """"sftpRemoteDir":"${jsonEscape(s.sftpRemoteDir)}",""" +
+                """"sftpHostKeyFingerprint":"${jsonEscape(s.sftpHostKeyFingerprint)}",""" +
+                """"languageTag":"${jsonEscape(s.languageTag)}",""" +
+                """"mjpegSidecar":${s.mjpegSidecar},""" +
                 """"streamUsername":"${jsonEscape(s.streamUsername)}",""" +
                 """"persistentWebControl":${s.persistentWebControl},""" +
                 """"supportsManualSensor":${CameraCapabilities.supportsManualSensor(this@StreamingService, s.lens)},""" +
@@ -864,6 +902,7 @@ class StreamingService : LifecycleService() {
         bindCameraIfNeeded(
             s.lens, s.resolution, s.fps.value, s.jpegQuality,
             mirror = s.mirror,
+            watermarkText = s.watermarkText,
             whiteBalance = s.whiteBalance,
             antiBanding = s.antiBanding,
             continuousAf = s.continuousAf,
@@ -880,6 +919,30 @@ class StreamingService : LifecycleService() {
 
     @Volatile private var lastFpsCount: Long = 0
     @Volatile private var lastFpsT: Long = System.currentTimeMillis()
+    @Volatile private var lastBytesSent: Long = 0
+    @Volatile private var lastBytesT: Long = System.currentTimeMillis()
+    @Volatile private var lastTxKbps: Int = 0
+
+    /** Hand-rolled health JSON snippet for /status — null message when no banner. */
+    private fun healthJson(): String {
+        val st = guru.freberg.lenscast.system.HealthMonitor.snapshotNow(this)
+        val msg = st.message
+        val msgJson = if (msg == null) "null" else "\"${jsonEscape(msg)}\""
+        return """{"severity":"${st.severity.name.lowercase()}","message":$msgJson}"""
+    }
+
+    /** Rolling network tx rate for the web /status endpoint — ≥500 ms window. */
+    private fun txKbpsNow(): Int {
+        val now = System.currentTimeMillis()
+        val dt = now - lastBytesT
+        if (dt < 500) return lastTxKbps
+        val bytes = bytesSentNow()
+        val kbps = (((bytes - lastBytesSent) * 8.0) / dt).toInt() // bytes*8/ms = kbps
+        lastBytesSent = bytes
+        lastBytesT = now
+        lastTxKbps = kbps
+        return kbps
+    }
 
     /** Crude rolling FPS for the web /status endpoint — sample-rate aware over ≥500 ms. */
     private fun framesPerSecondNow(): Int {
@@ -892,6 +955,15 @@ class StreamingService : LifecycleService() {
         lastFpsT = now
         return fps
     }
+
+    /**
+     * Lifecycle owner of the optional MJPEG sidecar ImageReader. Held at the service level
+     * so [stopStreaming] can release it deterministically when RTSP shuts down.
+     */
+    @Volatile private var sidecarReader: android.media.ImageReader? = null
+    @Volatile private var sidecarHandler: android.os.Handler? = null
+    @Volatile private var sidecarThread: android.os.HandlerThread? = null
+    @Volatile private var sidecarLastPublishMs: Long = 0
 
     private suspend fun startRtsp(settings: Settings) {
         // The RTSP path owns Camera2 directly; tear down any CameraX preview-only session.
@@ -914,13 +986,36 @@ class StreamingService : LifecycleService() {
             android.view.Surface.ROTATION_270 -> 270
             else -> 0
         }
+        // Optional MJPEG sidecar: a second output Surface on the Camera2 capture session.
+        // Only legal for standard sessions (≤30 fps); high-speed sessions reject ImageReader
+        // YUV outputs. We also skip it if the user disabled the toggle.
+        val sidecarEnabled = settings.mjpegSidecar && settings.fps.value <= 30
+        val sidecarSurface: Surface? = if (sidecarEnabled) {
+            val reader = android.media.ImageReader.newInstance(
+                settings.resolution.width, settings.resolution.height,
+                android.graphics.ImageFormat.YUV_420_888,
+                2, // double buffer — gives the listener a frame in flight while the next arrives.
+            )
+            sidecarReader = reader
+            val thread = android.os.HandlerThread("LenscastMjpegSidecar").also { it.start() }
+            sidecarThread = thread
+            val handler = android.os.Handler(thread.looper)
+            sidecarHandler = handler
+            sidecarLastPublishMs = 0L
+            reader.setOnImageAvailableListener(makeSidecarListener(rotationDegrees, settings), handler)
+            reader.surface
+        } else null
+
+        val rtspAudioPermitted = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
         val plan = mgr.start(
             RtspManager.Config(
                 lens = settings.lens,
                 resolution = Size(settings.resolution.width, settings.resolution.height),
                 fps = settings.fps.value,
                 videoBitrateBps = bitrate,
-                audioEnabled = settings.audioEnabled,
+                audioEnabled = settings.audioEnabled && rtspAudioPermitted,
                 port = settings.rtspPort,
                 deviceRotationDegrees = rotationDegrees,
                 micSource = settings.micSource,
@@ -930,16 +1025,145 @@ class StreamingService : LifecycleService() {
                 recordLocally = settings.recordLocally,
                 authUsername = settings.streamUsername,
                 authPassword = settings.streamPassword,
+                sslContext = if (settings.httpsEnabled) TlsManager.forContext(this).sslContext() else null,
             ),
             previewSurface = null,
+            sidecarSurface = sidecarSurface,
         )
         if (plan == null) {
+            tearDownSidecar()
             throw IllegalStateException(
                 "No camera plan matched ${settings.resolution.label} @ ${settings.fps.value} fps on ${settings.lens}",
             )
         }
         _lastRtspPlan = plan
+        if (sidecarEnabled) {
+            // Spin up the existing MJPEG server on its dedicated port so a browser <img>
+            // can hit /video while OBS pulls RTSP. The broadcaster is fed by the sidecar
+            // ImageReader listener; the audio sidecar (PCM WAV) isn't supported in this
+            // mode because Camera2 owns audio capture through MediaRecorder in RTSP.
+            val server = MjpegServer(
+                broadcaster, settings.mjpegPort, minOf(settings.fps.value, 15),
+                username = settings.streamUsername,
+                password = settings.streamPassword,
+                audioBroadcaster = null,
+                sslContext = if (settings.httpsEnabled) TlsManager.forContext(this).sslContext() else null,
+            ).also { it.start() }
+            mjpegServer = server
+            startNsd(NsdAdvertiser.TYPE_MJPEG, settings.mjpegPort)
+        }
         startNsd(NsdAdvertiser.TYPE_RTSP, settings.rtspPort)
+    }
+
+    /**
+     * ImageReader callback: pulls each NV21 frame, encodes JPEG, publishes to the shared
+     * [broadcaster]. Self-throttles to ~15 fps so the JPEG encode + watermark draw doesn't
+     * starve the H.264 encoder running on the same camera output.
+     */
+    private fun makeSidecarListener(rotationDegrees: Int, settings: Settings): android.media.ImageReader.OnImageAvailableListener {
+        val sensorOrientation = _lastRtspPlan?.sensorOrientation ?: 0
+        // Camera frames are sensor-oriented; the encoder ships them as-is on RTSP, but the
+        // MJPEG path historically rotates to upright. Match the sensor orientation for the
+        // sidecar so browser viewers see the same upright image they always have.
+        val sidecarRotation = ((sensorOrientation - rotationDegrees) + 360) % 360
+        val minIntervalMs = 1000L / 15 // hard-cap at 15 fps
+        return android.media.ImageReader.OnImageAvailableListener { reader ->
+            val now = System.currentTimeMillis()
+            val img = try { reader.acquireLatestImage() } catch (_: Throwable) { null } ?: return@OnImageAvailableListener
+            try {
+                if (now - sidecarLastPublishMs < minIntervalMs) return@OnImageAvailableListener
+                sidecarLastPublishMs = now
+                val jpeg = YuvToJpeg.encodeImage(
+                    img, sidecarRotation, settings.jpegQuality,
+                    mirror = settings.mirror, watermark = settings.watermarkText,
+                )
+                broadcaster.publish(jpeg)
+            } catch (t: Throwable) {
+                Log.w(TAG, "MJPEG sidecar encode failed: ${t.message}")
+            } finally {
+                try { img.close() } catch (_: Throwable) {}
+            }
+        }
+    }
+
+    private fun tearDownSidecar() {
+        try { sidecarReader?.close() } catch (_: Throwable) {}
+        sidecarReader = null
+        try { sidecarThread?.quitSafely() } catch (_: Throwable) {}
+        sidecarThread = null
+        sidecarHandler = null
+    }
+
+    private fun startWebRtc(settings: Settings) {
+        // WebRTC's Camera2Capturer owns Camera2 exclusively — tear down whatever else
+        // might be holding the camera (CameraX preview-only, etc.).
+        try { cameraController?.unbind() } catch (_: Throwable) {}
+        previewBoundKey = null
+        streamingCamera = true
+        val bridge = object : guru.freberg.lenscast.streaming.webrtc.WebRtcManager.ControlBridge {
+            override fun switchLens() = mjpegControl.switchLens()
+            override fun toggleTorch() = mjpegControl.toggleTorch()
+            override fun toggleMirror() = mjpegControl.toggleMirror()
+            override fun toggleContinuousAf() = mjpegControl.toggleContinuousAf()
+            override fun zoomBy(factor: Float) = mjpegControl.zoomBy(factor)
+            override fun nudgeExposure(delta: Int) = mjpegControl.nudgeExposure(delta)
+            override fun snapshot(): Boolean = mjpegControl.snapshot()
+        }
+        val mgr = guru.freberg.lenscast.streaming.webrtc.WebRtcManager(this, bridge)
+            .also { webRtcManager = it }
+        val webRtcAudioPermitted = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val ok = mgr.start(
+            lens = settings.lens,
+            width = settings.resolution.width,
+            height = settings.resolution.height,
+            fps = settings.fps.value,
+            audioEnabled = settings.audioEnabled && webRtcAudioPermitted,
+        )
+        if (!ok) throw IllegalStateException("WebRTC failed to initialise (Camera2 unavailable?)")
+    }
+    @Volatile private var webRtcManager: guru.freberg.lenscast.streaming.webrtc.WebRtcManager? = null
+
+    /** Minimal JSON escape — surfaces strings as ASCII-safe payloads for /status. */
+    internal fun jsonEscape(t: String): String = buildString(t.length) {
+        for (c in t) when {
+            c == '"'  -> append("\\\"")
+            c == '\\' -> append("\\\\")
+            c == '\n' -> append("\\n")
+            c == '\r' -> append("\\r")
+            c == '\t' -> append("\\t")
+            c.code < 0x20 -> append("\\u%04x".format(c.code))
+            else -> append(c)
+        }
+    }
+
+    /** Resolves the `DISPLAY_NAME` (e.g. `Lenscast_20260528_223301.mp4`) for a MediaStore URI. */
+    private fun displayNameForUri(uri: android.net.Uri): String? {
+        return try {
+            contentResolver.query(uri, arrayOf(android.provider.MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        } catch (_: Throwable) { null }
+    }
+
+    /** Queue an upload of the most recently finalised MP4. Returns false if there isn't one. */
+    fun retryLastSftpUpload(): Boolean {
+        val uri = _lastRecordingUri ?: return false
+        val name = displayNameForUri(uri) ?: "lenscast.mp4"
+        sftpUploader.enqueue(uri, name)
+        return true
+    }
+
+    fun sftpStatusJson(): String {
+        val st = sftpUploader.status()
+        val s = _status.value.settings
+        fun q(v: String?): String = if (v == null) "null" else "\"${jsonEscape(v)}\""
+        return """{"enabled":${s.sftpEnabled},"host":${q(s.sftpHost)},""" +
+            """"state":"${st.state.name.lowercase()}",""" +
+            """"current":${q(st.current)},"queue":${st.queueSize},""" +
+            """"lastUploaded":${q(st.lastUploaded)},"lastError":${q(st.lastError)},""" +
+            """"hasLastRecording":${_lastRecordingUri != null}}"""
     }
 
     private fun startNsd(type: String, port: Int) {
@@ -978,6 +1202,7 @@ class StreamingService : LifecycleService() {
         fps: Int,
         jpegQuality: Int,
         mirror: Boolean = false,
+        watermarkText: String = "",
         whiteBalance: WhiteBalance = WhiteBalance.AUTO,
         antiBanding: AntiBanding = AntiBanding.AUTO,
         continuousAf: Boolean = true,
@@ -999,12 +1224,14 @@ class StreamingService : LifecycleService() {
         if (key == previewBoundKey && cameraController != null) {
             cameraController?.jpegQuality = jpegQuality
             cameraController?.mirror = mirror
+            cameraController?.watermarkText = watermarkText
             cameraController?.setTargetRotation(currentRotation)
             cameraController?.applyExposureEv(exposureEv)
             return
         }
         val controller = ensureController(jpegQuality)
         controller.mirror = mirror
+        controller.watermarkText = watermarkText
         controller.bind(
             lifecycleOwner = this,
             lens = lens,
@@ -1061,7 +1288,25 @@ class StreamingService : LifecycleService() {
         ?: broadcaster.framesProduced()
 
     /** Connected clients across both protocols (for the stats chip). */
-    fun connectedClientCount(): Int = (rtspManager?.clientCount() ?: 0) + broadcaster.clientCount()
+    fun connectedClientCount(): Int = (rtspManager?.clientCount() ?: 0) +
+        broadcaster.clientCount() + (webRtcManager?.clientCount() ?: 0)
+
+    /** Per-peer SDP answer for a browser's WebRTC offer; null if WebRTC isn't running. */
+    fun webRtcAnswer(offerSdp: String, remoteHostPort: String): String? =
+        webRtcManager?.createAnswer(offerSdp, remoteHostPort)
+
+    /** Cumulative bytes shipped over the wire since the active server started. */
+    fun bytesSentNow(): Long = (rtspManager?.bytesSent() ?: 0L) + (mjpegServer?.bytesSent() ?: 0L)
+
+    /** `host:port` addresses of every currently streaming client across both protocols. */
+    fun clientAddresses(): List<String> =
+        (rtspManager?.clientAddresses() ?: emptyList()) +
+        (mjpegServer?.clientAddresses() ?: emptyList()) +
+        (webRtcManager?.clientAddresses() ?: emptyList())
+
+    /** Closes whichever client (RTSP or MJPEG) matches `host:port`. Returns true on hit. */
+    fun kickClient(remote: String): Boolean =
+        (rtspManager?.kickClient(remote) ?: false) || (mjpegServer?.kickClient(remote) ?: false)
 
     fun unbindCamera() {
         if (streamingCamera) return
@@ -1144,6 +1389,7 @@ class StreamingService : LifecycleService() {
     fun stopStreaming() {
         try { mjpegServer?.stop() } catch (_: Throwable) {}
         mjpegServer = null
+        tearDownSidecar()
         try { mjpegAudioCapture?.stop() } catch (_: Throwable) {}
         mjpegAudioCapture = null
         mjpegAudioBroadcaster = null
@@ -1155,6 +1401,16 @@ class StreamingService : LifecycleService() {
         // (lastRecordingUri is only set after stop()).
         _lastRecordingUri = rtspManager?.lastRecordingUri() ?: _lastRecordingUri
         rtspManager = null
+        // If the user has SFTP upload enabled, hand the freshly-finalised MP4 off to the
+        // background queue. The queue is in-memory; if the user kills the app before the
+        // upload completes, the recording stays in MediaStore and they can re-trigger it
+        // from the "Upload last recording" button.
+        _lastRecordingUri?.let { uri ->
+            val name = displayNameForUri(uri) ?: "lenscast.mp4"
+            sftpUploader.enqueue(uri, name)
+        }
+        try { webRtcManager?.stop() } catch (_: Throwable) {}
+        webRtcManager = null
         stopNsd()
         _lastRtspPlan = null
         streamingCamera = false
@@ -1203,8 +1459,16 @@ class StreamingService : LifecycleService() {
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val port = if (settings.protocol == Protocol.MJPEG) settings.mjpegPort else settings.rtspPort
-        val protoLabel = if (settings.protocol == Protocol.MJPEG) "MJPEG" else "RTSP"
+        val port = when (settings.protocol) {
+            Protocol.MJPEG  -> settings.mjpegPort
+            Protocol.RTSP   -> settings.rtspPort
+            Protocol.WEBRTC -> settings.webControlPort
+        }
+        val protoLabel = when (settings.protocol) {
+            Protocol.MJPEG  -> "MJPEG"
+            Protocol.RTSP   -> "RTSP"
+            Protocol.WEBRTC -> "WebRTC"
+        }
         val notif: Notification = NotificationCompat.Builder(this, LenscastApp.CHANNEL_STREAMING)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.notif_title_streaming))
@@ -1218,7 +1482,15 @@ class StreamingService : LifecycleService() {
             .build()
 
         val baseType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-        val type = if (settings.audioEnabled)
+        // API 34+ refuses to start an FGS with `microphone` type unless RECORD_AUDIO is
+        // already granted at runtime — including the type when the permission is missing
+        // throws SecurityException and crashes the service. Drop the type silently here
+        // so the camera-only stream still starts; the audio path itself bails earlier
+        // (PcmCapture / RtspManager check the permission before opening AudioRecord).
+        val micGranted = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val type = if (settings.audioEnabled && micGranted)
             baseType or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         else baseType
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

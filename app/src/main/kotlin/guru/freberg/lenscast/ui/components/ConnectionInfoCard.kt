@@ -5,8 +5,11 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -73,10 +76,26 @@ fun ConnectionInfoCard(
             Spacer(Modifier.height(12.dp))
 
             // Wi-Fi row
-            val port = if (protocol == Protocol.MJPEG) mjpegPort else rtspPort
-            // RTSP is plain RTSP for now (no RTSPS); HTTPS only affects MJPEG.
-            val scheme = if (protocol == Protocol.MJPEG) (if (httpsEnabled) "https" else "http") else "rtsp"
-            val path = if (protocol == Protocol.MJPEG) "/video" else ""
+            val port = when (protocol) {
+                Protocol.MJPEG  -> mjpegPort
+                Protocol.RTSP   -> rtspPort
+                Protocol.WEBRTC -> webControlPort
+            }
+            // HTTPS toggle now wraps both MJPEG (https://) and RTSP (rtsps://). WebRTC
+            // reuses the web control HTTP(S) port for signalling.
+            val scheme = when {
+                protocol == Protocol.WEBRTC && httpsEnabled -> "https"
+                protocol == Protocol.WEBRTC               -> "http"
+                protocol == Protocol.MJPEG && httpsEnabled -> "https"
+                protocol == Protocol.MJPEG               -> "http"
+                httpsEnabled                              -> "rtsps"
+                else                                      -> "rtsp"
+            }
+            val path = when (protocol) {
+                Protocol.MJPEG  -> "/video"
+                Protocol.WEBRTC -> "/webrtc/view"
+                Protocol.RTSP   -> ""
+            }
             // Embed user:pass@ when the password is set — both servers ([Mjpeg|Rtsp]Server)
             // honour Basic auth with the same credentials.
             val auth = if (authPassword.isNotEmpty()) "${authUsername.ifBlank { "Lenscast" }}:$authPassword@" else ""
@@ -151,6 +170,7 @@ fun ConnectionInfoCard(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun UrlRow(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -160,6 +180,7 @@ private fun UrlRow(
 ) {
     val ctx = LocalContext.current
     var justCopied by remember { mutableStateOf(false) }
+    var showQr by remember { mutableStateOf(false) }
     LaunchedEffect(justCopied) {
         if (justCopied) {
             delay(1500)
@@ -167,15 +188,22 @@ private fun UrlRow(
         }
     }
 
+    if (showQr) QrCodeDialog(url = value, onDismiss = { showQr = false })
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .background(MaterialTheme.colorScheme.surface)
-            .let { if (copyable) it.clickable {
-                copy(ctx, value); justCopied = true
-            } else it }
+            .let {
+                if (copyable) it.combinedClickable(
+                    onClick = { copy(ctx, value); justCopied = true },
+                    // Long-press opens a scannable QR — second-device handoff without
+                    // having to type the URL into another browser.
+                    onLongClick = { showQr = true },
+                ) else it
+            }
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Icon(
@@ -198,6 +226,17 @@ private fun UrlRow(
             )
         }
         if (copyable) {
+            // Explicit QR button as a discoverability cue — long-press also works
+            // (the click feeds the copy path) but most users won't think to try it.
+            Icon(
+                imageVector = Icons.Outlined.QrCode2,
+                contentDescription = "Show as QR",
+                modifier = Modifier
+                    .size(20.dp)
+                    .clickable { showQr = true },
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.size(10.dp))
             AnimatedVisibility(visible = !justCopied) {
                 Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(18.dp))
             }

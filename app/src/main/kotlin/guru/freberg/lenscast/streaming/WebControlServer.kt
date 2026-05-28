@@ -1,6 +1,7 @@
 package guru.freberg.lenscast.streaming
 
 import android.util.Log
+import guru.freberg.lenscast.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,6 +46,11 @@ import javax.net.ssl.SSLContext
  * `/status` — RTSP-only fields don't appear when MJPEG is active and vice versa.
  */
 class WebControlServer(
+    /** Used to resolve localized strings via Context.getString so the panel follows the
+     *  per-app language preference. Built fresh at each page render so a mid-session
+     *  language switch via the in-app picker or system Settings → Apps → Lenscast → Language
+     *  shows up on the next page load. */
+    private val context: android.content.Context,
     private val port: Int,
     private val control: MjpegControl,
     /** Phone-side port the MJPEG server listens on. The page builds the URL from this. */
@@ -56,6 +62,205 @@ class WebControlServer(
     /** App version string (e.g. "1.0.1") — rendered in the page footer. */
     private val appVersion: () -> String = { "" },
 ) {
+
+    /** Snapshot of every user-visible string on the page, resolved against the current
+     *  app locale. One instance built per page request — cheap (a few dozen string lookups)
+     *  and ensures locale changes propagate without restarting the server. */
+    private data class WebI18n(
+        val title: String, val stateIdle: String, val heroTitle: String, val idlePick: String,
+        val protoMjpegDesc: String, val protoRtspDesc: String, val protoWebrtcDesc: String,
+        val start: String, val rtspLiveTitle: String, val rtspLiveNote: String, val webrtcViewLink: String,
+        val statusH: String, val statAudioPeak: String, val statConnectedClients: String,
+        val quickH: String, val btnSwitchCamera: String, val btnTorch: String, val btnMirror: String,
+        val btnContinuousAf: String, val btnSnapshot: String, val btnStopStreaming: String,
+        val btnSpeedtest: String, val lblJpegQuality: String, val hintMjpegOnly: String,
+        val settingsH: String, val tabCamera: String, val tabImage: String, val tabAudio: String,
+        val tabStream: String, val tabUx: String, val tabSystem: String,
+        val lblLens: String, val lensBack: String, val lensFront: String, val lblResolution: String,
+        val hintResFromCaps: String, val lblFps: String, val hintFpsRange: String,
+        val lblRotationLock: String, val hintRotationLock: String,
+        val rotAuto: String, val rotPortrait: String, val rotLandscapeLeft: String,
+        val rotLandscapeRight: String, val rotPortraitUpside: String,
+        val lblMirror: String, val lblContinuousAf: String, val lblWatermark: String, val hintWatermark: String,
+        val lblExposure: String, val lblWhiteBalance: String,
+        val wbAuto: String, val wbIncandescent: String, val wbFluorescent: String, val wbDaylight: String,
+        val wbCloudy: String, val wbShade: String,
+        val lblAntibanding: String, val abAuto: String, val abOff: String,
+        val lblEffect: String, val effectNone: String, val effectMono: String, val effectNegative: String,
+        val effectSepia: String, val effectAqua: String, val effectSolarize: String,
+        val effectPosterize: String, val effectBlackboard: String, val effectWhiteboard: String,
+        val lblScene: String, val sceneOff: String, val sceneAction: String, val scenePortrait: String,
+        val sceneLandscape: String, val sceneNight: String, val sceneSports: String, val sceneTheatre: String,
+        val sceneFireworks: String, val sceneBeach: String, val sceneSnow: String, val sceneSunset: String,
+        val lblManualFocus: String, val lblFocusDistance: String, val hintFocusZeroInf: String,
+        val lblManualExposure: String, val hintManualExpUnsupported: String, val lblIso: String,
+        val lblShutter: String,
+        val lblStreamMic: String, val lblMicSource: String, val micCamcorder: String, val micDefault: String,
+        val micVoiceRecog: String, val micVoiceComm: String, val micUnprocessed: String,
+        val lblGain: String, val lblNoiseSuppress: String, val lblEchoCancel: String,
+        val hintMjpegOutput: String, val lblRtspBitrateCap: String, val hintRtspBitrateAuto: String,
+        val lblMjpegSidecar: String, val hintMjpegSidecar: String, val lblRecordMp4: String,
+        val hintRecordRtspOnly: String,
+        val lblSftpAutoUpload: String, val hintSftpAutoUpload: String,
+        val lblSftpHost: String, val lblSftpPort: String, val lblSftpUser: String, val lblSftpPassword: String,
+        val lblSftpRemoteDir: String, val hintSftpRemoteDir: String,
+        val lblSftpFingerprint: String, val hintSftpFingerprint: String,
+        val lblSftpStatus: String, val btnSftpRetry: String,
+        val lblKeepScreenOn: String, val lblBlankPreview: String, val hintBatterySaver: String,
+        val lblAutoStart: String, val lblStartOnBoot: String,
+        val lblMjpegPort: String, val lblRtspPort: String, val lblHttps: String, val hintHttps: String,
+        val lblCertFp: String, val lblStreamUser: String, val hintStreamUser: String,
+        val lblStreamPass: String, val hintStreamPass: String,
+        val lblCallBehavior: String, val hintCallBehavior: String,
+        val callIgnore: String, val callMute: String, val callDrop: String,
+        val lblPersistentWeb: String, val hintPersistentWeb: String,
+        val lblExport: String, val btnDownloadJson: String, val lblImport: String,
+        val hintImportReplaces: String, val phImportJson: String, val btnImport: String,
+        val footerPanel: String,
+        val streamLockedHint: String,
+        // WebRTC viewer
+        val viewerTitle: String, val viewerH1: String, val viewerNote: String, val viewerBtnConnect: String,
+    )
+
+    private fun buildI18n(): WebI18n {
+        // The Service's Configuration may lag the app locale change; pull a fresh
+        // localized Context so getString reflects the current LocaleManager state.
+        val cfg = android.content.res.Configuration(context.resources.configuration).apply {
+            setLocale(java.util.Locale.getDefault())
+        }
+        val c = context.createConfigurationContext(cfg)
+        fun s(id: Int) = c.getString(id)
+        return WebI18n(
+            title = s(R.string.web_title), stateIdle = s(R.string.web_state_idle),
+            heroTitle = s(R.string.web_hero_title), idlePick = s(R.string.web_idle_pick),
+            protoMjpegDesc = s(R.string.web_proto_mjpeg_desc),
+            protoRtspDesc = s(R.string.web_proto_rtsp_desc),
+            protoWebrtcDesc = s(R.string.web_proto_webrtc_desc),
+            start = s(R.string.web_start),
+            rtspLiveTitle = s(R.string.web_rtsp_live_title),
+            rtspLiveNote = s(R.string.web_rtsp_live_note),
+            webrtcViewLink = s(R.string.web_webrtc_view_link),
+            statusH = s(R.string.web_status_h),
+            statAudioPeak = s(R.string.web_stat_audio_peak),
+            statConnectedClients = s(R.string.web_stat_connected_clients),
+            quickH = s(R.string.web_quick_h),
+            btnSwitchCamera = s(R.string.web_btn_switch_camera),
+            btnTorch = s(R.string.web_btn_torch), btnMirror = s(R.string.web_btn_mirror),
+            btnContinuousAf = s(R.string.web_btn_continuous_af),
+            btnSnapshot = s(R.string.web_btn_snapshot),
+            btnStopStreaming = s(R.string.web_btn_stop_streaming),
+            btnSpeedtest = s(R.string.web_btn_speedtest),
+            lblJpegQuality = s(R.string.web_lbl_jpeg_quality),
+            hintMjpegOnly = s(R.string.web_hint_mjpeg_only),
+            settingsH = s(R.string.web_settings_h),
+            tabCamera = s(R.string.web_tab_camera), tabImage = s(R.string.web_tab_image),
+            tabAudio = s(R.string.web_tab_audio), tabStream = s(R.string.web_tab_stream),
+            tabUx = s(R.string.web_tab_ux), tabSystem = s(R.string.web_tab_system),
+            lblLens = s(R.string.web_lbl_lens), lensBack = s(R.string.web_lens_back),
+            lensFront = s(R.string.web_lens_front),
+            lblResolution = s(R.string.web_lbl_resolution),
+            hintResFromCaps = s(R.string.web_hint_res_from_caps),
+            lblFps = s(R.string.web_lbl_fps), hintFpsRange = s(R.string.web_hint_fps_range),
+            lblRotationLock = s(R.string.web_lbl_rotation_lock),
+            hintRotationLock = s(R.string.web_hint_rotation_lock),
+            rotAuto = s(R.string.web_rotation_auto), rotPortrait = s(R.string.web_rotation_portrait),
+            rotLandscapeLeft = s(R.string.web_rotation_landscape_left),
+            rotLandscapeRight = s(R.string.web_rotation_landscape_right),
+            rotPortraitUpside = s(R.string.web_rotation_portrait_upside),
+            lblMirror = s(R.string.web_lbl_mirror),
+            lblContinuousAf = s(R.string.web_lbl_continuous_af),
+            lblWatermark = s(R.string.web_lbl_watermark),
+            hintWatermark = s(R.string.web_hint_watermark),
+            lblExposure = s(R.string.web_lbl_exposure),
+            lblWhiteBalance = s(R.string.web_lbl_white_balance),
+            wbAuto = s(R.string.web_rotation_auto), // re-uses "Auto"
+            wbIncandescent = s(R.string.web_wb_incandescent),
+            wbFluorescent = s(R.string.web_wb_fluorescent),
+            wbDaylight = s(R.string.web_wb_daylight), wbCloudy = s(R.string.web_wb_cloudy),
+            wbShade = s(R.string.web_wb_shade),
+            lblAntibanding = s(R.string.web_lbl_antibanding),
+            abAuto = s(R.string.web_rotation_auto), // re-uses "Auto"
+            abOff = s(R.string.web_ab_off),
+            lblEffect = s(R.string.web_lbl_effect), effectNone = s(R.string.web_effect_none),
+            effectMono = s(R.string.web_effect_mono), effectNegative = s(R.string.web_effect_negative),
+            effectSepia = s(R.string.web_effect_sepia), effectAqua = s(R.string.web_effect_aqua),
+            effectSolarize = s(R.string.web_effect_solarize),
+            effectPosterize = s(R.string.web_effect_posterize),
+            effectBlackboard = s(R.string.web_effect_blackboard),
+            effectWhiteboard = s(R.string.web_effect_whiteboard),
+            lblScene = s(R.string.web_lbl_scene), sceneOff = s(R.string.web_scene_off),
+            sceneAction = s(R.string.web_scene_action), scenePortrait = s(R.string.web_scene_portrait),
+            sceneLandscape = s(R.string.web_scene_landscape),
+            sceneNight = s(R.string.web_scene_night), sceneSports = s(R.string.web_scene_sports),
+            sceneTheatre = s(R.string.web_scene_theatre),
+            sceneFireworks = s(R.string.web_scene_fireworks),
+            sceneBeach = s(R.string.web_scene_beach), sceneSnow = s(R.string.web_scene_snow),
+            sceneSunset = s(R.string.web_scene_sunset),
+            lblManualFocus = s(R.string.web_lbl_manual_focus),
+            lblFocusDistance = s(R.string.web_lbl_focus_distance),
+            hintFocusZeroInf = s(R.string.web_hint_focus_zero_inf),
+            lblManualExposure = s(R.string.web_lbl_manual_exposure),
+            hintManualExpUnsupported = s(R.string.web_hint_manual_exp_unsupported),
+            lblIso = s(R.string.web_lbl_iso), lblShutter = s(R.string.web_lbl_shutter),
+            lblStreamMic = s(R.string.web_lbl_stream_mic),
+            lblMicSource = s(R.string.web_lbl_mic_source),
+            micCamcorder = s(R.string.web_mic_camcorder), micDefault = s(R.string.web_mic_default),
+            micVoiceRecog = s(R.string.web_mic_voice_recog),
+            micVoiceComm = s(R.string.web_mic_voice_comm),
+            micUnprocessed = s(R.string.web_mic_unprocessed),
+            lblGain = s(R.string.web_lbl_gain),
+            lblNoiseSuppress = s(R.string.web_lbl_noise_suppress),
+            lblEchoCancel = s(R.string.web_lbl_echo_cancel),
+            hintMjpegOutput = s(R.string.web_hint_mjpeg_output),
+            lblRtspBitrateCap = s(R.string.web_lbl_rtsp_bitrate_cap),
+            hintRtspBitrateAuto = s(R.string.web_hint_rtsp_bitrate_auto),
+            lblMjpegSidecar = s(R.string.web_lbl_mjpeg_sidecar),
+            hintMjpegSidecar = s(R.string.web_hint_mjpeg_sidecar),
+            lblRecordMp4 = s(R.string.web_lbl_record_mp4),
+            hintRecordRtspOnly = s(R.string.web_hint_record_rtsp_only),
+            lblSftpAutoUpload = s(R.string.web_lbl_sftp_auto_upload),
+            hintSftpAutoUpload = s(R.string.web_hint_sftp_auto_upload),
+            lblSftpHost = s(R.string.web_lbl_sftp_host), lblSftpPort = s(R.string.web_lbl_sftp_port),
+            lblSftpUser = s(R.string.web_lbl_sftp_user),
+            lblSftpPassword = s(R.string.web_lbl_sftp_password),
+            lblSftpRemoteDir = s(R.string.web_lbl_sftp_remote_dir),
+            hintSftpRemoteDir = s(R.string.web_hint_sftp_remote_dir),
+            lblSftpFingerprint = s(R.string.web_lbl_sftp_fingerprint),
+            hintSftpFingerprint = s(R.string.web_hint_sftp_fingerprint),
+            lblSftpStatus = s(R.string.web_lbl_sftp_status),
+            btnSftpRetry = s(R.string.web_btn_sftp_retry),
+            lblKeepScreenOn = s(R.string.web_lbl_keep_screen_on),
+            lblBlankPreview = s(R.string.web_lbl_blank_preview),
+            hintBatterySaver = s(R.string.web_hint_battery_saver),
+            lblAutoStart = s(R.string.web_lbl_auto_start),
+            lblStartOnBoot = s(R.string.web_lbl_start_on_boot),
+            lblMjpegPort = s(R.string.web_lbl_mjpeg_port),
+            lblRtspPort = s(R.string.web_lbl_rtsp_port),
+            lblHttps = s(R.string.web_lbl_https), hintHttps = s(R.string.web_hint_https),
+            lblCertFp = s(R.string.web_lbl_cert_fp),
+            lblStreamUser = s(R.string.web_lbl_stream_user),
+            hintStreamUser = s(R.string.web_hint_stream_user),
+            lblStreamPass = s(R.string.web_lbl_stream_pass),
+            hintStreamPass = s(R.string.web_hint_stream_pass),
+            lblCallBehavior = s(R.string.web_lbl_call_behavior),
+            hintCallBehavior = s(R.string.web_hint_call_behavior),
+            callIgnore = s(R.string.web_call_ignore), callMute = s(R.string.web_call_mute),
+            callDrop = s(R.string.web_call_drop),
+            lblPersistentWeb = s(R.string.web_lbl_persistent_web),
+            hintPersistentWeb = s(R.string.web_hint_persistent_web),
+            lblExport = s(R.string.web_lbl_export),
+            btnDownloadJson = s(R.string.web_btn_download_json),
+            lblImport = s(R.string.web_lbl_import),
+            hintImportReplaces = s(R.string.web_hint_import_replaces),
+            phImportJson = s(R.string.web_ph_import_json),
+            btnImport = s(R.string.web_btn_import),
+            footerPanel = s(R.string.web_footer_panel),
+            streamLockedHint = s(R.string.web_stream_locked_hint),
+            viewerTitle = s(R.string.web_viewer_title), viewerH1 = s(R.string.web_viewer_h1),
+            viewerNote = s(R.string.web_viewer_note),
+            viewerBtnConnect = s(R.string.web_viewer_btn_connect),
+        )
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var server: ServerSocket? = null
     private var acceptJob: Job? = null
@@ -186,7 +391,52 @@ class WebControlServer(
                     val k = queryParam(query, "key") ?: error("missing key=")
                     val v = queryParam(query, "v")   ?: error("missing v=")
                     val ok = control.updateSetting(k, v)
-                    if (!ok) error("rejected: key=$k v=$v (locked while streaming or invalid)")
+                    // Most settings updates that fail mid-stream do so because the key is on
+                    // the stream-locked list (audio toggle, mic source, ports, …). Tell the
+                    // user what to do instead of the generic "rejected" wording — the
+                    // toast on the web side just relays this string verbatim.
+                    if (!ok) {
+                        val isStreaming = control.statusJson().contains("\"state\":\"streaming\"")
+                        if (isStreaming) error("Stop the stream first to change $k.")
+                        else error("Setting $k = $v is invalid.")
+                    }
+                }
+                pathOnly == "/control/kick"       && method == "POST" -> handleControl(out) {
+                    val r = queryParam(query, "remote")?.let { java.net.URLDecoder.decode(it, "UTF-8") }
+                        ?: error("missing remote=")
+                    val ok = control.kickClient(r)
+                    if (!ok) error("no client matches $r")
+                }
+                pathOnly == "/webrtc/offer"       && method == "POST" -> {
+                    val offerSdp = readBody()
+                    val peerHostPort = (socket.remoteSocketAddress as? java.net.InetSocketAddress)
+                        ?.let { "${it.address.hostAddress}:${it.port}" } ?: "?:?"
+                    val answer = control.webRtcAnswer(offerSdp, peerHostPort)
+                    if (answer == null) {
+                        val body = "WebRTC not running — start the stream in WebRTC mode first.".toByteArray()
+                        out.write(("HTTP/1.0 503 Service Unavailable\r\n" +
+                            "Content-Type: text/plain\r\n" +
+                            "Content-Length: ${body.size}\r\n\r\n").toByteArray(Charsets.US_ASCII))
+                        out.write(body); out.flush()
+                    } else {
+                        val body = answer.toByteArray(Charsets.UTF_8)
+                        out.write(("HTTP/1.0 200 OK\r\n" +
+                            "Content-Type: application/sdp\r\n" +
+                            "Content-Length: ${body.size}\r\n\r\n").toByteArray(Charsets.US_ASCII))
+                        out.write(body); out.flush()
+                    }
+                }
+                pathOnly == "/webrtc/view"        && method == "GET"  -> writeWebRtcViewer(out)
+                pathOnly == "/speedtest"          && method == "GET"  -> writeSpeedTest(out, query)
+                pathOnly == "/sftp/status"        && method == "GET"  -> {
+                    val body = control.sftpStatusJson().toByteArray(Charsets.UTF_8)
+                    out.write(("HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n" +
+                        "Cache-Control: no-cache\r\nContent-Length: ${body.size}\r\n\r\n").toByteArray(Charsets.US_ASCII))
+                    out.write(body); out.flush()
+                }
+                pathOnly == "/sftp/retry"         && method == "POST" -> handleControl(out) {
+                    val ok = control.retryLastSftpUpload()
+                    if (!ok) error("no recent recording to upload")
                 }
                 else -> writeLanding(out)
             }
@@ -220,6 +470,135 @@ class WebControlServer(
             "Access-Control-Allow-Origin: *\r\n" +
             "Content-Length: ${body.size}\r\n\r\n").toByteArray(Charsets.US_ASCII)
         try { out.write(header); out.write(body); out.flush() } catch (_: IOException) {}
+    }
+
+    private fun writeWebRtcViewer(out: OutputStream) {
+        val html = renderWebRtcViewerHtml().toByteArray(Charsets.UTF_8)
+        out.write(("HTTP/1.0 200 OK\r\n" +
+            "Content-Type: text/html; charset=utf-8\r\n" +
+            "Cache-Control: no-cache\r\n" +
+            "Content-Length: ${html.size}\r\n\r\n").toByteArray(Charsets.US_ASCII))
+        out.write(html); out.flush()
+    }
+
+    /**
+     * Sinks `bytes=N` (default 10 MB, capped at 100 MB) of zeros so the browser can measure
+     * raw LAN throughput. Lives on the web control port (always running) instead of the
+     * MJPEG port (only up when MJPEG / sidecar is active) — the previous wiring failed
+     * silently for users on RTSP-only or WebRTC because their MJPEG server was null.
+     */
+    private fun writeSpeedTest(out: OutputStream, query: String) {
+        val requested = queryParam(query, "bytes")?.toLongOrNull() ?: 10_000_000L
+        val total = requested.coerceIn(1_000L, 100_000_000L)
+        val header = ("HTTP/1.0 200 OK\r\n" +
+            "Cache-Control: no-cache, no-store\r\n" +
+            "Content-Type: application/octet-stream\r\n" +
+            "Content-Length: $total\r\n\r\n").toByteArray(Charsets.US_ASCII)
+        out.write(header)
+        val chunk = ByteArray(64 * 1024)
+        var remaining = total
+        while (remaining > 0) {
+            val n = minOf(chunk.size.toLong(), remaining).toInt()
+            out.write(chunk, 0, n)
+            remaining -= n
+        }
+        out.flush()
+    }
+
+    /** Same handshake as the embedded panel preview, but as a standalone full-screen page.
+     *  Localized via the same Context.getString path as the main panel. */
+    private fun renderWebRtcViewerHtml(): String {
+        val i = buildI18n()
+        // Pull a few extra strings the data class doesn't carry — they're only used here.
+        val cfg = android.content.res.Configuration(context.resources.configuration).apply {
+            setLocale(java.util.Locale.getDefault())
+        }
+        val c = context.createConfigurationContext(cfg)
+        val sCreating = c.getString(R.string.web_viewer_status_creating)
+        val sExchanging = c.getString(R.string.web_viewer_status_exchanging)
+        val sStreaming = c.getString(R.string.web_viewer_status_streaming)
+        val sAnswer = c.getString(R.string.web_viewer_status_answer)
+        val sIdle = c.getString(R.string.web_viewer_status_idle)
+        return """
+            <!doctype html>
+            <html><head><meta charset="utf-8"><title>${i.viewerTitle}</title>
+            <meta name="viewport" content="width=device-width,initial-scale=1">
+            <style>
+              body{background:#14121c;color:#eee;font-family:system-ui,sans-serif;margin:0;padding:20px;text-align:center}
+              video{max-width:100%;border-radius:12px;background:#000;box-shadow:0 8px 32px rgba(120,73,242,0.3)}
+              button{background:#7849f2;color:#fff;border:0;padding:8px 14px;border-radius:8px;font-size:14px;cursor:pointer;margin:4px}
+              button:disabled{opacity:.4;cursor:not-allowed}
+              code{background:#262335;padding:2px 6px;border-radius:4px}
+              #status{color:#9c8fff;margin:8px 0;min-height:1.2em}
+              .ctl{margin-top:14px;display:none;flex-wrap:wrap;justify-content:center;gap:6px}
+              .ctl button{background:#262335;border:1px solid #3b3754}
+            </style></head>
+            <body>
+              <h1>${i.viewerH1}</h1>
+              <p>${i.viewerNote}</p>
+              <video id="v" autoplay playsinline controls></video>
+              <div id="status">$sIdle</div>
+              <button id="go">${i.viewerBtnConnect}</button>
+              <div class="ctl" id="controls">
+                <button data-cmd="lens">${i.btnSwitchCamera}</button>
+                <button data-cmd="torch">${i.btnTorch}</button>
+                <button data-cmd="mirror">${i.btnMirror}</button>
+                <button data-cmd="af">${i.btnContinuousAf}</button>
+                <button data-cmd="zoom_in">Zoom +</button>
+                <button data-cmd="zoom_out">Zoom −</button>
+                <button data-cmd="ev_up">EV +</button>
+                <button data-cmd="ev_down">EV −</button>
+                <button data-cmd="snapshot">${i.btnSnapshot}</button>
+              </div>
+              <script>
+                const v = document.getElementById('v');
+                const status = (m) => document.getElementById('status').textContent = m;
+                let dataChannel = null;
+                document.getElementById('go').addEventListener('click', async () => {
+                  document.getElementById('go').disabled = true;
+                  status('$sCreating');
+                  const pc = new RTCPeerConnection({iceServers: []});
+                  // Receive both video and audio if the server has them.
+                  pc.addTransceiver('video', {direction: 'recvonly'});
+                  pc.addTransceiver('audio', {direction: 'recvonly'});
+                  pc.ontrack = (e) => { v.srcObject = e.streams[0]; status('$sStreaming'); };
+                  pc.oniceconnectionstatechange = () => status('ICE: ' + pc.iceConnectionState);
+                  // The phone opens a "lenscast" DataChannel after PC creation; show the
+                  // command buttons once it's ready so the user can drive the camera.
+                  pc.ondatachannel = (e) => {
+                    dataChannel = e.channel;
+                    dataChannel.onopen = () => { document.getElementById('controls').style.display = 'flex'; };
+                    dataChannel.onclose = () => { document.getElementById('controls').style.display = 'none'; };
+                  };
+                  const offer = await pc.createOffer();
+                  await pc.setLocalDescription(offer);
+                  await new Promise(r => {
+                    if (pc.iceGatheringState === 'complete') return r();
+                    pc.addEventListener('icegatheringstatechange', () => {
+                      if (pc.iceGatheringState === 'complete') r();
+                    });
+                  });
+                  status('$sExchanging');
+                  const res = await fetch('/webrtc/offer', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/sdp'},
+                    body: pc.localDescription.sdp,
+                  });
+                  if (!res.ok) { status('server: ' + res.status + ' ' + await res.text()); return; }
+                  const answerSdp = await res.text();
+                  await pc.setRemoteDescription({type: 'answer', sdp: answerSdp});
+                  status('$sAnswer');
+                });
+                document.querySelectorAll('.ctl button').forEach(b => {
+                  b.addEventListener('click', () => {
+                    if (dataChannel && dataChannel.readyState === 'open') {
+                      dataChannel.send(JSON.stringify({cmd: b.dataset.cmd}));
+                    }
+                  });
+                });
+              </script>
+            </body></html>
+        """.trimIndent()
     }
 
     private fun writeStatus(out: OutputStream) {
@@ -267,14 +646,82 @@ class WebControlServer(
      * full Settings sheet doesn't have to be a 1000-line vertical scroll on a phone
      * browser.
      */
+    /**
+     * Hand-rolled JSON map of `data-help` key → localized tooltip text. Injected into the
+     * page; JS scans every `[data-help]` field, appends a `?` icon next to its label, and
+     * shows the text on click. Adding a new tooltip = add the key+R.string here and the
+     * `data-help="key"` attribute on the corresponding `<div class="field">`.
+     */
+    private fun helpMapJson(): String {
+        val cfg = android.content.res.Configuration(context.resources.configuration).apply {
+            setLocale(java.util.Locale.getDefault())
+        }
+        val c = context.createConfigurationContext(cfg)
+        val entries = mapOf(
+            "lens" to R.string.web_help_lens,
+            "resolution" to R.string.web_help_resolution,
+            "fps" to R.string.web_help_fps,
+            "rotation_lock" to R.string.web_help_rotation_lock,
+            "mirror" to R.string.web_help_mirror,
+            "continuous_af" to R.string.web_help_continuous_af,
+            "watermark" to R.string.web_help_watermark,
+            "exposure" to R.string.web_help_exposure,
+            "white_balance" to R.string.web_help_white_balance,
+            "antibanding" to R.string.web_help_antibanding,
+            "effect" to R.string.web_help_effect,
+            "scene" to R.string.web_help_scene,
+            "manual_focus" to R.string.web_help_manual_focus,
+            "focus_distance" to R.string.web_help_focus_distance,
+            "manual_exposure" to R.string.web_help_manual_exposure,
+            "iso" to R.string.web_help_iso,
+            "shutter" to R.string.web_help_shutter,
+            "stream_mic" to R.string.web_help_stream_mic,
+            "mic_source" to R.string.web_help_mic_source,
+            "gain" to R.string.web_help_gain,
+            "noise_suppress" to R.string.web_help_noise_suppress,
+            "echo_cancel" to R.string.web_help_echo_cancel,
+            "jpeg_quality" to R.string.web_help_jpeg_quality,
+            "rtsp_bitrate" to R.string.web_help_rtsp_bitrate,
+            "mjpeg_sidecar" to R.string.web_help_mjpeg_sidecar,
+            "record_mp4" to R.string.web_help_record_mp4,
+            "sftp_auto_upload" to R.string.web_help_sftp_auto_upload,
+            "sftp_host" to R.string.web_help_sftp_host,
+            "sftp_port" to R.string.web_help_sftp_port,
+            "sftp_user" to R.string.web_help_sftp_user,
+            "sftp_password" to R.string.web_help_sftp_password,
+            "sftp_remote_dir" to R.string.web_help_sftp_remote_dir,
+            "sftp_fingerprint" to R.string.web_help_sftp_fingerprint,
+            "keep_screen_on" to R.string.web_help_keep_screen_on,
+            "blank_preview" to R.string.web_help_blank_preview,
+            "auto_start" to R.string.web_help_auto_start,
+            "start_on_boot" to R.string.web_help_start_on_boot,
+            "mjpeg_port" to R.string.web_help_mjpeg_port,
+            "rtsp_port" to R.string.web_help_rtsp_port,
+            "https" to R.string.web_help_https,
+            "stream_user" to R.string.web_help_stream_user,
+            "stream_pass" to R.string.web_help_stream_pass,
+            "call_behavior" to R.string.web_help_call_behavior,
+            "persistent_web" to R.string.web_help_persistent_web,
+            "export" to R.string.web_help_export,
+            "import" to R.string.web_help_import,
+        )
+        fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
+            .replace("\n", "\\n").replace("\r", "\\r")
+        return entries.entries.joinToString(",", prefix = "{", postfix = "}") {
+            "\"${it.key}\":\"${esc(c.getString(it.value))}\""
+        }
+    }
+
     private fun renderLandingHtml(): String {
         val mjpegPortNow = mjpegPort()
         val rtspPortNow = rtspPort()
         val initialQuality = control.jpegQuality()
         val version = appVersion().ifEmpty { "" }
+        val i = buildI18n()
+        val helpJson = helpMapJson()
         return """
             <!doctype html>
-            <html><head><title>Lenscast Control</title>
+            <html><head><title>${i.title}</title>
             <meta name="viewport" content="width=device-width,initial-scale=1">
             <style>
               /* Design tokens — single source of truth for colours and spacing. The
@@ -402,6 +849,25 @@ class WebControlServer(
               .btn:disabled{opacity:.4;cursor:not-allowed}
               .btn.big{padding:14px 18px;font-size:15px}
 
+              /* While a stream is running, hide every widget whose backing setting is
+                 locked server-side (audio toggle, mic source, ports, HTTPS, credentials,
+                 SFTP credentials, etc.). The complementary `.stream-only` hint becomes
+                 visible in the same state so the panel doesn't look mysteriously empty. */
+              body.is-streaming .stream-locked{display:none !important}
+              body.is-streaming .stream-only{display:block !important}
+
+              /* Help tooltips — `?` button injected next to each labeled field by JS. */
+              .help-btn{display:inline-flex;align-items:center;justify-content:center;
+                width:16px;height:16px;margin-left:6px;border-radius:50%;border:0;
+                background:var(--surface-3);color:var(--text-mute);font-size:11px;
+                font-weight:700;cursor:pointer;flex-shrink:0;font-family:inherit}
+              .help-btn:hover{background:var(--accent-strong);color:#fff}
+              .help-tip{position:absolute;z-index:50;max-width:280px;
+                background:#1d1a2e;color:#eee;border:1px solid var(--accent-strong);
+                border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.4;
+                box-shadow:0 6px 24px rgba(0,0,0,0.5);pointer-events:none}
+              .help-tip code{background:#262335;padding:1px 4px;border-radius:3px;font-size:11px}
+
               /* Tabs ----------------------------------------------------------- */
               .settings-card{grid-column:1/-1}
               .tabs{display:flex;gap:2px;border-bottom:1px solid var(--surface-2);
@@ -455,43 +921,51 @@ class WebControlServer(
             <body>
               <header>
                 <div class="logo">L</div>
-                <h1>Lenscast Control</h1>
+                <h1>${i.title}</h1>
                 <span id="state-badge" class="state-badge" data-state="idle">
-                  <span class="dot"></span><span id="state-text">idle</span>
+                  <span class="dot"></span><span id="state-text">${i.stateIdle}</span>
                 </span>
               </header>
 
               <main>
+                <div id="health-banner" class="hidden" style="margin:0 0 16px 0;padding:10px 14px;border-radius:10px;font-size:14px"></div>
                 <!-- HERO ============================================== -->
                 <section class="card hero">
-                  <h2 id="hero-title">Live preview</h2>
+                  <h2 id="hero-title">${i.heroTitle}</h2>
 
                   <!-- Idle hero: protocol picker + Start -->
                   <div id="idle-block" class="hidden idle-picker">
-                    <p class="subtitle">Pick a streaming protocol and tap Start.</p>
+                    <p class="subtitle">${i.idlePick}</p>
                     <div class="proto-grid">
                       <label class="proto">
                         <input type="radio" name="proto" value="mjpeg">
                         <div class="proto-inner">
                           <div class="proto-name">MJPEG</div>
-                          <div class="proto-desc">Universal: browser &lt;img&gt;, OBS, VLC. PCM audio sidecar. ≤30 fps.</div>
+                          <div class="proto-desc">${i.protoMjpegDesc}</div>
                         </div>
                       </label>
                       <label class="proto">
                         <input type="radio" name="proto" value="rtsp">
                         <div class="proto-inner">
                           <div class="proto-name">RTSP</div>
-                          <div class="proto-desc">H.264 + AAC. OBS / VLC / ffmpeg. Up to 240 fps. Landscape only.</div>
+                          <div class="proto-desc">${i.protoRtspDesc}</div>
+                        </div>
+                      </label>
+                      <label class="proto">
+                        <input type="radio" name="proto" value="webrtc">
+                        <div class="proto-inner">
+                          <div class="proto-name">WebRTC</div>
+                          <div class="proto-desc">${i.protoWebrtcDesc}</div>
                         </div>
                       </label>
                     </div>
-                    <button data-act="start" class="btn primary big">Start streaming</button>
+                    <button data-act="start" class="btn primary big">${i.start}</button>
                   </div>
 
                   <!-- Live MJPEG hero -->
                   <div id="mjpeg-block" class="hidden">
                     <div class="preview-frame">
-                      <img id="preview" alt="Live preview">
+                      <img id="preview" alt="${i.heroTitle}">
                     </div>
                     <div class="links">
                       <code id="mjpeg-video-url"></code>
@@ -505,40 +979,55 @@ class WebControlServer(
                     <div class="preview-frame">
                       <div class="overlay">
                         <div>
-                          <div class="big">RTSP is live</div>
-                          <div class="small">Open in OBS / VLC / ffmpeg — browsers can't render RTSP natively.</div>
+                          <div class="big">${i.rtspLiveTitle}</div>
+                          <div class="small">${i.rtspLiveNote}</div>
                         </div>
                       </div>
                     </div>
                     <div class="links"><code id="rtsp-url"></code></div>
+                  </div>
+
+                  <!-- Live WebRTC hero -->
+                  <div id="webrtc-block" class="hidden">
+                    <div class="preview-frame">
+                      <video id="webrtc-preview" autoplay playsinline muted style="width:100%;border-radius:12px;background:#000"></video>
+                    </div>
+                    <div class="links">
+                      <a id="webrtc-view-link" href="/webrtc/view" target="_blank">${i.webrtcViewLink}</a>
+                    </div>
                   </div>
                 </section>
 
                 <!-- SIDE: stats + quick controls ======================= -->
                 <aside class="side">
                   <section class="card hidden" id="live-card">
-                    <h2>Status</h2>
+                    <h2>${i.statusH}</h2>
                     <div class="stats-grid">
                       <div class="stat"><div class="label">Protocol</div><div class="value" id="s-proto">—</div></div>
-                      <div class="stat"><div class="label">Lens</div><div class="value" id="s-lens">—</div></div>
-                      <div class="stat"><div class="label">FPS</div><div class="value" id="s-fps">—</div></div>
+                      <div class="stat"><div class="label">${i.lblLens}</div><div class="value" id="s-lens">—</div></div>
+                      <div class="stat"><div class="label">${i.lblFps}</div><div class="value" id="s-fps">—</div></div>
                       <div class="stat"><div class="label">Clients</div><div class="value" id="s-clients">0</div></div>
-                      <div class="stat"><div class="label">Resolution</div><div class="value" id="s-res">—</div></div>
+                      <div class="stat"><div class="label">${i.lblResolution}</div><div class="value" id="s-res">—</div></div>
                       <div class="stat"><div class="label">Zoom · EV</div><div class="value" id="s-zoomev">—</div></div>
+                      <div class="stat"><div class="label">Bitrate</div><div class="value" id="s-bitrate">—</div></div>
                       <div class="stat full" id="audio-stat">
-                        <div class="label">Audio peak <span id="s-peak" style="float:right;color:var(--text-mute)">—</span></div>
+                        <div class="label">${i.statAudioPeak} <span id="s-peak" style="float:right;color:var(--text-mute)">—</span></div>
                         <div class="vu"><div class="fill" id="vu-fill" style="width:0%"></div></div>
+                      </div>
+                      <div class="stat full hidden" id="clients-stat">
+                        <div class="label">${i.statConnectedClients}</div>
+                        <div id="client-list" style="display:flex;flex-direction:column;gap:6px;margin-top:6px"></div>
                       </div>
                     </div>
                   </section>
 
                   <section class="card hidden" id="live-controls-card">
-                    <h2>Quick controls</h2>
+                    <h2>${i.quickH}</h2>
                     <div class="quick-controls" id="quick-row1">
-                      <button class="btn" data-act="lens">Switch camera</button>
-                      <button class="btn" data-act="torch">Torch</button>
-                      <button class="btn" data-act="mirror">Mirror</button>
-                      <button class="btn" data-act="af">Continuous AF</button>
+                      <button class="btn" data-act="lens">${i.btnSwitchCamera}</button>
+                      <button class="btn" data-act="torch">${i.btnTorch}</button>
+                      <button class="btn" data-act="mirror">${i.btnMirror}</button>
+                      <button class="btn" data-act="af">${i.btnContinuousAf}</button>
                     </div>
                     <div class="row" style="margin-top:var(--gap-2)">
                       <button class="btn" data-act="zoom" data-arg="dir=in">Zoom +</button>
@@ -547,20 +1036,23 @@ class WebControlServer(
                       <button class="btn" data-act="ev"   data-arg="dir=down">EV −</button>
                     </div>
                     <div class="row" style="margin-top:var(--gap-2)">
-                      <button class="btn" data-act="snapshot" id="snapshot-btn" style="flex:1">Snapshot</button>
-                      <button class="btn danger" data-act="stop" style="flex:1">Stop streaming</button>
+                      <button class="btn" data-act="snapshot" id="snapshot-btn" style="flex:1">${i.btnSnapshot}</button>
+                      <button class="btn danger" data-act="stop" style="flex:1">${i.btnStopStreaming}</button>
+                    </div>
+                    <div class="row" style="margin-top:var(--gap-2)">
+                      <button class="btn ghost" id="speedtest-btn" style="flex:1">${i.btnSpeedtest}</button>
                     </div>
                     <div class="divider"></div>
                     <div class="field">
-                      <div class="l">Resolution</div>
+                      <div class="l">${i.lblResolution}</div>
                       <div class="c"><select id="res-sel"></select></div>
                     </div>
                     <div class="field">
-                      <div class="l">FPS</div>
+                      <div class="l">${i.lblFps}</div>
                       <div class="c"><select id="fps-sel"></select></div>
                     </div>
                     <div class="field" id="quality-row">
-                      <div class="l">JPEG quality<small>MJPEG only</small></div>
+                      <div class="l">${i.lblJpegQuality}<small>${i.hintMjpegOnly}</small></div>
                       <div class="c">
                         <input type="range" min="10" max="95" value="$initialQuality" id="q">
                         <span class="val" id="qval">$initialQuality</span>
@@ -571,44 +1063,44 @@ class WebControlServer(
 
                 <!-- TABBED SETTINGS ==================================== -->
                 <section class="card settings-card">
-                  <h2>Settings</h2>
+                  <h2>${i.settingsH}</h2>
                   <div class="tabs" role="tablist">
-                    <button class="tab" role="tab" data-tab="camera" aria-selected="true">Camera</button>
-                    <button class="tab" role="tab" data-tab="image">Image</button>
-                    <button class="tab" role="tab" data-tab="audio">Audio</button>
-                    <button class="tab" role="tab" data-tab="stream">Stream</button>
-                    <button class="tab" role="tab" data-tab="ux">UX</button>
-                    <button class="tab" role="tab" data-tab="system">System</button>
+                    <button class="tab" role="tab" data-tab="camera" aria-selected="true">${i.tabCamera}</button>
+                    <button class="tab" role="tab" data-tab="image">${i.tabImage}</button>
+                    <button class="tab" role="tab" data-tab="audio">${i.tabAudio}</button>
+                    <button class="tab" role="tab" data-tab="stream">${i.tabStream}</button>
+                    <button class="tab" role="tab" data-tab="ux">${i.tabUx}</button>
+                    <button class="tab" role="tab" data-tab="system">${i.tabSystem}</button>
                   </div>
 
                   <!-- Camera tab -->
                   <div class="panel" data-panel="camera" data-active>
-                    <div class="field">
-                      <div class="l">Lens</div>
+                    <div class="field" data-help="lens">
+                      <div class="l">${i.lblLens}</div>
                       <div class="c">
                         <select data-setting="lens">
-                          <option value="back">Back</option>
-                          <option value="front">Front</option>
+                          <option value="back">${i.lensBack}</option>
+                          <option value="front">${i.lensFront}</option>
                         </select>
                       </div>
                     </div>
-                    <div class="field">
-                      <div class="l">Resolution<small>Available list comes from the active lens's capability map</small></div>
+                    <div class="field" data-help="resolution">
+                      <div class="l">${i.lblResolution}<small>${i.hintResFromCaps}</small></div>
                       <div class="c"><select id="res-sel-tab"></select></div>
                     </div>
-                    <div class="field">
-                      <div class="l">FPS<small>Valid range depends on lens × resolution × protocol</small></div>
+                    <div class="field" data-help="fps">
+                      <div class="l">${i.lblFps}<small>${i.hintFpsRange}</small></div>
                       <div class="c"><select id="fps-sel-tab"></select></div>
                     </div>
-                    <div class="field">
-                      <div class="l">Rotation lock<small>MJPEG output direction</small></div>
+                    <div class="field" data-help="rotation_lock">
+                      <div class="l">${i.lblRotationLock}<small>${i.hintRotationLock}</small></div>
                       <div class="c">
                         <select data-setting="rotationLock">
-                          <option value="auto">Auto</option>
-                          <option value="portrait">Portrait</option>
-                          <option value="landscape_left">Landscape ←</option>
-                          <option value="landscape_right">Landscape →</option>
-                          <option value="portrait_upside_down">Portrait ⤓</option>
+                          <option value="auto">${i.rotAuto}</option>
+                          <option value="portrait">${i.rotPortrait}</option>
+                          <option value="landscape_left">${i.rotLandscapeLeft}</option>
+                          <option value="landscape_right">${i.rotLandscapeRight}</option>
+                          <option value="portrait_upside_down">${i.rotPortraitUpside}</option>
                         </select>
                       </div>
                     </div>
@@ -616,95 +1108,99 @@ class WebControlServer(
 
                   <!-- Image tab -->
                   <div class="panel" data-panel="image">
-                    <div class="field">
-                      <div class="l">Mirror (horizontal flip)</div>
+                    <div class="field" data-help="mirror">
+                      <div class="l">${i.lblMirror}</div>
                       <div class="c"><input type="checkbox" data-setting="mirror"></div>
                     </div>
-                    <div class="field">
-                      <div class="l">Continuous autofocus</div>
+                    <div class="field" data-help="continuous_af">
+                      <div class="l">${i.lblContinuousAf}</div>
                       <div class="c"><input type="checkbox" data-setting="continuousAf"></div>
                     </div>
-                    <div class="field">
-                      <div class="l">Exposure compensation</div>
+                    <div class="field" data-help="watermark">
+                      <div class="l">${i.lblWatermark}<small>${i.hintWatermark}</small></div>
+                      <div class="c"><input type="text" data-setting="watermarkText" placeholder="Lenscast %t"></div>
+                    </div>
+                    <div class="field" data-help="exposure">
+                      <div class="l">${i.lblExposure}</div>
                       <div class="c">
                         <input type="range" min="-12" max="12" step="1" data-setting-range="exposureEv">
                         <span class="val" data-rangeval="exposureEv">0</span><span class="val">EV</span>
                       </div>
                     </div>
-                    <div class="field">
-                      <div class="l">White balance</div>
+                    <div class="field" data-help="white_balance">
+                      <div class="l">${i.lblWhiteBalance}</div>
                       <div class="c">
                         <select data-setting="whiteBalance">
-                          <option value="auto">Auto</option>
-                          <option value="incandescent">Tungsten</option>
-                          <option value="fluorescent">Fluorescent</option>
-                          <option value="daylight">Daylight</option>
-                          <option value="cloudy">Cloudy</option>
-                          <option value="shade">Shade</option>
+                          <option value="auto">${i.wbAuto}</option>
+                          <option value="incandescent">${i.wbIncandescent}</option>
+                          <option value="fluorescent">${i.wbFluorescent}</option>
+                          <option value="daylight">${i.wbDaylight}</option>
+                          <option value="cloudy">${i.wbCloudy}</option>
+                          <option value="shade">${i.wbShade}</option>
                         </select>
                       </div>
                     </div>
-                    <div class="field">
-                      <div class="l">Anti-flicker</div>
+                    <div class="field" data-help="antibanding">
+                      <div class="l">${i.lblAntibanding}</div>
                       <div class="c">
                         <select data-setting="antiBanding">
-                          <option value="auto">Auto</option>
+                          <option value="auto">${i.abAuto}</option>
                           <option value="hz50">50 Hz</option>
                           <option value="hz60">60 Hz</option>
-                          <option value="off">Off</option>
+                          <option value="off">${i.abOff}</option>
                         </select>
                       </div>
                     </div>
-                    <div class="field">
-                      <div class="l">Effect</div>
+                    <div class="field" data-help="effect">
+                      <div class="l">${i.lblEffect}</div>
                       <div class="c">
                         <select data-setting="effect">
-                          <option value="none">None</option><option value="mono">Mono</option>
-                          <option value="negative">Negative</option><option value="sepia">Sepia</option>
-                          <option value="aqua">Aqua</option><option value="solarize">Solarize</option>
-                          <option value="posterize">Posterize</option><option value="blackboard">Blackboard</option>
-                          <option value="whiteboard">Whiteboard</option>
+                          <option value="none">${i.effectNone}</option><option value="mono">${i.effectMono}</option>
+                          <option value="negative">${i.effectNegative}</option><option value="sepia">${i.effectSepia}</option>
+                          <option value="aqua">${i.effectAqua}</option><option value="solarize">${i.effectSolarize}</option>
+                          <option value="posterize">${i.effectPosterize}</option><option value="blackboard">${i.effectBlackboard}</option>
+                          <option value="whiteboard">${i.effectWhiteboard}</option>
                         </select>
                       </div>
                     </div>
-                    <div class="field">
-                      <div class="l">Scene mode</div>
+                    <div class="field" data-help="scene">
+                      <div class="l">${i.lblScene}</div>
                       <div class="c">
                         <select data-setting="sceneMode">
-                          <option value="disabled">Off</option><option value="action">Action</option>
-                          <option value="portrait">Portrait</option><option value="landscape">Landscape</option>
-                          <option value="night">Night</option><option value="sports">Sports</option>
-                          <option value="theatre">Theatre</option><option value="fireworks">Fireworks</option>
-                          <option value="beach">Beach</option><option value="snow">Snow</option>
-                          <option value="sunset">Sunset</option>
+                          <option value="disabled">${i.sceneOff}</option><option value="action">${i.sceneAction}</option>
+                          <option value="portrait">${i.scenePortrait}</option><option value="landscape">${i.sceneLandscape}</option>
+                          <option value="night">${i.sceneNight}</option><option value="sports">${i.sceneSports}</option>
+                          <option value="theatre">${i.sceneTheatre}</option><option value="fireworks">${i.sceneFireworks}</option>
+                          <option value="beach">${i.sceneBeach}</option><option value="snow">${i.sceneSnow}</option>
+                          <option value="sunset">${i.sceneSunset}</option>
                         </select>
                       </div>
                     </div>
                     <div class="divider"></div>
-                    <div class="field">
-                      <div class="l">Manual focus</div>
+                    <div class="field" data-help="manual_focus">
+                      <div class="l">${i.lblManualFocus}</div>
                       <div class="c"><input type="checkbox" data-setting="manualFocus"></div>
                     </div>
-                    <div class="field">
-                      <div class="l">Focus distance<small>0 = infinity</small></div>
+                    <div class="field" data-help="focus_distance">
+                      <div class="l">${i.lblFocusDistance}<small>${i.hintFocusZeroInf}</small></div>
                       <div class="c">
                         <input type="range" min="0" max="1000" step="50" data-setting-range="manualFocusCentidiopters">
                         <span class="val" data-rangeval="manualFocusCentidiopters">0</span>
                       </div>
                     </div>
-                    <div class="field" id="manual-exp-row">
-                      <div class="l">Manual exposure<small id="manual-exp-unsupported" class="hidden">Not supported on this lens</small></div>
+                    <div class="field" id="manual-exp-row" data-help="manual_exposure">
+                      <div class="l">${i.lblManualExposure}<small id="manual-exp-unsupported" class="hidden">${i.hintManualExpUnsupported}</small></div>
                       <div class="c"><input type="checkbox" data-setting="manualExposure"></div>
                     </div>
-                    <div class="field" id="iso-row">
-                      <div class="l">ISO</div>
+                    <div class="field" id="iso-row" data-help="iso">
+                      <div class="l">${i.lblIso}</div>
                       <div class="c">
                         <input type="range" min="50" max="3200" step="50" data-setting-range="iso">
                         <span class="val" data-rangeval="iso">100</span>
                       </div>
                     </div>
-                    <div class="field" id="shutter-row">
-                      <div class="l">Shutter (µs)</div>
+                    <div class="field" id="shutter-row" data-help="shutter">
+                      <div class="l">${i.lblShutter}</div>
                       <div class="c">
                         <input type="range" min="100" max="500000" step="100" data-setting-range="shutterUs">
                         <span class="val" data-rangeval="shutterUs">16666</span>
@@ -714,136 +1210,180 @@ class WebControlServer(
 
                   <!-- Audio tab -->
                   <div class="panel" data-panel="audio">
-                    <div class="field">
-                      <div class="l">Stream microphone audio</div>
+                    <div class="field stream-locked" data-help="stream_mic">
+                      <div class="l">${i.lblStreamMic}</div>
                       <div class="c"><input type="checkbox" data-setting="audioEnabled"></div>
                     </div>
-                    <div class="field">
-                      <div class="l">Mic source</div>
+                    <div class="field stream-locked" data-help="mic_source">
+                      <div class="l">${i.lblMicSource}</div>
                       <div class="c">
                         <select data-setting="micSource">
-                          <option value="camcorder">Camcorder</option>
-                          <option value="mic">Default mic</option>
-                          <option value="voice_recognition">Voice recognition</option>
-                          <option value="voice_communication">Voice communication</option>
-                          <option value="unprocessed">Unprocessed</option>
+                          <option value="camcorder">${i.micCamcorder}</option>
+                          <option value="mic">${i.micDefault}</option>
+                          <option value="voice_recognition">${i.micVoiceRecog}</option>
+                          <option value="voice_communication">${i.micVoiceComm}</option>
+                          <option value="unprocessed">${i.micUnprocessed}</option>
                         </select>
                       </div>
                     </div>
-                    <div class="field">
-                      <div class="l">Gain</div>
+                    <div class="field" data-help="gain">
+                      <div class="l">${i.lblGain}</div>
                       <div class="c">
                         <input type="range" min="-24" max="24" step="1" data-setting-range="audioGainDb">
                         <span class="val" data-rangeval="audioGainDb">0</span><span class="val">dB</span>
                       </div>
                     </div>
-                    <div class="field">
-                      <div class="l">Noise suppression</div>
+                    <div class="field stream-locked" data-help="noise_suppress">
+                      <div class="l">${i.lblNoiseSuppress}</div>
                       <div class="c"><input type="checkbox" data-setting="noiseSuppress"></div>
                     </div>
-                    <div class="field">
-                      <div class="l">Echo cancellation</div>
+                    <div class="field stream-locked" data-help="echo_cancel">
+                      <div class="l">${i.lblEchoCancel}</div>
                       <div class="c"><input type="checkbox" data-setting="echoCancel"></div>
                     </div>
+                    <p class="stream-only" style="display:none;color:var(--text-mute);font-size:12px;text-align:center;margin:8px 0">${i.streamLockedHint}</p>
                   </div>
 
                   <!-- Stream tab -->
                   <div class="panel" data-panel="stream">
-                    <div class="field">
-                      <div class="l">JPEG quality<small>MJPEG output</small></div>
+                    <div class="field" data-help="jpeg_quality">
+                      <div class="l">${i.lblJpegQuality}<small>${i.hintMjpegOutput}</small></div>
                       <div class="c">
                         <input type="range" min="10" max="95" step="1" data-setting-range="jpegQuality">
                         <span class="val" data-rangeval="jpegQuality">80</span>
                       </div>
                     </div>
-                    <div class="field">
-                      <div class="l">RTSP bitrate cap<small>0 = auto from resolution × fps</small></div>
+                    <div class="field stream-locked" data-help="rtsp_bitrate">
+                      <div class="l">${i.lblRtspBitrateCap}<small>${i.hintRtspBitrateAuto}</small></div>
                       <div class="c">
                         <input type="range" min="0" max="20000" step="500" data-setting-range="rtspBitrateKbps">
                         <span class="val" data-rangeval="rtspBitrateKbps">0</span><span class="val">kbps</span>
                       </div>
                     </div>
-                    <div class="field">
-                      <div class="l">Record to MP4 while streaming<small>RTSP only · saves to Movies/Lenscast/</small></div>
+                    <div class="field stream-locked" data-help="mjpeg_sidecar">
+                      <div class="l">${i.lblMjpegSidecar}<small>${i.hintMjpegSidecar}</small></div>
+                      <div class="c"><input type="checkbox" data-setting="mjpegSidecar"></div>
+                    </div>
+                    <div class="field stream-locked" data-help="record_mp4">
+                      <div class="l">${i.lblRecordMp4}<small>${i.hintRecordRtspOnly}</small></div>
                       <div class="c"><input type="checkbox" data-setting="recordLocally"></div>
                     </div>
+                    <div class="divider"></div>
+                    <div class="field stream-locked" data-help="sftp_auto_upload">
+                      <div class="l">${i.lblSftpAutoUpload}<small>${i.hintSftpAutoUpload}</small></div>
+                      <div class="c"><input type="checkbox" data-setting="sftpEnabled"></div>
+                    </div>
+                    <div class="field stream-locked" data-help="sftp_host">
+                      <div class="l">${i.lblSftpHost}</div>
+                      <div class="c"><input type="text" data-setting="sftpHost" placeholder="files.example.org"></div>
+                    </div>
+                    <div class="field stream-locked" data-help="sftp_port">
+                      <div class="l">${i.lblSftpPort}</div>
+                      <div class="c"><input type="number" min="1" max="65535" data-setting-int="sftpPort"></div>
+                    </div>
+                    <div class="field stream-locked" data-help="sftp_user">
+                      <div class="l">${i.lblSftpUser}</div>
+                      <div class="c"><input type="text" data-setting="sftpUser"></div>
+                    </div>
+                    <div class="field stream-locked" data-help="sftp_password">
+                      <div class="l">${i.lblSftpPassword}</div>
+                      <div class="c"><input type="password" data-setting="sftpPassword"></div>
+                    </div>
+                    <div class="field stream-locked" data-help="sftp_remote_dir">
+                      <div class="l">${i.lblSftpRemoteDir}<small>${i.hintSftpRemoteDir}</small></div>
+                      <div class="c"><input type="text" data-setting="sftpRemoteDir" placeholder="recordings"></div>
+                    </div>
+                    <div class="field stream-locked" data-help="sftp_fingerprint">
+                      <div class="l">${i.lblSftpFingerprint}<small>${i.hintSftpFingerprint}</small></div>
+                      <div class="c"><input type="text" data-setting="sftpHostKeyFingerprint" placeholder="SHA256:…"></div>
+                    </div>
+                    <!-- Status + retry are useful both during and after a stream, so they stay. -->
+                    <div class="field">
+                      <div class="l">${i.lblSftpStatus}</div>
+                      <div class="c"><code id="sftp-status" style="font-size:11px">—</code></div>
+                    </div>
+                    <div class="row" style="margin-top:var(--gap-2)">
+                      <button class="btn ghost" id="sftp-retry-btn" style="flex:1">${i.btnSftpRetry}</button>
+                    </div>
+                    <p class="stream-only" style="display:none;color:var(--text-mute);font-size:12px;text-align:center;margin:8px 0">${i.streamLockedHint}</p>
                   </div>
 
                   <!-- UX tab -->
                   <div class="panel" data-panel="ux">
-                    <div class="field">
-                      <div class="l">Keep screen on while streaming</div>
+                    <div class="field" data-help="keep_screen_on">
+                      <div class="l">${i.lblKeepScreenOn}</div>
                       <div class="c"><input type="checkbox" data-setting="keepScreenOn"></div>
                     </div>
-                    <div class="field">
-                      <div class="l">Hide preview while streaming<small>Battery saver</small></div>
+                    <div class="field" data-help="blank_preview">
+                      <div class="l">${i.lblBlankPreview}<small>${i.hintBatterySaver}</small></div>
                       <div class="c"><input type="checkbox" data-setting="blankPreview"></div>
                     </div>
-                    <div class="field">
-                      <div class="l">Auto-start streaming on app launch</div>
+                    <div class="field" data-help="auto_start">
+                      <div class="l">${i.lblAutoStart}</div>
                       <div class="c"><input type="checkbox" data-setting="autoStart"></div>
                     </div>
-                    <div class="field">
-                      <div class="l">Start on device boot</div>
+                    <div class="field" data-help="start_on_boot">
+                      <div class="l">${i.lblStartOnBoot}</div>
                       <div class="c"><input type="checkbox" data-setting="startOnBoot"></div>
                     </div>
                   </div>
 
                   <!-- System / Advanced tab -->
                   <div class="panel" data-panel="system">
-                    <div class="field">
-                      <div class="l">MJPEG port</div>
+                    <div class="field stream-locked" data-help="mjpeg_port">
+                      <div class="l">${i.lblMjpegPort}</div>
                       <div class="c"><input type="number" min="1024" max="65535" data-setting-int="mjpegPort"></div>
                     </div>
-                    <div class="field">
-                      <div class="l">RTSP port</div>
+                    <div class="field stream-locked" data-help="rtsp_port">
+                      <div class="l">${i.lblRtspPort}</div>
                       <div class="c"><input type="number" min="1024" max="65535" data-setting-int="rtspPort"></div>
                     </div>
-                    <div class="divider"></div>
-                    <div class="field">
-                      <div class="l">HTTPS<small>Self-signed cert; receivers click through the warning once</small></div>
+                    <div class="divider stream-locked"></div>
+                    <div class="field stream-locked" data-help="https">
+                      <div class="l">${i.lblHttps}<small>${i.hintHttps}</small></div>
                       <div class="c"><input type="checkbox" data-setting="httpsEnabled"></div>
                     </div>
                     <div class="field">
-                      <div class="l">Cert fingerprint</div>
+                      <div class="l">${i.lblCertFp}</div>
                       <div class="c"><code id="tls-fingerprint" style="font-size:10px">—</code></div>
                     </div>
-                    <div class="divider"></div>
-                    <div class="field">
-                      <div class="l">Stream username<small>Defaults to Lenscast; used with the passcode below.</small></div>
+                    <div class="divider stream-locked"></div>
+                    <div class="field stream-locked" data-help="stream_user">
+                      <div class="l">${i.lblStreamUser}<small>${i.hintStreamUser}</small></div>
                       <div class="c"><input type="text" data-setting="streamUsername" placeholder="Lenscast"></div>
                     </div>
-                    <div class="field">
-                      <div class="l">Stream passcode<small>Applies to MJPEG and RTSP. Empty = open access.</small></div>
+                    <div class="field stream-locked" data-help="stream_pass">
+                      <div class="l">${i.lblStreamPass}<small>${i.hintStreamPass}</small></div>
                       <div class="c"><input type="text" data-setting="streamPassword"></div>
                     </div>
                     <div class="divider"></div>
-                    <div class="field">
-                      <div class="l">Incoming call behavior<small>Needs READ_PHONE_STATE; DROP also needs ANSWER_PHONE_CALLS</small></div>
+                    <div class="field" data-help="call_behavior">
+                      <div class="l">${i.lblCallBehavior}<small>${i.hintCallBehavior}</small></div>
                       <div class="c">
                         <select data-setting="callBehavior">
-                          <option value="ignore">Ignore (audio keeps flowing)</option>
-                          <option value="mute_stream">Mute the stream</option>
-                          <option value="drop_call">Drop the call</option>
+                          <option value="ignore">${i.callIgnore}</option>
+                          <option value="mute_stream">${i.callMute}</option>
+                          <option value="drop_call">${i.callDrop}</option>
                         </select>
                       </div>
                     </div>
-                    <div class="field">
-                      <div class="l">Keep web panel reachable in background<small>Adds a persistent low-priority notification</small></div>
+                    <div class="field" data-help="persistent_web">
+                      <div class="l">${i.lblPersistentWeb}<small>${i.hintPersistentWeb}</small></div>
                       <div class="c"><input type="checkbox" data-setting="persistentWebControl"></div>
                     </div>
                     <div class="divider"></div>
-                    <div class="field">
-                      <div class="l">Export settings</div>
-                      <div class="c"><a href="/export" download="lenscast-settings.json" class="btn">Download JSON</a></div>
+                    <div class="field" data-help="export">
+                      <div class="l">${i.lblExport}</div>
+                      <div class="c"><a href="/export" download="lenscast-settings.json" class="btn">${i.btnDownloadJson}</a></div>
                     </div>
-                    <div class="field">
-                      <div class="l">Import settings<small>Replaces the current settings — stream must be stopped first</small></div>
+                    <div class="field stream-locked" data-help="import">
+                      <div class="l">${i.lblImport}<small>${i.hintImportReplaces}</small></div>
                       <div class="c" style="flex-direction:column;align-items:stretch;width:100%">
-                        <textarea id="import-json" placeholder="Paste exported JSON here, then click Import"></textarea>
-                        <button id="import-btn" class="btn" style="align-self:flex-end;margin-top:6px">Import</button>
+                        <textarea id="import-json" placeholder="${i.phImportJson}"></textarea>
+                        <button id="import-btn" class="btn" style="align-self:flex-end;margin-top:6px">${i.btnImport}</button>
                       </div>
                     </div>
+                    <p class="stream-only" style="display:none;color:var(--text-mute);font-size:12px;text-align:center;margin:8px 0">${i.streamLockedHint}</p>
                   </div>
                 </section>
               </main>
@@ -852,6 +1392,50 @@ class WebControlServer(
               <div id="toast" class="toast"></div>
 
               <script>
+                // ── Help tooltips ─────────────────────────────────────
+                // Injected `?` icon next to every `[data-help]` field's label. Click to
+                // toggle a popover; click elsewhere to dismiss. Touch + mouse friendly.
+                const helpTexts = $helpJson;
+                let openTip = null;
+                function closeTip() {
+                  if (openTip) { openTip.remove(); openTip = null; }
+                }
+                document.addEventListener('click', (e) => {
+                  if (openTip && !openTip.contains(e.target) && !e.target.classList.contains('help-btn')) {
+                    closeTip();
+                  }
+                });
+                document.querySelectorAll('[data-help]').forEach(field => {
+                  const key = field.dataset.help;
+                  const text = helpTexts[key];
+                  if (!text) return;
+                  const label = field.querySelector('.l');
+                  if (!label) return;
+                  const btn = document.createElement('button');
+                  btn.type = 'button';
+                  btn.className = 'help-btn';
+                  btn.textContent = '?';
+                  btn.setAttribute('aria-label', 'Help');
+                  btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (openTip && openTip.dataset.key === key) { closeTip(); return; }
+                    closeTip();
+                    const tip = document.createElement('div');
+                    tip.className = 'help-tip';
+                    tip.dataset.key = key;
+                    tip.innerHTML = text;
+                    document.body.appendChild(tip);
+                    // Position below the button, kept within the viewport.
+                    const r = btn.getBoundingClientRect();
+                    const tw = tip.offsetWidth;
+                    const left = Math.max(8, Math.min(r.left, window.innerWidth - tw - 8));
+                    tip.style.left = left + 'px';
+                    tip.style.top = (r.bottom + window.scrollY + 6) + 'px';
+                    openTip = tip;
+                  });
+                  label.appendChild(btn);
+                });
+
                 // ── URL prep ──────────────────────────────────────────
                 const mjpegPort = $mjpegPortNow;
                 const rtspPort = $rtspPortNow;
@@ -865,10 +1449,13 @@ class WebControlServer(
                 document.getElementById('mjpeg-video-url').textContent = mjpegBase + '/video';
                 document.getElementById('mjpeg-audio-url').textContent = mjpegBase + '/audio';
                 document.getElementById('mjpeg-shot-url').textContent  = mjpegBase + '/shot.jpg';
+                // RTSP scheme tracks the same HTTPS toggle as MJPEG — Lenscast either
+                // serves both as TLS or both as plain text, never mixed.
+                const rtspScheme = ${if (mjpegIsHttps()) "'rtsps'" else "'rtsp'"};
                 document.getElementById('rtsp-url').textContent =
-                  'rtsp://' + host + ':' + rtspPort + '/lenscast';
+                  rtspScheme + '://' + host + ':' + rtspPort + '/lenscast';
                 document.getElementById('footer-text').textContent =
-                  'Lenscast ${if (version.isEmpty()) "" else "v$version "}· control panel · ' + host;
+                  'Lenscast ${if (version.isEmpty()) "" else "v$version "}· ${i.footerPanel} · ' + host;
 
                 // ── Toast (replaces the old #msg single-line strip) ──
                 const toast = document.getElementById('toast');
@@ -894,7 +1481,129 @@ class WebControlServer(
 
                 // ── Buttons ──────────────────────────────────────────
                 document.querySelectorAll('button[data-act]').forEach(btn => {
-                  btn.addEventListener('click', () => post(btn.dataset.act, btn.dataset.arg));
+                  btn.addEventListener('click', () => {
+                    // When the WebRTC DataChannel is open, send via that — saves an HTTP
+                    // roundtrip and is the canonical control path for the WebRTC protocol.
+                    if (sendCmdViaDataChannel(btn.dataset.act, btn.dataset.arg)) return;
+                    post(btn.dataset.act, btn.dataset.arg);
+                  });
+                });
+
+                // SFTP retry — fires off a fresh queue for the last MP4 the service finalised.
+                const sftpRetryBtn = document.getElementById('sftp-retry-btn');
+                if (sftpRetryBtn) sftpRetryBtn.addEventListener('click', async () => {
+                  sftpRetryBtn.disabled = true;
+                  try {
+                    const res = await fetch('/sftp/retry', {method: 'POST'});
+                    if (res.ok) showToast('Upload queued');
+                    else showToast('Retry failed: ' + await res.text(), true);
+                  } finally { sftpRetryBtn.disabled = false; }
+                });
+
+                // 2 Hz SFTP status poll. Cheap (single-line JSON), independent of the
+                // 1 Hz /status poll so the badge updates while a long upload is in flight.
+                async function refreshSftpStatus() {
+                  try {
+                    const r = await fetch('/sftp/status', {cache: 'no-store'});
+                    if (!r.ok) return;
+                    const j = await r.json();
+                    const cell = document.getElementById('sftp-status');
+                    if (!cell) return;
+                    if (!j.enabled) { cell.textContent = 'disabled'; return; }
+                    let line = j.state;
+                    if (j.current) line += ' · ' + j.current;
+                    if (j.queue > 0) line += ' · queue ' + j.queue;
+                    if (j.lastUploaded && j.state === 'success') line = 'last ↑ ' + j.lastUploaded;
+                    if (j.lastError && j.state === 'failed') line = 'failed · ' + j.lastError;
+                    cell.textContent = line;
+                  } catch (e) {}
+                }
+                setInterval(refreshSftpStatus, 2000);
+                refreshSftpStatus();
+
+                // In-panel WebRTC preview — same handshake as /webrtc/view, embedded so
+                // the user gets one-glance verification without opening another tab.
+                let webRtcPc = null;
+                let webRtcDataChannel = null;
+                async function ensureWebRtcPreview() {
+                  if (webRtcPc) return;
+                  try {
+                    const pc = new RTCPeerConnection({iceServers: []});
+                    pc.addTransceiver('video', {direction: 'recvonly'});
+                    pc.addTransceiver('audio', {direction: 'recvonly'});
+                    pc.ontrack = (e) => {
+                      const v = document.getElementById('webrtc-preview');
+                      if (v) v.srcObject = e.streams[0];
+                    };
+                    pc.ondatachannel = (e) => { webRtcDataChannel = e.channel; };
+                    pc.oniceconnectionstatechange = () => {
+                      if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+                        tearDownWebRtcPreview();
+                      }
+                    };
+                    const offer = await pc.createOffer();
+                    await pc.setLocalDescription(offer);
+                    await new Promise(r => {
+                      if (pc.iceGatheringState === 'complete') return r();
+                      pc.addEventListener('icegatheringstatechange', () => {
+                        if (pc.iceGatheringState === 'complete') r();
+                      });
+                    });
+                    const res = await fetch('/webrtc/offer', {
+                      method: 'POST',
+                      headers: {'Content-Type': 'application/sdp'},
+                      body: pc.localDescription.sdp,
+                    });
+                    if (!res.ok) { pc.close(); return; }
+                    await pc.setRemoteDescription({type: 'answer', sdp: await res.text()});
+                    webRtcPc = pc;
+                  } catch (e) { /* keep silent — user can retry by switching protocol */ }
+                }
+                function tearDownWebRtcPreview() {
+                  if (!webRtcPc) return;
+                  try { webRtcPc.close(); } catch (e) {}
+                  webRtcPc = null;
+                  webRtcDataChannel = null;
+                  const v = document.getElementById('webrtc-preview');
+                  if (v) v.srcObject = null;
+                }
+
+                // Quick-controls buttons (Switch camera / Torch / Mirror / AF / Zoom / EV /
+                // Snapshot) prefer the WebRTC DataChannel when WebRTC is the active protocol
+                // — saves an HTTP roundtrip per click. Falls back to /control/* otherwise.
+                function sendCmdViaDataChannel(act, arg) {
+                  if (!webRtcDataChannel || webRtcDataChannel.readyState !== 'open') return false;
+                  const cmd = act === 'zoom' && arg === 'dir=in' ? 'zoom_in'
+                            : act === 'zoom' ? 'zoom_out'
+                            : act === 'ev' && arg === 'dir=up' ? 'ev_up'
+                            : act === 'ev' ? 'ev_down'
+                            : act;
+                  webRtcDataChannel.send(JSON.stringify({cmd: cmd}));
+                  return true;
+                }
+
+                // LAN speed test — downloads 10 MB from /speedtest on THIS port (the web
+                // control server). Hitting the MJPEG port broke in WebRTC mode or RTSP
+                // without the sidecar, because the MJPEG server isn't running there.
+                const speedBtn = document.getElementById('speedtest-btn');
+                if (speedBtn) speedBtn.addEventListener('click', async () => {
+                  speedBtn.disabled = true;
+                  const label = speedBtn.textContent;
+                  speedBtn.textContent = 'Testing…';
+                  try {
+                    const bytes = 10000000;
+                    const t0 = performance.now();
+                    const res = await fetch('/speedtest?bytes=' + bytes, {cache: 'no-store'});
+                    const buf = await res.arrayBuffer();
+                    const dt = (performance.now() - t0) / 1000.0;
+                    const mbps = (buf.byteLength * 8 / 1e6 / dt).toFixed(1);
+                    showToast(mbps + ' Mbps over ' + dt.toFixed(2) + ' s');
+                  } catch (e) {
+                    showToast('Speed test failed: ' + e, true);
+                  } finally {
+                    speedBtn.textContent = label;
+                    speedBtn.disabled = false;
+                  }
                 });
                 document.querySelectorAll('input[name=proto]').forEach(r => {
                   r.addEventListener('change', () => {
@@ -990,6 +1699,10 @@ class WebControlServer(
                   } catch (e) { return; }
 
                   const live = s.state === 'streaming' || s.state === 'starting';
+                  // Drives the `.stream-locked` / `.stream-only` CSS rules below — every
+                  // widget whose server-side updater short-circuits on `streaming` is gated
+                  // on this class so the user never sees rows they can't change.
+                  document.body.classList.toggle('is-streaming', live);
 
                   // Header badge
                   const badge = document.getElementById('state-badge');
@@ -1005,6 +1718,10 @@ class WebControlServer(
                   show('idle-block', !live);
                   show('mjpeg-block', live && s.protocol === 'mjpeg');
                   show('rtsp-block',  live && s.protocol === 'rtsp');
+                  show('webrtc-block', live && s.protocol === 'webrtc');
+                  // Lazy-attach the in-panel WebRTC preview on the live→live transition.
+                  if (live && s.protocol === 'webrtc') ensureWebRtcPreview();
+                  else tearDownWebRtcPreview();
 
                   // Side cards — status + quick controls — only make sense while live.
                   show('live-card', live);
@@ -1057,6 +1774,52 @@ class WebControlServer(
                   document.getElementById('s-zoomev').textContent =
                     (s.zoom != null ? s.zoom.toFixed(2) : '1.00') + 'x · ' +
                     (s.ev >= 0 ? '+' : '') + (s.ev || 0) + ' EV';
+                  const kbps = s.txKbps || 0;
+                  document.getElementById('s-bitrate').textContent =
+                    kbps <= 0 ? '—' : (kbps < 1000 ? kbps + ' kbps' : (kbps / 1000).toFixed(1) + ' Mbps');
+
+                  // Health banner — colours track HealthMonitor.Severity (ok/warn/critical).
+                  const h = s.health || {severity: 'ok', message: null};
+                  const banner = document.getElementById('health-banner');
+                  if (banner) {
+                    if (h.severity === 'ok' || !h.message) {
+                      banner.classList.add('hidden');
+                    } else {
+                      banner.classList.remove('hidden');
+                      banner.textContent = h.message;
+                      banner.style.background = h.severity === 'critical' ? '#5a1f2c' : '#5a4a1f';
+                      banner.style.color = h.severity === 'critical' ? '#ffcdd2' : '#ffe7a3';
+                    }
+                  }
+
+                  // Client list with kick buttons (rendered once per /status tick).
+                  const list = s.clientList || [];
+                  const cs = document.getElementById('clients-stat');
+                  const cl = document.getElementById('client-list');
+                  if (list.length > 0) {
+                    cs.classList.remove('hidden');
+                    cl.replaceChildren(...list.map(addr => {
+                      const row = document.createElement('div');
+                      row.style.cssText = 'display:flex;gap:8px;align-items:center;justify-content:space-between';
+                      const span = document.createElement('span');
+                      span.textContent = addr;
+                      span.style.cssText = 'font-family:ui-monospace,monospace;font-size:13px;color:var(--text-mute)';
+                      const btn = document.createElement('button');
+                      btn.className = 'btn ghost';
+                      btn.textContent = 'Drop';
+                      btn.style.cssText = 'padding:4px 10px;font-size:12px';
+                      btn.addEventListener('click', async () => {
+                        btn.disabled = true;
+                        try { await post('kick', 'remote=' + encodeURIComponent(addr)); }
+                        catch (e) { btn.disabled = false; }
+                      });
+                      row.appendChild(span);
+                      row.appendChild(btn);
+                      return row;
+                    }));
+                  } else {
+                    cs.classList.add('hidden');
+                  }
 
                   // VU meter
                   const peak = (s.audioPeakDbfs != null) ? s.audioPeakDbfs : -90;
@@ -1120,5 +1883,6 @@ class WebControlServer(
 
     companion object {
         private const val TAG = "WebControlServer"
+
     }
 }

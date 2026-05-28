@@ -59,6 +59,11 @@ object CameraCapabilities {
         // including resolution fallback when the exact requested size isn't a valid
         // high-speed size). If plan() returns null, the combo would crash at start.
         Protocol.RTSP -> RtspCameraDriver.plan(context, lens, size, fps.value) != null
+
+        // WebRTC path also owns Camera2 directly (via Camera2Capturer). Same constraints
+        // as MJPEG: standard sessions, ≤30 fps. We don't probe MediaCodec here — the
+        // PeerConnectionFactory's encoder picker chooses what the device supports.
+        Protocol.WEBRTC -> !fps.isHighSpeed && lensHasAeRangeContaining(context, lens, fps.value)
     }
 
     /**

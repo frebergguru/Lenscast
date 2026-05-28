@@ -126,9 +126,13 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
       Toggle torch, Snapshot and Stop buttons that POST to `/control/*`
       endpoints handled inside `MjpegServer`. The server reaches the service via
       a small `MjpegControl` bridge.
-- [ ] **Web control page — extended surface.** The current panel covers the four
-      most-common toggles, but the same `MjpegControl` bridge can grow to expose
-      most of the Settings sheet from the browser:
+- [x] **Web control page — extended surface.** Every sub-bullet below landed
+      in the second / third / fifth passes — the Settings tab now mirrors the
+      app's Settings sheet 1:1 via `POST /control/setting?key=K&v=V`. The
+      fifth pass added a watermark text input (Image tab), a live `Bitrate`
+      stat chip fed by a server-rolled `txKbps` on `/status`, and a
+      battery+thermal `health` banner at the top of the page that mirrors
+      `HealthMonitor` (synchronous `snapshotNow()` keeps `/status` cheap).
       - **Resolution / FPS pickers** (`<select>` + apply button — rebinds the camera).
       - **JPEG quality slider** (live, no rebind needed).
       - **White-balance / effect / scene / anti-flicker pickers** (rebind keyed).
@@ -138,8 +142,11 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
       - **RTSP bitrate slider** for the RTSP path (no rebind, MediaCodec
         `setParameters` once we wire it).
       - **Audio gain slider** + mic-source picker + NS/AEC toggles (RTSP only).
-      - **Multi-client kick** — list active client IPs and a "drop this one"
-        button (server already tracks per-socket sessions).
+      - **Multi-client kick** — done in the third pass. /status carries a
+        `clientList` array of `host:port` strings; the live Status card renders
+        each with a Drop button that POSTs `/control/kick?remote=…`. Tracks
+        every PLAYing RTSP socket and every MJPEG `/video` + `/audio`
+        consumer; short-lived requests (shot/landing/status) are not listed.
       - **Settings export / import** as a JSON blob the user can paste between
         devices.
       Several of these are already wired up in the second pass:
@@ -229,6 +236,112 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
       back to mute when the API is rejected. READ_PHONE_STATE +
       ANSWER_PHONE_CALLS requested at runtime when the user picks a
       non-IGNORE option; if denied, the monitor silently no-ops.
+
+### Polish / quality-of-life
+
+- [x] **QR code on the Connection card.** Tap to expand the URL into a QR; another
+      phone or laptop can scan instead of typing `https://192.168.x.y:8080/`.
+      Long-press the card or tap the new QR icon. ZXing.
+- [x] **Stats overlay in the app.** Bitrate chip alongside FPS / clients in the
+      stat row; rolling 1 s window of bytes shipped across MJPEG + RTSP. Dropped
+      frames and RTT remain open — drops aren't a single-source counter (CameraX
+      ImageAnalysis vs encoder vs network all drop differently) and RTT needs
+      RTCP RR parsing that ties into the adaptive-bitrate work below.
+- [x] **Watermark / logo overlay.** Settings field; `%t` expands to a wall-clock
+      `HH:mm:ss`. Drawn via `Canvas.drawText` on a re-decoded Bitmap after the
+      `YuvImage.compressToJpeg` step (cheaper than an NV21-domain glyph cache
+      and lets the user pick any string).
+- [x] **Network speed test.** `/speedtest?bytes=N` on the MJPEG port sinks N
+      bytes of zeros (10 MB default, capped at 100 MB) so the receiver can
+      measure raw LAN throughput. Web control panel has a one-tap "Run LAN
+      speed test" button that reports Mbps.
+- [x] **Battery / thermal warning.** `HealthMonitor` banner on MainScreen.
+      `BatteryManager` for level/charging, `PowerManager.OnThermalStatusChangedListener`
+      on API 29+. Surfaces a warning/error banner at WARN / CRITICAL thresholds.
+
+### Adjacent use cases
+
+- [x] **RTSPS (RTSP over TLS).** `RtspServer` constructor accepts the same
+      `SSLContext` as the MJPEG path; receivers use `rtsps://`. URL schemes in
+      the Connection card flip when HTTPS is on.
+- [x] **Multi-client RTSP.** `RtspManager.activeSinks` is a `CopyOnWriteArrayList`;
+      every NAL/AAC packet is fanned out to every PLAYing session. `RtspServer`
+      no longer boots the previous client on new accept. Verified the
+      `onClientTeardown(sink)` callback identifies the right sink to remove.
+- [x] **Multi-protocol simultaneous** (MJPEG + RTSP). New `Settings.mjpegSidecar`
+      toggle (RTSP path only). When on, `RtspCameraDriver.start` now also takes
+      a `sidecarSurface` and adds it to the `CameraCaptureSession` output set
+      alongside the H.264 encoder Surface. The sidecar is an `ImageReader`
+      (`YUV_420_888`, 2-buffer) whose `OnImageAvailableListener` pushes each
+      latest frame through `YuvToJpeg.encodeImage` and publishes to the
+      existing `FrameBroadcaster`; `MjpegServer` is started on `mjpegPort`
+      alongside RTSP. Self-throttled to 15 fps so the JPEG encode doesn't
+      starve the H.264 encoder on the same camera output. Constraint:
+      ≤30 fps only — Camera2 high-speed sessions reject ImageReader YUV
+      outputs, so the toggle is greyed at >30 fps with a note. WebRTC stays
+      mutually exclusive — its `Camera2Capturer` claims the camera the same
+      way `RtspCameraDriver` does, so all-three-at-once would need a deeper
+      rewrite (Camera2 ownership moved into a shared driver fanning out to
+      all three encoder backends).
+- [x] **Adaptive bitrate.** `Rtcp.parseReceiverReports` extracts fraction-lost +
+      cumulative-loss + jitter from incoming RR packets. `RtspSession` starts a
+      per-UDP-session listener on the rtcpSocket and forwards each RR to
+      `RtspManager` via a new `StreamProvider.onReceiverReport` callback.
+      A 2-second AIMD loop in `RtspManager` (`startAdaptiveLoop`) drives
+      `H264Encoder.setBitrate` via MediaCodec `PARAMETER_KEY_VIDEO_BITRATE`:
+      multiplicative 0.75× decrease on loss > 5 %, additive ~62 kbps increase
+      after 8 s of loss < 1 %, floor 250 kbps, ceiling = the configured
+      `videoBitrateBps`. TCP-interleaved RR is now demuxed too — `RtspSession.serve`
+      wraps the socket InputStream in a `PushbackInputStream`, peeks the first
+      byte, and dispatches `$<channel><len>` frames (RTCP channels 1/3) through
+      the same parser. OBS et al. — which default to TCP — now drive ABR.
+- [x] **Recording uploads** (SFTP). `com.hierynomus:sshj:0.39.0` (reuses our
+      Bouncy Castle for crypto). New `SftpUploader` runs a single-worker
+      coroutine queue: stages each MediaStore MP4 into `cacheDir` via
+      `contentResolver.openInputStream`, opens an SSHClient with optional
+      SHA-256 host-key pinning, `mkdirs` the remote directory, `put`s the file.
+      3 attempts with 5s/20s/60s backoff before drop. Settings fields cover
+      host/port/user/password/remoteDir/fingerprint; surfaced on both the
+      phone Settings sheet and the web control panel (System tab) with a
+      2 Hz `/sftp/status` poll and an "Upload last recording now" button
+      backed by `/sftp/retry`. WebDAV and SMB remain open — same plumbing,
+      different transport.
+- [ ] **Cloud relay.** "Phone is on cellular, receiver is on a different LAN" —
+      needs a hosted Lenscast-relay service that both sides connect to.
+      Significant infrastructure + ongoing cost; deliberately deferred.
+- [x] **WebRTC** (browser viewer with audio + DataChannel). `io.github.webrtc-sdk:android:125.6422.07`
+      adds ~30 MB of native code. New `Protocol.WEBRTC` — mutually exclusive
+      with MJPEG / RTSP because `Camera2Capturer` owns the camera. Per-peer
+      `PeerConnection`s spun up via `POST /webrtc/offer` on the web control port
+      (half-trickle ICE: the answer carries every candidate inline so no
+      separate trickle endpoint is needed). Browser viewer at `/webrtc/view`
+      is a single self-contained HTML page; the main web panel also embeds an
+      in-place preview that uses the same handshake. **Audio:** a
+      `JavaAudioDeviceModule` with hardware AEC/NS, gated on the existing
+      `Settings.audioEnabled` toggle. An audio track is added to every PC
+      alongside the video track. **DataChannel:** every PC opens a "lenscast"
+      channel; browser-side quick-control buttons (lens, torch, mirror, AF,
+      zoom, EV, snapshot) send `{"cmd":"…"}` JSON over it and bypass the
+      HTTP endpoints. The Kotlin side routes those commands through the same
+      `MjpegControl` surface the web HTTP path already uses.
+
+### Engineering robustness
+
+- [x] **Opt-in crash reporter.** `CrashReporter.install(this)` from
+      `LenscastApp.onCreate` sets the uncaught-exception handler that writes
+      `lenscast-diagnostics.txt` (stack trace + last ~400 logcat lines, capped
+      at 200 KB) into app-private files. "Share diagnostics" button in the
+      Backup section of Settings shares it via `FileProvider`.
+- [x] **JVM unit tests** — `app/src/test/kotlin` now hosts hermetic tests for
+      `Sdp.build`, `Rtcp.buildSenderReport` + `parseReceiverReports`, and
+      `H264RtpPacketizer.packetize` (FU-A fragmentation, marker-bit, monotonic
+      sequence numbers). 18 tests, JUnit 4, runs via `./gradlew :app:testDebugUnitTest`.
+      Sdp swapped `android.util.Base64` for `java.util.Base64` so the SPS/PPS
+      encoder is JVM-callable. Instrumented tests for the camera + streaming
+      pipeline are still deferred — they'd need Robolectric or a real device.
+- [x] **Norwegian localization.** `values-nb/strings.xml` (Bokmål). All
+      user-facing strings already went through `R.string` so the resource
+      override picks them up at runtime when the device locale is `nb`.
 
 ## Out of scope / not planned
 

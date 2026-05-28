@@ -15,7 +15,12 @@ android {
         versionCode = 3
         versionName = "1.0.2"
 
-        resourceConfigurations += listOf("en")
+        // Locales bundled into the APK. Order doesn't matter; "en" must stay because it's
+        // our default. "nb" exposes the Norwegian Bokmål translation (res/values-nb). Add
+        // any new language code here when adding a values-XX folder — without it, AAPT
+        // strips the translated strings from the final arsc and the LocaleManager call
+        // silently falls back to "en".
+        resourceConfigurations += listOf("en", "nb")
     }
 
     buildTypes {
@@ -110,4 +115,27 @@ dependencies {
     // lives in a PKCS12 file in app-private storage.
     implementation(libs.bouncycastle.bcprov)
     implementation(libs.bouncycastle.bcpkix)
+
+    // QR-code generation for the Connection card. Just the pure-Java core lib —
+    // we render the BitMatrix into a Compose Canvas ourselves, no Android UI dep.
+    implementation(libs.zxing.core)
+
+    // WebRTC SDK (community fork of upstream libwebrtc). Adds ~10 MB after R8.
+    // Used by [streaming.webrtc.WebRtcManager] — owns Camera2 via Camera2Capturer and
+    // serves a browser-native sub-100 ms stream via the /webrtc/offer endpoint on the
+    // WebControlServer. Mutually exclusive with MJPEG / RTSP (the camera is single-tenant).
+    implementation(libs.webrtc.android)
+
+    // SFTP upload for finished recordings (RTSP path). sshj reuses our Bouncy Castle
+    // for crypto; slf4j-nop quiets its logging since we don't have a logging backend.
+    implementation(libs.sshj)
+    implementation(libs.slf4j.nop)
+
+    // Only used for `AppCompatDelegate.setApplicationLocales` — the cross-API shim for the
+    // platform LocaleManager (API 33+). We don't use AppCompatActivity or AppCompat themes.
+    implementation(libs.androidx.appcompat)
+
+    // JVM unit tests for pure data paths (SDP builder, RTCP SR builder, etc.).
+    // The streaming / camera pipeline tests stay deferred — they need Android stubs.
+    testImplementation("junit:junit:4.13.2")
 }

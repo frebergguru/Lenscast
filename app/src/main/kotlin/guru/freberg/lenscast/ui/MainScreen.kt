@@ -120,6 +120,10 @@ fun MainScreen(
     val repo = remember { SettingsRepository(ctx) }
     val settings by repo.flow.collectAsState(initial = Settings())
     val scope = rememberCoroutineScope()
+    val health by remember { guru.freberg.lenscast.system.HealthMonitor.observe(ctx) }
+        .collectAsStateWithLifecycle(initialValue = guru.freberg.lenscast.system.HealthMonitor.State(
+            guru.freberg.lenscast.system.HealthMonitor.Severity.OK, null,
+        ))
 
     // Live service state (default IDLE when service not bound yet).
     val statusFlow = service?.status ?: remember { MutableStateFlow(StreamingService.Status()) }
@@ -166,25 +170,31 @@ fun MainScreen(
     var fpsObserved by remember { mutableStateOf(0) }
     var clientsObserved by remember { mutableStateOf(0) }
     var audioPeak by remember { mutableStateOf(-90f) }
+    var txKbps by remember { mutableStateOf(0) }
     LaunchedEffect(streaming, service) {
         if (!streaming || service == null) {
             fpsObserved = 0
             clientsObserved = 0
             audioPeak = -90f
+            txKbps = 0
             return@LaunchedEffect
         }
         var lastCount = service.framesProducedNow()
+        var lastBytes = service.bytesSentNow()
         var lastT = System.currentTimeMillis()
         clientsObserved = service.connectedClientCount()
         while (true) {
             delay(250)
             val now = System.currentTimeMillis()
             val count = service.framesProducedNow()
+            val bytes = service.bytesSentNow()
             val dt = (now - lastT).coerceAtLeast(1L)
             fpsObserved = ((count - lastCount) * 1000.0 / dt).toInt()
+            txKbps = (((bytes - lastBytes) * 8.0) / dt).toInt() // bytes * 8 / ms = kbps
             clientsObserved = service.connectedClientCount()
             audioPeak = service.audioPeakDbfs()
             lastCount = count
+            lastBytes = bytes
             lastT = now
         }
     }
@@ -243,8 +253,12 @@ fun MainScreen(
     ) {
         val svc = service ?: return@LaunchedEffect
         if (!perm.granted) return@LaunchedEffect
-        val rtspActive = streaming && settings.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP
-        if (rtspActive) return@LaunchedEffect
+        // Both RTSP and WebRTC own Camera2 directly; skip CameraX (re)bind while either
+        // is streaming or the surface would fight Camera2Capturer / RtspCameraDriver.
+        val proto = settings.protocol
+        val nonCameraXActive = streaming && (proto == guru.freberg.lenscast.prefs.Protocol.RTSP
+            || proto == guru.freberg.lenscast.prefs.Protocol.WEBRTC)
+        if (nonCameraXActive) return@LaunchedEffect
         try {
             svc.bindCameraIfNeeded(
                 lens = settings.lens,
@@ -392,8 +406,12 @@ fun MainScreen(
                         // mid-stream lens switching isn't supported yet. Hide the button so the
                         // user isn't tempted to press a no-op. MJPEG can switch mid-stream
                         // (CameraX rebinds cleanly), so the button stays for that path.
-                        val rtspLive = st.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP && st.streaming
-                        if (!rtspLive) {
+                        // RTSP + WebRTC both lock the camera at stream-start (Camera2-direct
+                        // pipelines). MJPEG can switch mid-stream via CameraX rebind.
+                        val cameraLocked = st.streaming && (
+                            st.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP ||
+                            st.protocol == guru.freberg.lenscast.prefs.Protocol.WEBRTC)
+                        if (!cameraLocked) {
                             OverlayIconButton(
                                 icon = Icons.Outlined.Cameraswitch,
                                 contentDescription = "Switch camera",
@@ -422,6 +440,9 @@ fun MainScreen(
 
         @Composable
         fun controlStack() {
+            // Pre-emptive banner — battery low (and not charging) or thermal throttling.
+            // Sits above the Start button so the user sees it before tapping.
+            HealthBanner(state = health)
             PrimaryActionButton(
                 streaming = streaming,
                 permissionGranted = perm.granted,
@@ -460,6 +481,11 @@ fun MainScreen(
                     StatChip(
                         label = stringResource(R.string.stat_clients),
                         value = clientsObserved.toString(),
+                        modifier = Modifier.weight(1f),
+                    )
+                    StatChip(
+                        label = stringResource(R.string.stat_bitrate),
+                        value = formatBitrate(txKbps),
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -572,6 +598,12 @@ fun MainScreen(
  * follows physical motion regardless of the system's rotation-lock setting. Seeded with the
  * current display rotation so the very first frame after launch is right-way-up.
  */
+private fun formatBitrate(kbps: Int): String = when {
+    kbps <= 0 -> "—"
+    kbps < 1000 -> "${kbps} kbps"
+    else -> "%.1f Mbps".format(kbps / 1000.0)
+}
+
 @Composable
 private fun rememberPhysicalDeviceRotation(): Int {
     val ctx = LocalContext.current
@@ -758,6 +790,33 @@ private fun PrimaryActionButton(
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun HealthBanner(state: guru.freberg.lenscast.system.HealthMonitor.State) {
+    val msg = state.message ?: return
+    val critical = state.severity == guru.freberg.lenscast.system.HealthMonitor.Severity.CRITICAL
+    val container = if (critical) MaterialTheme.colorScheme.errorContainer
+                    else MaterialTheme.colorScheme.tertiaryContainer
+    val content   = if (critical) MaterialTheme.colorScheme.onErrorContainer
+                    else MaterialTheme.colorScheme.onTertiaryContainer
+    Surface(
+        color = container,
+        contentColor = content,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = msg,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }

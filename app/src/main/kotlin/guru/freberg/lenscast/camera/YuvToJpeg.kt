@@ -1,11 +1,20 @@
 package guru.freberg.lenscast.camera
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.ImageFormat
+import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.Typeface
 import android.graphics.YuvImage
 import androidx.camera.core.ImageProxy
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /**
  * Converts a CameraX [ImageProxy] in YUV_420_888 format to a JPEG byte array.
@@ -36,7 +45,7 @@ object YuvToJpeg {
     private var vRowBuf: ByteArray = ByteArray(0)
     private val jpegOut = ByteArrayOutputStream(64 * 1024)
 
-    fun encode(image: ImageProxy, quality: Int, mirror: Boolean = false): ByteArray {
+    fun encode(image: ImageProxy, quality: Int, mirror: Boolean = false, watermark: String = ""): ByteArray {
         val w = image.width
         val h = image.height
         val yP = image.planes[0]; val uP = image.planes[1]; val vP = image.planes[2]
@@ -46,16 +55,76 @@ object YuvToJpeg {
             uP.buffer, uP.rowStride, uP.pixelStride,
             vP.buffer, vP.rowStride, vP.pixelStride,
         )
-        return jpegFromNv21(nv21, w, h, image.imageInfo.rotationDegrees, quality, mirror)
+        return jpegFromNv21(nv21, w, h, image.imageInfo.rotationDegrees, quality, mirror, watermark)
     }
 
-    private fun jpegFromNv21(nv21: ByteArray, w: Int, h: Int, rotationDegrees: Int, quality: Int, mirror: Boolean): ByteArray {
+    /**
+     * JPEG-encode an `android.media.Image` from an ImageReader (YUV_420_888). Same NV21
+     * conversion path as [encode], used by the RTSP-with-MJPEG-sidecar mode where Camera2
+     * owns the camera directly and CameraX isn't in the pipeline.
+     */
+    fun encodeImage(
+        image: android.media.Image,
+        rotationDegrees: Int,
+        quality: Int,
+        mirror: Boolean = false,
+        watermark: String = "",
+    ): ByteArray {
+        val w = image.width
+        val h = image.height
+        val yP = image.planes[0]; val uP = image.planes[1]; val vP = image.planes[2]
+        val nv21 = planesToNv21(
+            w, h,
+            yP.buffer, yP.rowStride, yP.pixelStride,
+            uP.buffer, uP.rowStride, uP.pixelStride,
+            vP.buffer, vP.rowStride, vP.pixelStride,
+        )
+        return jpegFromNv21(nv21, w, h, rotationDegrees, quality, mirror, watermark)
+    }
+
+    private val watermarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        setShadowLayer(3f, 1f, 1f, Color.argb(180, 0, 0, 0))
+    }
+    private val watermarkClock = SimpleDateFormat("HH:mm:ss", Locale.US)
+
+    private fun jpegFromNv21(
+        nv21: ByteArray, w: Int, h: Int, rotationDegrees: Int, quality: Int,
+        mirror: Boolean, watermark: String,
+    ): ByteArray {
         val (rotated, rw, rh) = if (rotationDegrees == 0) Triple(nv21, w, h) else rotateNv21(nv21, w, h, rotationDegrees)
         if (mirror) mirrorNv21(rotated, rw, rh)
         jpegOut.reset()
+        val q = quality.coerceIn(10, 100)
         YuvImage(rotated, ImageFormat.NV21, rw, rh, null)
-            .compressToJpeg(Rect(0, 0, rw, rh), quality.coerceIn(10, 100), jpegOut)
-        return jpegOut.toByteArray()
+            .compressToJpeg(Rect(0, 0, rw, rh), q, jpegOut)
+        val bare = jpegOut.toByteArray()
+        if (watermark.isEmpty()) return bare
+        return overlayWatermark(bare, watermark, q) ?: bare
+    }
+
+    /**
+     * Decodes [src], draws [text] (with `%t` expanded to a wall-clock `HH:mm:ss`) in the
+     * bottom-left, re-encodes JPEG. Returns null if decode fails — caller falls back to the
+     * un-watermarked bytes so a transient failure doesn't drop the frame.
+     */
+    private fun overlayWatermark(src: ByteArray, text: String, quality: Int): ByteArray? {
+        val opts = BitmapFactory.Options().apply { inMutable = true }
+        val bm = BitmapFactory.decodeByteArray(src, 0, src.size, opts) ?: return null
+        try {
+            val resolved = if ("%t" in text) text.replace("%t", watermarkClock.format(Date())) else text
+            // Scale text size with frame height — 4% of height keeps it legible from 720p..1080p.
+            watermarkPaint.textSize = (bm.height * 0.04f).coerceAtLeast(18f)
+            val pad = (bm.height * 0.02f).coerceAtLeast(8f)
+            val baseline = bm.height - pad
+            Canvas(bm).drawText(resolved, pad, baseline, watermarkPaint)
+            jpegOut.reset()
+            bm.compress(Bitmap.CompressFormat.JPEG, quality, jpegOut)
+            return jpegOut.toByteArray()
+        } finally {
+            bm.recycle()
+        }
     }
 
     /**

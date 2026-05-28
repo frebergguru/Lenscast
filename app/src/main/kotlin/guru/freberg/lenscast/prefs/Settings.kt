@@ -1,6 +1,6 @@
 package guru.freberg.lenscast.prefs
 
-enum class Protocol { MJPEG, RTSP }
+enum class Protocol { MJPEG, RTSP, WEBRTC }
 
 enum class Lens { BACK, FRONT }
 
@@ -166,4 +166,43 @@ data class Settings(
      * speak RTSPS, so adding it would break common workflows.
      */
     val httpsEnabled: Boolean = false,
+    /**
+     * Optional watermark drawn into every outgoing MJPEG frame. Blank = disabled.
+     * The literal token `%t` is expanded to a wall-clock `HH:mm:ss` per frame, so the user
+     * can stick `Lenscast %t` and get a self-updating timestamp.
+     */
+    val watermarkText: String = "",
+    /**
+     * Auto-upload finished MP4 recordings (RTSP path only) to a remote SFTP server. The
+     * upload runs in the background after [recordLocally] finalises the file; failures
+     * retry with backoff but do not block the next stream.
+     */
+    val sftpEnabled: Boolean = false,
+    val sftpHost: String = "",
+    val sftpPort: Int = 22,
+    val sftpUser: String = "",
+    val sftpPassword: String = "",
+    /** Remote directory the file lands in. Blank = the user's home dir. */
+    val sftpRemoteDir: String = "",
+    /**
+     * Optional SSH host-key fingerprint pinning. Format: hex string of either the SHA-256
+     * or MD5 host-key hash (with or without `SHA256:` / `MD5:` prefix). Blank = TOFU on first
+     * connect, accept any key thereafter.
+     */
+    val sftpHostKeyFingerprint: String = "",
+    /**
+     * BCP-47 language tag for in-app UI ("en", "nb"). Blank = follow the device system
+     * locale. Applied via `AppCompatDelegate.setApplicationLocales` so the Activity
+     * recreates with the new resources immediately. On API < 33 the change persists
+     * across launches but doesn't reconfigure the running Activity without a restart.
+     */
+    val languageTag: String = "",
+    /**
+     * When true and protocol = RTSP at ≤30 fps, also expose the MJPEG endpoints (`/video`,
+     * `/audio` if audio is on, `/shot.jpg`) on [mjpegPort] in parallel with the RTSP stream.
+     * Implemented via an extra ImageReader output added to the Camera2 capture session so a
+     * single camera open feeds both encoders. Cannot be enabled for high-speed sessions
+     * (>30 fps) because high-speed only accepts MediaCodec/preview Surfaces.
+     */
+    val mjpegSidecar: Boolean = false,
 )

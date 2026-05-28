@@ -93,6 +93,19 @@ class H264Encoder(
         codec?.start() ?: error("H264Encoder.prepare() must be called before start()")
     }
 
+    /**
+     * Live-tune the encoder's target bitrate. MediaCodec applies the change asynchronously
+     * but most vendor codecs respect it within a few frames. Used by the adaptive-bitrate
+     * loop in [RtspManager] when RTCP RR shows sustained loss.
+     */
+    fun setBitrate(bps: Int) {
+        val c = codec ?: return
+        val params = android.os.Bundle().apply {
+            putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, bps.coerceAtLeast(64_000))
+        }
+        try { c.setParameters(params) } catch (t: Throwable) { Log.w(TAG, "setBitrate failed: ${t.message}") }
+    }
+
     /** Force an instantaneous keyframe; used when a new RTSP client connects. */
     fun requestKeyframe() {
         val c = codec ?: return
