@@ -324,6 +324,37 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
       zoom, EV, snapshot) send `{"cmd":"…"}` JSON over it and bypass the
       HTTP endpoints. The Kotlin side routes those commands through the same
       `MjpegControl` surface the web HTTP path already uses.
+- [ ] **WHEP-compliant `/webrtc/offer` endpoint.** Today's signalling is
+      WHEP-shaped (POST `application/sdp`, get `application/sdp` back) but
+      not RFC-conformant: we return `200 OK` instead of `201 Created`, we
+      don't emit a `Location:` header pointing at a per-resource URL, and
+      we don't implement `DELETE <resource>` for graceful teardown. Trickle
+      ICE via `PATCH <resource>` would also be a follow-up — today we block
+      the answer on ICE-gathering complete (non-trickle). Closing this lets
+      strict WHEP clients (OBS WHIP/WHEP plugin, future receivers) connect
+      without the workarounds the in-house viewer needs. Half-day of work.
+- [ ] **SRT (Secure Reliable Transport) — `Protocol.SRT`.** Haivision's
+      protocol used by every modern broadcaster (OBS / vMix / Wirecast /
+      ffmpeg / SLDP / FFmpeg-based decoders); wraps MPEG-TS in a
+      retransmitting UDP layer with built-in encryption and bandwidth-aware
+      ARQ. Two modes worth supporting:
+        - **Caller**: phone connects out to an SRT listener (the easiest
+          path through NAT — broadcaster has a public listener, phone
+          connects to it).
+        - **Listener**: phone listens on a port; receivers (OBS) point
+          at `srt://<phone-ip>:<port>` and pull.
+      Implementation sketch: bundle Haivision's `libsrt` (LGPL, ~600 KB
+      ARM64 .so) via the published Maven artifact or a manual NDK build,
+      wrap an MPEG-TS muxer around our existing H.264 + AAC encoders,
+      hand each TS packet to libsrt. Most of the encoder plumbing is
+      already in `RtspManager` — the new bit is the TS mux and the
+      SRT socket I/O. Latency is similar to RTSP/TCP but tolerates packet
+      loss far better, which makes it the right call for cellular or
+      congested-Wi-Fi uplinks. Settings: srtPort, srtPassphrase
+      (encryption), srtLatencyMs (the ARQ window — 120–300 ms typical),
+      srtStreamId (for receivers that route by stream-id).
+      ~2–3 days of work including a TS muxer and end-to-end testing
+      against an `srt-live-transmit` listener.
 
 ### Engineering robustness
 
