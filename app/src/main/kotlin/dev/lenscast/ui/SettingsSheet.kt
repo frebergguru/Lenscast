@@ -86,6 +86,13 @@ fun SettingsSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+            } else {
+                Text(
+                    text = stringResource(R.string.settings_mjpeg_rotation_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
 
             Spacer(Modifier.height(16.dp))

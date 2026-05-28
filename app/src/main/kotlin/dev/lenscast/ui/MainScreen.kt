@@ -51,12 +51,15 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.movableContentOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import android.app.Activity
 import android.content.res.Configuration
+import android.hardware.SensorManager
+import android.view.OrientationEventListener
 import android.view.Surface
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -159,15 +162,16 @@ fun MainScreen(
     var settingsOpen by remember { mutableStateOf(false) }
     var torchOn by remember { mutableStateOf(false) }
 
-    // Track display rotation. LocalConfiguration triggers recomposition on rotation, so
-    // we re-read the WindowManager's rotation each pass and push it through the service.
+    // UI layout follows the activity's actual display orientation (changes only when the
+    // OS rotates the activity, which respects rotation lock — that's correct here).
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-    val deviceRotation = remember(configuration) {
-        @Suppress("DEPRECATION")
-        val display = (ctx as? Activity)?.windowManager?.defaultDisplay
-        display?.rotation ?: Surface.ROTATION_0
-    }
+
+    // Camera rotation follows the *physical* phone orientation via accelerometer, so the
+    // MJPEG output rotates with the user even when system auto-rotate is off. This is the
+    // common case: people lock rotation to keep the UI portrait but still expect the
+    // stream they're sending to OBS to follow how they're holding the phone.
+    val deviceRotation = rememberPhysicalDeviceRotation()
     LaunchedEffect(service, deviceRotation) {
         service?.setDeviceRotation(deviceRotation)
     }
@@ -407,6 +411,40 @@ fun MainScreen(
             },
         )
     }
+}
+
+/**
+ * Discrete Surface.ROTATION_* value driven by the accelerometer. Unlike Display.getRotation
+ * + LocalConfiguration (which only update when the OS actually rotates the activity), this
+ * follows physical motion regardless of the system's rotation-lock setting. Seeded with the
+ * current display rotation so the very first frame after launch is right-way-up.
+ */
+@Composable
+private fun rememberPhysicalDeviceRotation(): Int {
+    val ctx = LocalContext.current
+    var rotation by remember {
+        mutableIntStateOf(
+            @Suppress("DEPRECATION")
+            (ctx as? Activity)?.windowManager?.defaultDisplay?.rotation ?: Surface.ROTATION_0
+        )
+    }
+    DisposableEffect(ctx) {
+        val listener = object : OrientationEventListener(ctx, SensorManager.SENSOR_DELAY_NORMAL) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                val next = when (orientation) {
+                    in 45 until 135  -> Surface.ROTATION_270
+                    in 135 until 225 -> Surface.ROTATION_180
+                    in 225 until 315 -> Surface.ROTATION_90
+                    else             -> Surface.ROTATION_0
+                }
+                if (next != rotation) rotation = next
+            }
+        }
+        if (listener.canDetectOrientation()) listener.enable()
+        onDispose { listener.disable() }
+    }
+    return rotation
 }
 
 @Composable

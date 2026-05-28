@@ -200,11 +200,24 @@ class StreamingService : LifecycleService() {
     }
 
     /**
-     * Called by the UI whenever the activity's display rotation changes. CameraX
-     * picks it up live; RTSP-mode rotation is locked at stream-start time (see Roadmap).
+     * Called by the UI whenever the physical device orientation changes. We push the
+     * new rotation to CameraX during preview so the on-screen preview and the JPEG
+     * encoder stay upright as the user tilts the phone.
+     *
+     * Once a stream is active, rotation is *frozen* until Stop. Reason: MJPEG consumers
+     * (browsers, ffmpeg, v4l2loopback → kamoso/Chrome/etc.) cache the frame dimensions
+     * from the first frame they receive and won't re-negotiate when the JPEG size flips
+     * between landscape and portrait — the image renders stretched/squished until the
+     * user manually refreshes. Locking at Start gives the consumer a stable contract
+     * for the lifetime of the stream; the user picks orientation, taps Start, and
+     * everything downstream agrees on the size.
+     *
+     * RTSP already ignores rotation changes mid-stream (the encoder consumes the camera
+     * Surface directly; see Roadmap), so this gating is a no-op there.
      */
     fun setDeviceRotation(rotation: Int) {
         currentRotation = rotation
+        if (_status.value.state == State.STREAMING) return
         cameraController?.setTargetRotation(rotation)
     }
 
