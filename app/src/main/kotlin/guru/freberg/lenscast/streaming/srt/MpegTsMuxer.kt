@@ -49,12 +49,14 @@ class MpegTsMuxer(
             sentFirstVideoKeyframe = true
         }
         maybeWritePsi()
-        // Convert NALs to Annex-B (each preceded by 0x00 0x00 0x00 0x01). Prepend an
-        // Access Unit Delimiter NAL (type 9) so MPEG-TS demuxers can find frame
-        // boundaries without sniffing slice headers; on keyframes, also prepend SPS+PPS
-        // so receivers that joined mid-stream can sync without waiting for the next IDR.
+        // Convert NALs to Annex-B (each preceded by 0x00 0x00 0x00 0x01). On keyframes,
+        // prepend SPS+PPS so receivers that joined mid-stream can sync without waiting
+        // for the next IDR. AUD NAL prepending was tried here but both ffplay and VLC
+        // started rejecting the stream — likely because we emit one PES per NAL and the
+        // demuxer counted each AUD as a new access unit, not as a delimiter inside the
+        // current one. Modern Android H.264 encoders emit single-slice frames, so AUD
+        // isn't required for correct demuxing.
         val annexB = mutableListOf<ByteArray>()
-        annexB += AUD_NAL
         if (isKeyframe) {
             sps?.let { annexB += it }
             pps?.let { annexB += it }
