@@ -61,7 +61,9 @@ class SrtManager(private val context: Context) {
         }
         val encoderRotation = ((plan.sensorOrientation - config.deviceRotationDegrees) + 360) % 360
 
-        // Build publisher first so it's ready to ship the moment encoders emit.
+        // Forward-declared so the publisher's onState callback can reset the muxer +
+        // request a fresh keyframe the moment a new receiver connects.
+        var lateMuxer: MpegTsMuxer? = null
         val pub = SrtPublisher(
             SrtPublisher.Config(
                 mode = config.srtMode,
@@ -71,10 +73,21 @@ class SrtManager(private val context: Context) {
                 latencyMs = config.srtLatencyMs,
                 streamId = config.srtStreamId,
             ),
-            onState = { st -> state = st },
+            onState = { st ->
+                state = st
+                if (st == SrtPublisher.State.CONNECTED) {
+                    // Re-arm: the next emitted video PES must be a keyframe with
+                    // SPS+PPS, and we request a fresh IDR from the encoder so we don't
+                    // have to wait up to the natural GOP for the receiver to start
+                    // decoding. PSI is also re-sent immediately so PAT/PMT lands
+                    // ahead of the first PES.
+                    lateMuxer?.resetForNewClient()
+                    try { videoEncoder?.requestKeyframe() } catch (_: Throwable) {}
+                }
+            },
         ).also { publisher = it; it.start() }
 
-        val tsMuxer = MpegTsMuxer { pkt -> pub.send(pkt) }.also { muxer = it }
+        val tsMuxer = MpegTsMuxer { pkt -> pub.send(pkt) }.also { muxer = it; lateMuxer = it }
 
         // The H.264 and AAC encoders deliver PTS values in DIFFERENT clock domains:
         //   - H.264 PTS comes from the Camera2 input surface — elapsedRealtimeNanos / 1000,

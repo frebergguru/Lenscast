@@ -22,6 +22,17 @@ package guru.freberg.lenscast.streaming.srt
 class MpegTsMuxer(
     private val sink: (packet: ByteArray) -> Unit,
 ) {
+    /**
+     * Called by SrtManager when a new receiver connects. Re-arms the IDR gate (so the
+     * next emitted PES is guaranteed to be a keyframe with SPS+PPS+IDR) and forces PSI
+     * on the next access unit. Without this the receiver could join mid-stream and see
+     * a P-frame as its first PES, with the previous IDR already drained off the queue.
+     */
+    fun resetForNewClient() {
+        sentFirstVideoKeyframe = false
+        packetCountSincePsi = 0
+    }
+
     /** Send the encoder-emitted SPS bytes — required for the first PES on the video PID. */
     @Volatile var sps: ByteArray? = null
     /** Send the encoder-emitted PPS bytes — required for the first PES on the video PID. */

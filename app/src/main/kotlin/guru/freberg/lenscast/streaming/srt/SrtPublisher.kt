@@ -54,15 +54,19 @@ class SrtPublisher(
     private var pumpJob: Job? = null
     private val queue = LinkedBlockingQueue<ByteArray>(MAX_QUEUE + 1)
     private val running = AtomicBoolean(false)
+    @Volatile private var currentState: State = State.IDLE
     @Volatile private var socket: SrtSocket? = null
     @Volatile private var clientSocket: SrtSocket? = null
     @Volatile private var bytesSent: Long = 0L
+
+    fun state(): State = currentState
 
     fun bytesSent(): Long = bytesSent
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
         Srt.startUp()
+        currentState = State.CONNECTING
         onState(State.CONNECTING)
         connectJob = scope.launch {
             try {
@@ -72,6 +76,7 @@ class SrtPublisher(
                 }
             } catch (t: Throwable) {
                 Log.w(TAG, "SRT connect failed", t)
+                currentState = State.FAILED
                 onState(State.FAILED)
                 stopInternal()
             }
@@ -84,6 +89,13 @@ class SrtPublisher(
         socket = s
         Log.i(TAG, "SRT caller dialing ${config.host}:${config.port}")
         s.connect(InetSocketAddress(config.host, config.port))
+        currentState = State.CONNECTED
+        // Drop everything the muxer queued while we were waiting for a client.
+        // Those packets reference an IDR the new client will never see (queue
+        // wrap-around silently evicts the oldest = the keyframe). Starting from
+        // an empty queue lets the muxer's next IDR-aligned write be the first
+        // thing the client sees.
+        queue.clear()
         onState(State.CONNECTED)
         startPump(s)
     }
@@ -100,14 +112,22 @@ class SrtPublisher(
             val client = accepted.first
             Log.i(TAG, "SRT accepted client from ${client.peerName}")
             clientSocket = client
-            onState(State.CONNECTED)
+            currentState = State.CONNECTED
+        // Drop everything the muxer queued while we were waiting for a client.
+        // Those packets reference an IDR the new client will never see (queue
+        // wrap-around silently evicts the oldest = the keyframe). Starting from
+        // an empty queue lets the muxer's next IDR-aligned write be the first
+        // thing the client sees.
+        queue.clear()
+        onState(State.CONNECTED)
             // Single-client listener: drain the queue into this client until it disconnects,
             // then loop back to accept another. This matches the typical OBS workflow where
             // only one receiver pulls at a time.
             pumpUntilClosed(client)
             try { client.close() } catch (_: Throwable) {}
             clientSocket = null
-            onState(State.CONNECTING)
+            currentState = State.CONNECTING
+        onState(State.CONNECTING)
         }
     }
 
@@ -182,8 +202,11 @@ class SrtPublisher(
      */
     fun send(tsPacket: ByteArray) {
         if (!running.get()) return
-        // Drop oldest under back-pressure so the queue can't grow unbounded if the receiver
-        // stalls. `offer` returns false when the bounded queue is full.
+        // Don't accumulate before a receiver is connected. Queueing pre-connect would
+        // fill the bounded queue with frames the receiver will never see — wrap-around
+        // eviction drops the OLDEST first, which is the keyframe. The receiver then
+        // gets only P-frames at start and floods the log with "non-existing PPS".
+        if (currentState != State.CONNECTED) return
         if (!queue.offer(tsPacket)) {
             queue.poll()
             queue.offer(tsPacket)
@@ -193,6 +216,7 @@ class SrtPublisher(
     fun stop() {
         if (!running.compareAndSet(true, false)) return
         stopInternal()
+        currentState = State.CLOSED
         onState(State.CLOSED)
     }
 
