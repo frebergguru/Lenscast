@@ -34,6 +34,8 @@ class MjpegServer(
     private val broadcaster: FrameBroadcaster,
     private val port: Int,
     private val targetFps: Int,
+    /** Optional HTTP Basic auth passcode. Empty = open. Username fixed to `lenscast`. */
+    private val password: String = "",
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var server: ServerSocket? = null
@@ -76,13 +78,21 @@ class MjpegServer(
         try {
             val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
             val requestLine = reader.readLine() ?: return@withContext
-            // Drain remaining headers; we don't actually use them.
+            // Capture Authorization header before discarding the rest — needed for Basic auth.
+            var authorization: String? = null
             while (true) {
                 val line = reader.readLine() ?: break
                 if (line.isEmpty()) break
+                if (line.startsWith("Authorization:", ignoreCase = true)) {
+                    authorization = line.substringAfter(':').trim()
+                }
             }
             val path = requestLine.split(' ').getOrNull(1) ?: "/"
             val out = socket.getOutputStream()
+            if (password.isNotEmpty() && !isAuthorized(authorization)) {
+                writeUnauthorized(out)
+                return@withContext
+            }
             when {
                 path.startsWith("/video") -> writeMjpegStream(out)
                 path.startsWith("/shot")  -> writeSingleShot(out)
@@ -96,6 +106,34 @@ class MjpegServer(
             try { socket.close() } catch (_: Throwable) {}
             broadcaster.onClientDisconnected()
         }
+    }
+
+    private fun isAuthorized(headerValue: String?): Boolean {
+        if (headerValue == null) return false
+        if (!headerValue.startsWith("Basic ", ignoreCase = true)) return false
+        val decoded = try {
+            val raw = headerValue.substringAfter(' ').trim()
+            String(android.util.Base64.decode(raw, android.util.Base64.NO_WRAP))
+        } catch (_: Throwable) { return false }
+        val colon = decoded.indexOf(':')
+        if (colon < 0) return false
+        val user = decoded.substring(0, colon)
+        val pwd = decoded.substring(colon + 1)
+        return user == AUTH_USER && pwd == password
+    }
+
+    private fun writeUnauthorized(out: OutputStream) {
+        val body = "Authentication required".toByteArray(Charsets.US_ASCII)
+        val header = ("HTTP/1.0 401 Unauthorized\r\n" +
+            "WWW-Authenticate: Basic realm=\"Lenscast\", charset=\"UTF-8\"\r\n" +
+            "Content-Type: text/plain\r\n" +
+            "Content-Length: ${body.size}\r\n" +
+            "Connection: close\r\n\r\n").toByteArray(Charsets.US_ASCII)
+        try {
+            out.write(header)
+            out.write(body)
+            out.flush()
+        } catch (_: IOException) { /* ignored */ }
     }
 
     private suspend fun writeMjpegStream(out: OutputStream) {
@@ -164,6 +202,7 @@ class MjpegServer(
     companion object {
         private const val TAG = "MjpegServer"
         private const val BOUNDARY = "lenscastframe"
+        const val AUTH_USER = "lenscast"
         private val TRAILER = "\r\n".toByteArray(Charsets.US_ASCII)
 
         private val STREAM_RESPONSE_HEADER = (

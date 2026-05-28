@@ -22,7 +22,7 @@ another project, and Lenscast covers the future non-OBS use cases too).
 ```bash
 ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell monkey -p dev.lenscast.debug -c android.intent.category.LAUNCHER 1
+adb shell monkey -p dev.lenscast -c android.intent.category.LAUNCHER 1
 ```
 
 Build environment quirks (full detail in [Docs/Build.md](Docs/Build.md)):
@@ -108,10 +108,10 @@ ask them to describe what they see — don't claim a fix works until they confir
 adb logcat -d -t 200 | grep -iE 'lenscast|cameracontroller|streamingservice|camerax'
 
 # Check current permission state
-adb shell dumpsys package dev.lenscast.debug | grep -E 'permission|granted'
+adb shell dumpsys package dev.lenscast | grep -E 'permission|granted'
 
 # Stop the service / app
-adb shell am force-stop dev.lenscast.debug
+adb shell am force-stop dev.lenscast
 ```
 
 ## Pointers

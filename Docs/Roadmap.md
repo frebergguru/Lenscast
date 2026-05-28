@@ -15,6 +15,31 @@
   DeviceAsWebcam service (Pixel 8+, some other OEMs), the Settings sheet offers a
   deep-link into USB preferences so the user can flip the system-level "Use phone
   as webcam" toggle. The actual UVC frames come from the OS, not from Lenscast.
+- **MJPEG image controls** — mirror (horizontal flip), exposure-compensation slider,
+  white-balance preset (Auto / Tungsten / Fluor / Daylight / Cloudy / Shade),
+  continuous-AF toggle, anti-flicker mode (Auto / 50 Hz / 60 Hz / Off). All driven
+  through `Camera2Interop.Extender` on the CameraX bind so they apply to both the
+  on-device preview and the streamed JPEGs.
+- **Tap-to-focus and pinch-to-zoom** on the preview surface; tap shows a brief focus
+  ring, auto-cancels after 3 s.
+- **Snapshot overlay button** writes the latest JPEG to
+  `Pictures/Lenscast/Lenscast_<timestamp>.jpg` via MediaStore.
+- **HTTP Basic auth on MJPEG** (`/video`, `/shot.jpg`, `/`). Settings field for the
+  passcode; fixed username `lenscast`. Receivers can embed creds in the URL
+  (`http://lenscast:<pwd>@<ip>:4747/video`).
+- **mDNS / NSD advertisement** — `_http._tcp.` for MJPEG and `_rtsp._tcp.` for RTSP
+  registered via `NsdManager` while the server is up.
+- **Quick Settings tile** — `StreamingTileService`. Tap toggles streaming using the
+  last-saved settings, observes service status while the QS panel is open.
+- **Auto-start on app launch** — Settings toggle. Once-per-process so rotation
+  doesn't re-trigger.
+- **RTSP encoder bitrate cap** — Settings slider in kbps (0 = use the
+  resolution+fps heuristic).
+- **Battery-saver / blank preview** — Settings toggle hides the on-screen preview
+  while streaming; the analysis pipeline keeps publishing JPEGs.
+- **Manual rotation lock (MJPEG)** — Settings segmented row pins the encoder rotation
+  (Auto / Portrait / Landscape ← / Landscape → / Portrait ⤓) instead of following
+  the accelerometer.
 
 ## Known architectural cap: MJPEG ≤ 30 fps
 
@@ -109,11 +134,8 @@ lands, the Settings sheet shows users a note that RTSP is landscape-only.
 
 ### Minor polish
 
-- **Tap-to-focus.** CameraX `MeteringPointFactory` + `FocusMeteringAction`. Wire into
-  `PreviewSurface` so a tap forwards a focus request to `CameraController`.
-- **Pinch-to-zoom.** `Camera.cameraControl.setZoomRatio(...)`.
-- **Snapshot button.** Save a frame to `Pictures/Lenscast/` via MediaStore.
 - **Light theme polish.** The Material 3 light scheme is wired but rarely used; tweak
   contrast on the connection card.
-- **Settings: encoder bitrate cap** for users on constrained networks.
-- **Tile widget.** Quick toggle for "Start streaming" from the notification shade.
+
+(Tap-to-focus, pinch-to-zoom, snapshot button, encoder bitrate cap and the QS tile
+all landed — see *Done* above.)

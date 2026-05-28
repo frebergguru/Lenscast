@@ -21,8 +21,9 @@ android {
     buildTypes {
         debug {
             isMinifyEnabled = false
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+            // No applicationId/versionName suffixes — debug and release share the same
+            // package so `adb install -r app-debug.apk` upgrades whichever variant the
+            // user has installed (signed with the same debug keystore either way).
         }
         release {
             // Sign with the auto-generated debug keystore. This is *not* a production

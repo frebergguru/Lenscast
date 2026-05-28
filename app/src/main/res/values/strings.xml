@@ -64,4 +64,46 @@
 
     <string name="preview_rtsp_streaming_title">Streaming live</string>
     <string name="preview_rtsp_streaming_description">Camera feed is going to OBS via RTSP. On-device preview is disabled during streaming to keep rotation stable.</string>
+
+    <string name="settings_image_section">Image</string>
+    <string name="settings_mirror">Mirror horizontally</string>
+    <string name="settings_continuous_af">Continuous autofocus</string>
+    <string name="settings_exposure">Exposure compensation</string>
+    <string name="settings_exposure_summary">EV %1$+d</string>
+    <string name="settings_white_balance">White balance</string>
+    <string name="settings_wb_auto">Auto</string>
+    <string name="settings_wb_incandescent">Tungsten</string>
+    <string name="settings_wb_fluorescent">Fluor</string>
+    <string name="settings_wb_daylight">Daylight</string>
+    <string name="settings_wb_cloudy">Cloudy</string>
+    <string name="settings_wb_shade">Shade</string>
+    <string name="settings_antibanding">Anti-flicker</string>
+    <string name="settings_ab_auto">Auto</string>
+    <string name="settings_ab_50">50 Hz</string>
+    <string name="settings_ab_60">60 Hz</string>
+    <string name="settings_ab_off">Off</string>
+    <string name="settings_image_mjpeg_only_note">Image controls apply to the MJPEG path. The RTSP encoder uses the camera defaults.</string>
+
+    <string name="snapshot_saved">Saved to Pictures/Lenscast</string>
+    <string name="snapshot_failed">Snapshot failed — no frame yet?</string>
+
+    <string name="settings_security_section">Access control</string>
+    <string name="settings_password">Stream passcode (MJPEG)</string>
+    <string name="settings_password_hint">Leave blank for open access. Username: lenscast</string>
+    <string name="settings_automation_section">Automation</string>
+    <string name="settings_auto_start">Start streaming on app launch</string>
+    <string name="settings_rtsp_bitrate">RTSP bitrate cap (kbps, 0 = auto)</string>
+    <string name="settings_rtsp_bitrate_hint">Override the resolution+fps heuristic. Useful on slow Wi-Fi.</string>
+
+    <string name="tile_label">Lenscast</string>
+    <string name="tile_subtitle_idle">Tap to stream</string>
+    <string name="tile_subtitle_live">Streaming</string>
+
+    <string name="settings_blank_preview">Hide preview while streaming (battery saver)</string>
+    <string name="settings_rotation_lock">Rotation lock</string>
+    <string name="settings_rotation_auto">Auto</string>
+    <string name="settings_rotation_portrait">Portrait</string>
+    <string name="settings_rotation_landscape_left">Landscape ←</string>
+    <string name="settings_rotation_landscape_right">Landscape →</string>
+    <string name="settings_rotation_portrait_down">Portrait ⤓</string>
 </resources>

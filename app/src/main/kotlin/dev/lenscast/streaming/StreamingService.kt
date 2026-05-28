@@ -10,6 +10,9 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import android.util.Size
+import android.content.ContentValues
+import android.net.Uri
+import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
@@ -17,11 +20,16 @@ import dev.lenscast.MainActivity
 import dev.lenscast.LenscastApp
 import dev.lenscast.R
 import dev.lenscast.camera.CameraController
+import dev.lenscast.net.NsdAdvertiser
+import dev.lenscast.prefs.AntiBanding
 import dev.lenscast.prefs.Protocol
 import dev.lenscast.prefs.Settings
+import dev.lenscast.prefs.SettingsRepository
+import dev.lenscast.prefs.WhiteBalance
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -49,6 +57,7 @@ class StreamingService : LifecycleService() {
     private var cameraController: CameraController? = null
     private var mjpegServer: MjpegServer? = null
     private var rtspManager: RtspManager? = null
+    private var nsd: NsdAdvertiser? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var pendingPreviewProvider: androidx.camera.core.Preview.SurfaceProvider? = null
     // (RTSP path runs without an on-device preview; see startRtsp for the reasoning.)
@@ -60,6 +69,11 @@ class StreamingService : LifecycleService() {
         val w: Int,
         val h: Int,
         val fps: Int,
+        // These three flow through Camera2Interop at build time, so changing them requires
+        // a CameraX rebind. Mirror, EV, zoom and focus are live and not part of the key.
+        val whiteBalance: WhiteBalance,
+        val antiBanding: AntiBanding,
+        val continuousAf: Boolean,
     )
     /** True while a stream is active. Suppresses [unbindCamera] from killing the stream. */
     private var streamingCamera: Boolean = false
@@ -80,6 +94,12 @@ class StreamingService : LifecycleService() {
             ACTION_STOP -> {
                 stopStreaming()
                 stopSelf()
+            }
+            ACTION_START_TILE -> {
+                lifecycleScope.launch {
+                    val saved = SettingsRepository(this@StreamingService).flow.first()
+                    startStreaming(saved)
+                }
             }
         }
         return START_NOT_STICKY
@@ -126,9 +146,20 @@ class StreamingService : LifecycleService() {
         // whenever the screen is on. We just need to make sure that's true here in case the
         // user tapped Start while the camera wasn't bound yet (e.g., permission just granted),
         // then start the HTTP server.
-        bindCameraIfNeeded(settings.lens, settings.resolution, settings.fps.value, settings.jpegQuality)
-        val server = MjpegServer(broadcaster, settings.mjpegPort, settings.fps.value).also { it.start() }
+        bindCameraIfNeeded(
+            settings.lens, settings.resolution, settings.fps.value, settings.jpegQuality,
+            mirror = settings.mirror,
+            whiteBalance = settings.whiteBalance,
+            antiBanding = settings.antiBanding,
+            continuousAf = settings.continuousAf,
+            exposureEv = settings.exposureEv,
+        )
+        val server = MjpegServer(
+            broadcaster, settings.mjpegPort, settings.fps.value,
+            password = settings.streamPassword,
+        ).also { it.start() }
         mjpegServer = server
+        startNsd(NsdAdvertiser.TYPE_MJPEG, settings.mjpegPort)
     }
 
     private suspend fun startRtsp(settings: Settings) {
@@ -140,7 +171,11 @@ class StreamingService : LifecycleService() {
         // No on-device preview during RTSP streaming — the Compose layout swap on rotation
         // would otherwise tear down the SurfaceView/TextureView and abandon Camera2's
         // BufferQueue. The encoder still gets every frame; OBS still sees the live video.
-        val bitrate = recommendedVideoBitrate(settings.resolution.width, settings.resolution.height, settings.fps.value)
+        val bitrate = if (settings.rtspBitrateKbps > 0) {
+            settings.rtspBitrateKbps * 1000
+        } else {
+            recommendedVideoBitrate(settings.resolution.width, settings.resolution.height, settings.fps.value)
+        }
         val mgr = RtspManager(this).also { rtspManager = it }
         val rotationDegrees = when (currentRotation) {
             android.view.Surface.ROTATION_90 -> 90
@@ -166,6 +201,17 @@ class StreamingService : LifecycleService() {
             )
         }
         _lastRtspPlan = plan
+        startNsd(NsdAdvertiser.TYPE_RTSP, settings.rtspPort)
+    }
+
+    private fun startNsd(type: String, port: Int) {
+        nsd?.stop()
+        nsd = NsdAdvertiser(this).also { it.start(type, port) }
+    }
+
+    private fun stopNsd() {
+        try { nsd?.stop() } catch (_: Throwable) {}
+        nsd = null
     }
 
     private var _lastRtspPlan: dev.lenscast.streaming.rtsp.RtspCameraDriver.Plan? = null
@@ -193,14 +239,25 @@ class StreamingService : LifecycleService() {
         resolution: dev.lenscast.prefs.Resolution,
         fps: Int,
         jpegQuality: Int,
+        mirror: Boolean = false,
+        whiteBalance: WhiteBalance = WhiteBalance.AUTO,
+        antiBanding: AntiBanding = AntiBanding.AUTO,
+        continuousAf: Boolean = true,
+        exposureEv: Int = 0,
     ) {
-        val key = BindKey(lens, resolution.width, resolution.height, fps)
+        val key = BindKey(
+            lens, resolution.width, resolution.height, fps,
+            whiteBalance, antiBanding, continuousAf,
+        )
         if (key == previewBoundKey && cameraController != null) {
             cameraController?.jpegQuality = jpegQuality
+            cameraController?.mirror = mirror
             cameraController?.setTargetRotation(currentRotation)
+            cameraController?.applyExposureEv(exposureEv)
             return
         }
         val controller = ensureController(jpegQuality)
+        controller.mirror = mirror
         controller.bind(
             lifecycleOwner = this,
             lens = lens,
@@ -209,6 +266,10 @@ class StreamingService : LifecycleService() {
             targetRotation = currentRotation,
             previewSurfaceProvider = pendingPreviewProvider,
             includeAnalysis = true,
+            whiteBalance = whiteBalance,
+            antiBanding = antiBanding,
+            continuousAf = continuousAf,
+            exposureEv = exposureEv,
         )
         previewBoundKey = key
     }
@@ -276,11 +337,54 @@ class StreamingService : LifecycleService() {
         rtspManager?.setTorch(on)
     }
 
+    fun setZoomRatio(ratio: Float) { cameraController?.setZoomRatio(ratio) }
+    fun currentZoomRatio(): Float = cameraController?.currentZoomRatio() ?: 1f
+
+    fun tapToFocus(normalisedX: Float, normalisedY: Float) {
+        cameraController?.focusAt(normalisedX, normalisedY)
+    }
+
+    fun setExposureEv(ev: Int) { cameraController?.applyExposureEv(ev) }
+
+    /**
+     * Save the most recently broadcast JPEG to MediaStore under
+     * `Pictures/Lenscast/Lenscast_<timestamp>.jpg`. Returns the inserted Uri (for a Toast),
+     * or null if no frame has been produced yet.
+     */
+    fun saveSnapshot(): Uri? {
+        val bytes = broadcaster.latest()?.first ?: return null
+        val name = "Lenscast_${System.currentTimeMillis()}.jpg"
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, name)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Lenscast")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+        }
+        val resolver = contentResolver
+        val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+        return try {
+            resolver.openOutputStream(uri)?.use { it.write(bytes) }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.clear()
+                values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                resolver.update(uri, values, null, null)
+            }
+            uri
+        } catch (t: Throwable) {
+            Log.w(TAG, "Snapshot save failed", t)
+            try { resolver.delete(uri, null, null) } catch (_: Throwable) {}
+            null
+        }
+    }
+
     fun stopStreaming() {
         try { mjpegServer?.stop() } catch (_: Throwable) {}
         mjpegServer = null
         try { rtspManager?.stop() } catch (_: Throwable) {}
         rtspManager = null
+        stopNsd()
         _lastRtspPlan = null
         streamingCamera = false
         // Keep the controller around so the UI can immediately re-bind preview after stop.
@@ -358,5 +462,6 @@ class StreamingService : LifecycleService() {
         private const val TAG = "StreamingService"
         private const val NOTIF_ID = 0xCA1
         const val ACTION_STOP = "dev.lenscast.action.STOP"
+        const val ACTION_START_TILE = "dev.lenscast.action.START_TILE"
     }
 }

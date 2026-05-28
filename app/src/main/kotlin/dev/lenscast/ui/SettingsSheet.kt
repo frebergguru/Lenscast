@@ -34,11 +34,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import dev.lenscast.R
 import dev.lenscast.camera.CameraCapabilities
+import dev.lenscast.prefs.AntiBanding
 import dev.lenscast.prefs.Fps
 import dev.lenscast.prefs.Lens
 import dev.lenscast.prefs.Protocol
 import dev.lenscast.prefs.Resolution
+import dev.lenscast.prefs.RotationLock
 import dev.lenscast.prefs.Settings
+import dev.lenscast.prefs.WhiteBalance
 import dev.lenscast.system.SystemWebcam
 
 @Composable
@@ -200,6 +203,91 @@ fun SettingsSheet(
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
 
+            // Image controls — MJPEG path only on the current pass (RTSP encoder consumes the
+            // camera Surface directly and uses sensor defaults; matching these into the RTSP
+            // CaptureRequest is a planned follow-up).
+            SectionLabel(stringResource(R.string.settings_image_section))
+            ToggleRow(
+                title = stringResource(R.string.settings_mirror),
+                checked = settings.mirror,
+                onCheckedChange = { onChange(settings.copy(mirror = it)) },
+            )
+            ToggleRow(
+                title = stringResource(R.string.settings_continuous_af),
+                checked = settings.continuousAf,
+                onCheckedChange = { onChange(settings.copy(continuousAf = it)) },
+            )
+
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.settings_exposure),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            var ev by remember(settings.exposureEv) { mutableStateOf(settings.exposureEv.toFloat()) }
+            // EV range is camera-dependent and only known after bind; -12..12 covers every
+            // device I've seen (most report -6..6 or -12..12). Clamp at apply time.
+            Slider(
+                value = ev,
+                onValueChange = { ev = it },
+                onValueChangeFinished = { onChange(settings.copy(exposureEv = ev.toInt())) },
+                valueRange = -12f..12f,
+                steps = 23,
+            )
+            Text(
+                text = stringResource(R.string.settings_exposure_summary, ev.toInt()),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Spacer(Modifier.height(12.dp))
+            SectionLabel(stringResource(R.string.settings_white_balance))
+            SegmentedRow(
+                options = WhiteBalance.entries.toList(),
+                selected = settings.whiteBalance,
+                enabled = true,
+                labelOf = {
+                    when (it) {
+                        WhiteBalance.AUTO        -> stringResource(R.string.settings_wb_auto)
+                        WhiteBalance.INCANDESCENT -> stringResource(R.string.settings_wb_incandescent)
+                        WhiteBalance.FLUORESCENT  -> stringResource(R.string.settings_wb_fluorescent)
+                        WhiteBalance.DAYLIGHT     -> stringResource(R.string.settings_wb_daylight)
+                        WhiteBalance.CLOUDY       -> stringResource(R.string.settings_wb_cloudy)
+                        WhiteBalance.SHADE        -> stringResource(R.string.settings_wb_shade)
+                    }
+                },
+                onSelect = { onChange(settings.copy(whiteBalance = it)) },
+            )
+
+            Spacer(Modifier.height(12.dp))
+            SectionLabel(stringResource(R.string.settings_antibanding))
+            SegmentedRow(
+                options = AntiBanding.entries.toList(),
+                selected = settings.antiBanding,
+                enabled = true,
+                labelOf = {
+                    when (it) {
+                        AntiBanding.AUTO -> stringResource(R.string.settings_ab_auto)
+                        AntiBanding.HZ50 -> stringResource(R.string.settings_ab_50)
+                        AntiBanding.HZ60 -> stringResource(R.string.settings_ab_60)
+                        AntiBanding.OFF  -> stringResource(R.string.settings_ab_off)
+                    }
+                },
+                onSelect = { onChange(settings.copy(antiBanding = it)) },
+            )
+            if (settings.protocol == Protocol.RTSP) {
+                Text(
+                    text = stringResource(R.string.settings_image_mjpeg_only_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
             // Server port — editable per active protocol. Disabled while streaming since the
             // server is already bound; user has to Stop first.
             SectionLabel(stringResource(R.string.settings_port_section))
@@ -234,6 +322,89 @@ fun SettingsSheet(
                 title = stringResource(R.string.settings_keep_screen_on),
                 checked = settings.keepScreenOn,
                 onCheckedChange = { onChange(settings.copy(keepScreenOn = it)) },
+            )
+
+            ToggleRow(
+                title = stringResource(R.string.settings_blank_preview),
+                checked = settings.blankPreview,
+                onCheckedChange = { onChange(settings.copy(blankPreview = it)) },
+            )
+
+            if (settings.protocol == Protocol.MJPEG) {
+                Spacer(Modifier.height(8.dp))
+                SectionLabel(stringResource(R.string.settings_rotation_lock))
+                SegmentedRow(
+                    options = RotationLock.entries.toList(),
+                    selected = settings.rotationLock,
+                    enabled = true,
+                    labelOf = {
+                        when (it) {
+                            RotationLock.AUTO -> stringResource(R.string.settings_rotation_auto)
+                            RotationLock.PORTRAIT -> stringResource(R.string.settings_rotation_portrait)
+                            RotationLock.LANDSCAPE_LEFT -> stringResource(R.string.settings_rotation_landscape_left)
+                            RotationLock.LANDSCAPE_RIGHT -> stringResource(R.string.settings_rotation_landscape_right)
+                            RotationLock.PORTRAIT_UPSIDE_DOWN -> stringResource(R.string.settings_rotation_portrait_down)
+                        }
+                    },
+                    onSelect = { onChange(settings.copy(rotationLock = it)) },
+                )
+            }
+
+            if (settings.protocol == Protocol.RTSP) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.settings_rtsp_bitrate),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                var br by remember(settings.rtspBitrateKbps) { mutableStateOf(settings.rtspBitrateKbps.toFloat()) }
+                Slider(
+                    value = br,
+                    onValueChange = { br = it },
+                    onValueChangeFinished = { onChange(settings.copy(rtspBitrateKbps = br.toInt())) },
+                    valueRange = 0f..20_000f,
+                    steps = 19,
+                )
+                Text(
+                    text = if (br.toInt() == 0) "Auto" else "${br.toInt()} kbps",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    text = stringResource(R.string.settings_rtsp_bitrate_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
+            SectionLabel(stringResource(R.string.settings_security_section))
+            var pwd by remember(settings.streamPassword) { mutableStateOf(settings.streamPassword) }
+            OutlinedTextField(
+                value = pwd,
+                onValueChange = { newPwd ->
+                    pwd = newPwd
+                    onChange(settings.copy(streamPassword = newPwd))
+                },
+                label = { Text(stringResource(R.string.settings_password)) },
+                singleLine = true,
+                enabled = !streaming,
+                supportingText = { Text(stringResource(R.string.settings_password_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
+            SectionLabel(stringResource(R.string.settings_automation_section))
+            ToggleRow(
+                title = stringResource(R.string.settings_auto_start),
+                checked = settings.autoStart,
+                onCheckedChange = { onChange(settings.copy(autoStart = it)) },
             )
 
             if (SystemWebcam.isSupported(context)) {

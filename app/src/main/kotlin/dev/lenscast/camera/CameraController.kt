@@ -11,18 +11,25 @@ import android.view.Surface
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.MeteringPoint
+import androidx.camera.core.MeteringPointFactory
 import androidx.camera.core.Preview
+import androidx.camera.core.SurfaceOrientedMeteringPointFactory
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import dev.lenscast.prefs.AntiBanding
 import dev.lenscast.prefs.Lens
+import dev.lenscast.prefs.WhiteBalance
 import dev.lenscast.streaming.FrameBroadcaster
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
 /**
@@ -48,6 +55,7 @@ class CameraController(
     @Volatile private var lastBoundFps: Int = 30
 
     @Volatile var jpegQuality: Int = 80
+    @Volatile var mirror: Boolean = false
     @Volatile var torchOn: Boolean = false
         set(value) {
             field = value
@@ -62,6 +70,10 @@ class CameraController(
         targetRotation: Int = Surface.ROTATION_0,
         previewSurfaceProvider: Preview.SurfaceProvider? = null,
         includeAnalysis: Boolean = true,
+        whiteBalance: WhiteBalance = WhiteBalance.AUTO,
+        antiBanding: AntiBanding = AntiBanding.AUTO,
+        continuousAf: Boolean = true,
+        exposureEv: Int = 0,
     ) {
         val p = awaitProvider()
         provider = p
@@ -88,11 +100,22 @@ class CameraController(
             )
             .build()
 
+        val awbMode = awbModeFor(whiteBalance)
+        val afMode = if (continuousAf) {
+            CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO
+        } else {
+            CaptureRequest.CONTROL_AF_MODE_AUTO
+        }
+        val abMode = antiBandingModeFor(antiBanding)
+
         val previewBuilder = Preview.Builder()
             .setResolutionSelector(resolutionSelector)
             .setTargetRotation(targetRotation)
         Camera2Interop.Extender(previewBuilder)
             .setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, negotiated)
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, awbMode)
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, afMode)
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, abMode)
         val preview = previewBuilder.build()
             .also { it.setSurfaceProvider(previewSurfaceProvider) }
 
@@ -104,11 +127,14 @@ class CameraController(
                 .setTargetRotation(targetRotation)
             Camera2Interop.Extender(analysisBuilder)
                 .setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, negotiated)
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, awbMode)
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, afMode)
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, abMode)
             analysisBuilder.build()
                 .also {
                     it.setAnalyzer(analysisExecutor) { proxy ->
                         try {
-                            val jpeg = YuvToJpeg.encode(proxy, jpegQuality)
+                            val jpeg = YuvToJpeg.encode(proxy, jpegQuality, mirror)
                             broadcaster.publish(jpeg)
                         } catch (t: Throwable) {
                             Log.w(TAG, "Frame encode failed: ${t.message}")
@@ -127,6 +153,64 @@ class CameraController(
         this.preview = preview
         this.imageAnalysis = analysis
         camera?.cameraControl?.enableTorch(torchOn)
+        applyExposureEv(exposureEv)
+    }
+
+    /** Live zoom — clamps to the lens's supported range. */
+    fun setZoomRatio(ratio: Float) {
+        val cam = camera ?: return
+        val range = cam.cameraInfo.zoomState.value?.let { it.minZoomRatio..it.maxZoomRatio }
+            ?: return
+        cam.cameraControl.setZoomRatio(ratio.coerceIn(range.start, range.endInclusive))
+    }
+
+    /** Current zoom ratio, or 1.0 if unknown. Used to seed pinch-gesture state. */
+    fun currentZoomRatio(): Float = camera?.cameraInfo?.zoomState?.value?.zoomRatio ?: 1f
+
+    /**
+     * Tap-to-focus + tap-to-meter. Coordinates are normalised (0..1) within the preview
+     * rectangle so the caller doesn't need to know surface pixel sizes.
+     */
+    fun focusAt(normalisedX: Float, normalisedY: Float) {
+        val cam = camera ?: return
+        val factory: MeteringPointFactory = SurfaceOrientedMeteringPointFactory(1f, 1f)
+        val point: MeteringPoint = factory.createPoint(
+            normalisedX.coerceIn(0f, 1f),
+            normalisedY.coerceIn(0f, 1f),
+        )
+        val action = FocusMeteringAction.Builder(
+            point,
+            FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE,
+        )
+            // Auto-cancel returns to continuous AF after a few seconds so the stream
+            // doesn't stay locked on whatever the user tapped.
+            .setAutoCancelDuration(3, TimeUnit.SECONDS)
+            .build()
+        try { cam.cameraControl.startFocusAndMetering(action) } catch (_: Throwable) {}
+    }
+
+    fun applyExposureEv(ev: Int) {
+        val cam = camera ?: return
+        val range = cam.cameraInfo.exposureState.exposureCompensationRange
+        if (range.lower == 0 && range.upper == 0) return
+        val clamped = ev.coerceIn(range.lower, range.upper)
+        try { cam.cameraControl.setExposureCompensationIndex(clamped) } catch (_: Throwable) {}
+    }
+
+    private fun awbModeFor(wb: WhiteBalance): Int = when (wb) {
+        WhiteBalance.AUTO        -> CaptureRequest.CONTROL_AWB_MODE_AUTO
+        WhiteBalance.INCANDESCENT -> CaptureRequest.CONTROL_AWB_MODE_INCANDESCENT
+        WhiteBalance.FLUORESCENT  -> CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT
+        WhiteBalance.DAYLIGHT     -> CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT
+        WhiteBalance.CLOUDY       -> CaptureRequest.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT
+        WhiteBalance.SHADE        -> CaptureRequest.CONTROL_AWB_MODE_SHADE
+    }
+
+    private fun antiBandingModeFor(ab: AntiBanding): Int = when (ab) {
+        AntiBanding.AUTO -> CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO
+        AntiBanding.HZ50 -> CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_50HZ
+        AntiBanding.HZ60 -> CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_60HZ
+        AntiBanding.OFF  -> CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_OFF
     }
 
     /** The FPS upper bound the camera last accepted — for the UI to show "available capped at N". */

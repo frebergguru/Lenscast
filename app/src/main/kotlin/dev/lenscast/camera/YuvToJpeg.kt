@@ -36,7 +36,7 @@ object YuvToJpeg {
     private var vRowBuf: ByteArray = ByteArray(0)
     private val jpegOut = ByteArrayOutputStream(64 * 1024)
 
-    fun encode(image: ImageProxy, quality: Int): ByteArray {
+    fun encode(image: ImageProxy, quality: Int, mirror: Boolean = false): ByteArray {
         val w = image.width
         val h = image.height
         val yP = image.planes[0]; val uP = image.planes[1]; val vP = image.planes[2]
@@ -46,15 +46,53 @@ object YuvToJpeg {
             uP.buffer, uP.rowStride, uP.pixelStride,
             vP.buffer, vP.rowStride, vP.pixelStride,
         )
-        return jpegFromNv21(nv21, w, h, image.imageInfo.rotationDegrees, quality)
+        return jpegFromNv21(nv21, w, h, image.imageInfo.rotationDegrees, quality, mirror)
     }
 
-    private fun jpegFromNv21(nv21: ByteArray, w: Int, h: Int, rotationDegrees: Int, quality: Int): ByteArray {
+    private fun jpegFromNv21(nv21: ByteArray, w: Int, h: Int, rotationDegrees: Int, quality: Int, mirror: Boolean): ByteArray {
         val (rotated, rw, rh) = if (rotationDegrees == 0) Triple(nv21, w, h) else rotateNv21(nv21, w, h, rotationDegrees)
+        if (mirror) mirrorNv21(rotated, rw, rh)
         jpegOut.reset()
         YuvImage(rotated, ImageFormat.NV21, rw, rh, null)
             .compressToJpeg(Rect(0, 0, rw, rh), quality.coerceIn(10, 100), jpegOut)
         return jpegOut.toByteArray()
+    }
+
+    /**
+     * Horizontal flip of an NV21 buffer in place. Y plane reverses each row; the interleaved
+     * VU plane reverses each chroma row as (V,U) pairs (we must keep the pair order intact,
+     * just swap their column positions, otherwise the colours desaturate / shift).
+     */
+    private fun mirrorNv21(buf: ByteArray, w: Int, h: Int) {
+        // Y plane.
+        for (row in 0 until h) {
+            val base = row * w
+            var l = 0
+            var r = w - 1
+            while (l < r) {
+                val t = buf[base + l]
+                buf[base + l] = buf[base + r]
+                buf[base + r] = t
+                l++; r--
+            }
+        }
+        // VU plane: 2 bytes per chroma sample, w/2 samples per row, h/2 rows.
+        val ySize = w * h
+        val chromaW = w / 2
+        val chromaH = h / 2
+        for (row in 0 until chromaH) {
+            val base = ySize + row * w  // chroma row stride == w (semi-planar)
+            var l = 0
+            var r = chromaW - 1
+            while (l < r) {
+                val lb = base + l * 2
+                val rb = base + r * 2
+                val t0 = buf[lb]; val t1 = buf[lb + 1]
+                buf[lb] = buf[rb]; buf[lb + 1] = buf[rb + 1]
+                buf[rb] = t0;      buf[rb + 1] = t1
+                l++; r--
+            }
+        }
     }
 
     /**

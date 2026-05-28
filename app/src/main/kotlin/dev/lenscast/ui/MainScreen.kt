@@ -27,6 +27,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Cameraswitch
 import androidx.compose.material.icons.outlined.FlashOff
 import androidx.compose.material.icons.outlined.FlashOn
@@ -101,8 +102,10 @@ private data class CamBoxState(
     val streaming: Boolean,
     val plannedSize: android.util.Size?,
     val torchOn: Boolean,
+    val blankPreview: Boolean,
     val onSwitchCamera: () -> Unit,
     val onToggleTorch: () -> Unit,
+    val onSnapshot: () -> Unit,
 )
 
 @Composable
@@ -172,6 +175,16 @@ fun MainScreen(
 
     var settingsOpen by remember { mutableStateOf(false) }
     var torchOn by remember { mutableStateOf(false) }
+    // Remembered across recompositions, NOT across process restarts — we want auto-start to
+    // fire once per app launch, not on every recomposition triggered by, say, rotation.
+    var autoStartFired by remember { mutableStateOf(false) }
+    LaunchedEffect(service, perm.granted, streaming, settings.autoStart) {
+        if (settings.autoStart && !autoStartFired && perm.granted && service != null && !streaming) {
+            autoStartFired = true
+            startForeground()
+            service.startStreaming(settings)
+        }
+    }
 
     // UI layout follows the activity's actual display orientation (changes only when the
     // OS rotates the activity, which respects rotation lock — that's correct here).
@@ -182,15 +195,30 @@ fun MainScreen(
     // MJPEG output rotates with the user even when system auto-rotate is off. This is the
     // common case: people lock rotation to keep the UI portrait but still expect the
     // stream they're sending to OBS to follow how they're holding the phone.
+    //
+    // Manual override (settings.rotationLock != AUTO) pins the encoder rotation to a
+    // chosen orientation — useful on a tripod where the sensor is fixed but the user
+    // wants a specific picture orientation in OBS.
     val deviceRotation = rememberPhysicalDeviceRotation()
-    LaunchedEffect(service, deviceRotation) {
-        service?.setDeviceRotation(deviceRotation)
+    val effectiveRotation = when (settings.rotationLock) {
+        dev.lenscast.prefs.RotationLock.AUTO -> deviceRotation
+        dev.lenscast.prefs.RotationLock.PORTRAIT -> Surface.ROTATION_0
+        dev.lenscast.prefs.RotationLock.LANDSCAPE_LEFT -> Surface.ROTATION_90
+        dev.lenscast.prefs.RotationLock.PORTRAIT_UPSIDE_DOWN -> Surface.ROTATION_180
+        dev.lenscast.prefs.RotationLock.LANDSCAPE_RIGHT -> Surface.ROTATION_270
+    }
+    LaunchedEffect(service, effectiveRotation) {
+        service?.setDeviceRotation(effectiveRotation)
     }
 
     // Drive the camera via CameraX whenever the RTSP path isn't actively streaming.
     // That covers MJPEG (always) and RTSP-before-Start. When the RTSP stream is live, the
     // RtspManager owns Camera2 directly and we skip CameraX to avoid two camera owners.
-    LaunchedEffect(service, perm.granted, streaming, settings.protocol, settings.lens, settings.resolution, settings.fps, settings.jpegQuality) {
+    LaunchedEffect(
+        service, perm.granted, streaming,
+        settings.protocol, settings.lens, settings.resolution, settings.fps, settings.jpegQuality,
+        settings.mirror, settings.whiteBalance, settings.antiBanding, settings.continuousAf, settings.exposureEv,
+    ) {
         val svc = service ?: return@LaunchedEffect
         if (!perm.granted) return@LaunchedEffect
         val rtspActive = streaming && settings.protocol == dev.lenscast.prefs.Protocol.RTSP
@@ -202,6 +230,11 @@ fun MainScreen(
                 // CameraX preview never delivers > 30 fps. Clamp to keep the camera config valid.
                 fps = minOf(settings.fps.value, 30),
                 jpegQuality = settings.jpegQuality,
+                mirror = settings.mirror,
+                whiteBalance = settings.whiteBalance,
+                antiBanding = settings.antiBanding,
+                continuousAf = settings.continuousAf,
+                exposureEv = settings.exposureEv,
             )
         } catch (_: Throwable) {
             // Camera might be transiently unavailable (e.g. another app holding it);
@@ -246,6 +279,7 @@ fun MainScreen(
                 streaming = streaming,
                 plannedSize = rtspPlannedSize,
                 torchOn = torchOn,
+                blankPreview = settings.blankPreview,
                 onSwitchCamera = {
                     torchOn = false
                     service?.setTorch(false)
@@ -272,6 +306,15 @@ fun MainScreen(
                     torchOn = !torchOn
                     service?.setTorch(torchOn)
                 },
+                onSnapshot = {
+                    val uri = service?.saveSnapshot()
+                    val msg = if (uri != null) {
+                        ctx.getString(R.string.snapshot_saved)
+                    } else {
+                        ctx.getString(R.string.snapshot_failed)
+                    }
+                    android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_SHORT).show()
+                },
             )
         )
         val cameraBox = remember {
@@ -284,6 +327,7 @@ fun MainScreen(
                         streaming = st.streaming,
                         plannedSize = st.plannedSize,
                         modifier = Modifier.fillMaxSize(),
+                        blankWhileStreaming = st.blankPreview,
                     )
                     LensChip(
                         lens = st.lens,
@@ -318,6 +362,12 @@ fun MainScreen(
                             enabled = st.lens == Lens.BACK,
                             highlighted = st.torchOn,
                             onClick = st.onToggleTorch,
+                        )
+                        OverlayIconButton(
+                            icon = Icons.Outlined.CameraAlt,
+                            contentDescription = "Save snapshot",
+                            enabled = true,
+                            onClick = st.onSnapshot,
                         )
                     }
                 }
