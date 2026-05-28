@@ -33,6 +33,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import dev.lenscast.R
+import dev.lenscast.camera.CameraCapabilities
 import dev.lenscast.prefs.Fps
 import dev.lenscast.prefs.Lens
 import dev.lenscast.prefs.Protocol
@@ -99,7 +100,9 @@ fun SettingsSheet(
             HorizontalDivider()
             Spacer(Modifier.height(16.dp))
 
-            // Camera — switchable mid-stream.
+            // Camera — switchable mid-stream for MJPEG, locked at Start for RTSP.
+            // FPS is clamped on lens switch (front cams typically don't do high-speed).
+            val context = LocalContext.current
             SectionLabel(stringResource(R.string.settings_camera))
             SegmentedRow(
                 options = Lens.entries.toList(),
@@ -111,30 +114,56 @@ fun SettingsSheet(
                         Lens.FRONT -> stringResource(R.string.settings_camera_front)
                     }
                 },
-                onSelect = { onChange(settings.copy(lens = it)) },
+                onSelect = { newLens ->
+                    // Resolution may not exist on the new lens (front sensors often cap below
+                    // the back); clamp first, then derive the FPS set from the clamped
+                    // (lens, resolution) pair so all three stay mutually consistent.
+                    val supportedRes = CameraCapabilities.supportedResolutions(context, newLens)
+                    val newRes = CameraCapabilities.nextBestResolution(supportedRes, settings.resolution)
+                    val newSupportedFps = CameraCapabilities.supportedFps(context, newLens, newRes, settings.protocol)
+                    val newFps = CameraCapabilities.nextBestFps(newSupportedFps, settings.fps)
+                    onChange(settings.copy(lens = newLens, resolution = newRes, fps = newFps))
+                },
             )
 
             Spacer(Modifier.height(16.dp))
 
-            // Resolution
+            // Resolutions come from SCALER_STREAM_CONFIGURATION_MAP on the chosen lens —
+            // back cameras typically reach 1440p / 4K, front cameras often cap at 1080p,
+            // budget devices may stop sooner. Changing resolution can also invalidate the
+            // current FPS (some high-speed modes only exist at specific sizes) so we clamp.
             SectionLabel(stringResource(R.string.settings_resolution))
+            val supportedResolutions = remember(settings.lens) {
+                CameraCapabilities.supportedResolutions(context, settings.lens)
+            }
+            val resolutionOptions = Resolution.entries.filter { it in supportedResolutions }
             SegmentedRow(
-                options = Resolution.entries.toList(),
-                selected = settings.resolution,
+                options = resolutionOptions,
+                selected = if (settings.resolution in resolutionOptions) settings.resolution
+                           else CameraCapabilities.nextBestResolution(supportedResolutions, settings.resolution),
                 enabled = !streaming,
                 labelOf = { it.label },
-                onSelect = { onChange(settings.copy(resolution = it)) },
+                onSelect = { newRes ->
+                    val newSupportedFps = CameraCapabilities.supportedFps(context, settings.lens, newRes, settings.protocol)
+                    val newFps = CameraCapabilities.nextBestFps(newSupportedFps, settings.fps)
+                    onChange(settings.copy(resolution = newRes, fps = newFps))
+                },
             )
 
             Spacer(Modifier.height(16.dp))
 
-            // FPS — high-speed options are only valid with RTSP since MJPEG can't carry them
-            // (Android caps the standard preview path at the sensor's reported standard fps).
+            // FPS options come from Camera2 capabilities: AE ranges for MJPEG, the planner's
+            // standard + constrained-high-speed search for RTSP. So the picker only ever
+            // shows values this device's selected lens can actually produce at the chosen
+            // resolution. Recomputed when any of (lens, resolution, protocol) changes.
             SectionLabel(stringResource(R.string.settings_fps))
-            val fpsOptions = Fps.entries.filter { !it.isHighSpeed || settings.protocol == Protocol.RTSP }
+            val supportedFpsValues = remember(settings.lens, settings.resolution, settings.protocol) {
+                CameraCapabilities.supportedFps(context, settings.lens, settings.resolution, settings.protocol)
+            }
+            val fpsOptions = Fps.entries.filter { it.value in supportedFpsValues }
             SegmentedRow(
                 options = fpsOptions,
-                selected = if (settings.fps in fpsOptions) settings.fps else Fps.FPS30,
+                selected = if (settings.fps in fpsOptions) settings.fps else CameraCapabilities.nextBestFps(supportedFpsValues, settings.fps),
                 enabled = !streaming,
                 labelOf = { it.value.toString() },
                 onSelect = { onChange(settings.copy(fps = it)) },
@@ -207,7 +236,6 @@ fun SettingsSheet(
                 onCheckedChange = { onChange(settings.copy(keepScreenOn = it)) },
             )
 
-            val context = LocalContext.current
             if (SystemWebcam.isSupported(context)) {
                 Spacer(Modifier.height(16.dp))
                 HorizontalDivider()

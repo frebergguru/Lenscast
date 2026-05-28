@@ -120,6 +120,17 @@ fun MainScreen(
     val status by statusFlow.collectAsStateWithLifecycle()
     val streaming = status.state == StreamingService.State.STREAMING || status.state == StreamingService.State.STARTING
 
+    // Surface startStreaming failures we couldn't pre-validate (camera busy, RTSP port in use,
+    // USB unplug, etc.). The Settings sheet hides options the planner already knows can't work,
+    // but not every failure is predictable from CameraCharacteristics alone.
+    LaunchedEffect(status.state, status.errorMessage) {
+        val msg = status.errorMessage
+        if (status.state == StreamingService.State.ERROR && msg != null) {
+            android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_LONG).show()
+            service?.clearError()
+        }
+    }
+
     // Network info, refreshed every couple of seconds while screen is open.
     var localIp by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
@@ -239,7 +250,22 @@ fun MainScreen(
                     torchOn = false
                     service?.setTorch(false)
                     scope.launch {
-                        repo.update { it.copy(lens = if (it.lens == Lens.BACK) Lens.FRONT else Lens.BACK) }
+                        repo.update {
+                            val newLens = if (it.lens == Lens.BACK) Lens.FRONT else Lens.BACK
+                            // Front sensors often don't advertise the current resolution (1440p
+                            // / 4K back, max 1080p front is the common pattern) and almost
+                            // never advertise high-speed FPS. Clamp resolution first, then
+                            // derive an FPS that's valid for the clamped (lens, resolution).
+                            val supportedRes = dev.lenscast.camera.CameraCapabilities
+                                .supportedResolutions(ctx, newLens)
+                            val newRes = dev.lenscast.camera.CameraCapabilities
+                                .nextBestResolution(supportedRes, it.resolution)
+                            val supportedFps = dev.lenscast.camera.CameraCapabilities
+                                .supportedFps(ctx, newLens, newRes, it.protocol)
+                            val newFps = dev.lenscast.camera.CameraCapabilities
+                                .nextBestFps(supportedFps, it.fps)
+                            it.copy(lens = newLens, resolution = newRes, fps = newFps)
+                        }
                     }
                 },
                 onToggleTorch = {
@@ -272,12 +298,20 @@ fun MainScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                         horizontalAlignment = Alignment.End,
                     ) {
-                        OverlayIconButton(
-                            icon = Icons.Outlined.Cameraswitch,
-                            contentDescription = "Switch camera",
-                            enabled = true,
-                            onClick = st.onSwitchCamera,
-                        )
+                        // RTSP locks the camera at stream-start: the H.264 encoder's input
+                        // Surface is bound to one CameraDevice for the life of the stream, so
+                        // mid-stream lens switching isn't supported yet. Hide the button so the
+                        // user isn't tempted to press a no-op. MJPEG can switch mid-stream
+                        // (CameraX rebinds cleanly), so the button stays for that path.
+                        val rtspLive = st.protocol == dev.lenscast.prefs.Protocol.RTSP && st.streaming
+                        if (!rtspLive) {
+                            OverlayIconButton(
+                                icon = Icons.Outlined.Cameraswitch,
+                                contentDescription = "Switch camera",
+                                enabled = true,
+                                onClick = st.onSwitchCamera,
+                            )
+                        }
                         OverlayIconButton(
                             icon = if (st.torchOn) Icons.Outlined.FlashOn else Icons.Outlined.FlashOff,
                             contentDescription = if (st.torchOn) "Turn flash off" else "Turn flash on",

@@ -100,9 +100,23 @@ class StreamingService : LifecycleService() {
                 _status.value = _status.value.copy(state = State.STREAMING, errorMessage = null)
             } catch (t: Throwable) {
                 Log.e(TAG, "Start failed", t)
-                _status.value = _status.value.copy(state = State.ERROR, errorMessage = t.message)
+                // Tear down half-started resources first — stopStreaming() ends with state=IDLE
+                // and clears errorMessage. Re-publish the ERROR state afterwards so the UI can
+                // observe it and surface the message (otherwise the user sees a brief "Starting"
+                // flicker and then nothing, which looks like the app froze).
                 stopStreaming()
+                _status.value = _status.value.copy(state = State.ERROR, errorMessage = t.message)
             }
+        }
+    }
+
+    /**
+     * Acknowledge an error after the UI has shown it. Returns the state machine to IDLE
+     * so the user can attempt Start again with new settings.
+     */
+    fun clearError() {
+        if (_status.value.state == State.ERROR) {
+            _status.value = _status.value.copy(state = State.IDLE, errorMessage = null)
         }
     }
 

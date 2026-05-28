@@ -7,7 +7,9 @@ enum class Lens { BACK, FRONT }
 enum class Resolution(val width: Int, val height: Int, val label: String) {
     P480(640, 480, "480p"),
     P720(1280, 720, "720p"),
-    P1080(1920, 1080, "1080p");
+    P1080(1920, 1080, "1080p"),
+    P1440(2560, 1440, "1440p"),
+    P2160(3840, 2160, "4K");
 
     companion object {
         fun fromOrdinal(o: Int): Resolution = entries.getOrNull(o) ?: P720
