@@ -90,6 +90,24 @@
 - **Web control — JPEG quality slider** — debounced `POST /control/quality?v=NN`
   endpoint; the slider in the landing page updates `CameraController.jpegQuality`
   live without rebinding the camera.
+- **Web control panel redesign.** Full rewrite of `WebControlServer.renderLandingHtml`
+  with a modern design system (CSS variables, consistent spacing, sticky header
+  with state badge). Two-column grid on desktop, single-column stack on mobile.
+  Hero card adapts to idle / MJPEG-live / RTSP-live; status grid replaces the
+  flat single-line stats; tabbed Settings (Camera / Image / Audio / Stream / UX /
+  System) replace the old single-scroll `<details>`. Toast replaces the inline
+  message strip. Fixed two regressions during the rewrite: the live preview
+  `<img>` is now (re-)attached on the idle → MJPEG-live transition with a
+  cache-busting URL so browsers don't reuse a stale failed connection from
+  before the MjpegServer existed, and the Quick controls / Status cards hide
+  themselves entirely while idle.
+- **App SettingsSheet — collapsible groups.** New `SettingsGroup` composable
+  wraps each section in a Material 3 Card with an animated chevron and
+  `rememberSaveable`-backed expand state. Hoisted `val context = LocalContext.current`
+  to the top so every group's lambda can close over it. Replaces the wall-of-text
+  flat scroll with 8 grouped cards (Streaming basics + Image expanded by default;
+  Stream output & audio, Security & access, Automation, Web control panel,
+  Presets, System webcam, Backup collapsed).
 - **Light-theme surface tones.** The light scheme now overrides
   `surfaceContainer{,High,Highest}`, `surfaceVariant`, `onSurfaceVariant`,
   `primaryContainer`, `onPrimaryContainer` and `outline` with violet-tinted whites

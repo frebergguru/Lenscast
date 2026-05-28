@@ -258,6 +258,12 @@ class WebControlServer(
      *  - Smoother UX — no full reload when the user starts the stream.
      *  - Easier to keep button bindings consistent across modes.
      *  - The page is small enough that JS-side conditional rendering stays readable.
+     *
+     * Layout: CSS-grid two-column on desktop (preview/hero on the left, stats + quick
+     * controls on the right), single-column stack on mobile. Settings live below the
+     * fold as a tabbed panel — Camera / Image / Audio / Stream / UX / System — so the
+     * full Settings sheet doesn't have to be a 1000-line vertical scroll on a phone
+     * browser.
      */
     private fun renderLandingHtml(): String {
         val mjpegPortNow = mjpegPort()
@@ -268,324 +274,610 @@ class WebControlServer(
             <html><head><title>Lenscast Control</title>
             <meta name="viewport" content="width=device-width,initial-scale=1">
             <style>
-              body{background:#14121c;color:#eee;font-family:system-ui,sans-serif;margin:0;padding:24px;text-align:center}
-              h1{font-weight:600;margin:0 0 12px}
-              img{max-width:100%;border-radius:12px;box-shadow:0 8px 32px rgba(120,73,242,0.3)}
-              code{background:#262335;padding:2px 8px;border-radius:6px;font-size:13px}
-              .controls{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:12px 0}
-              .pickers{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin:12px 0;color:#bbb;font-size:13px}
-              .pickers label{display:flex;flex-direction:column;align-items:flex-start;gap:4px}
-              button{background:#262335;color:#eee;border:0;padding:10px 16px;border-radius:8px;font-size:14px;cursor:pointer}
-              button:hover{background:#33304a}
-              button.danger{background:#5a2330}
-              button.danger:hover{background:#7a2f3f}
-              button.primary{background:#5a3da8}
-              button.primary:hover{background:#7849f2}
-              select{background:#262335;color:#eee;border:0;padding:6px 8px;border-radius:6px}
-              .msg{min-height:1.2em;color:#a98cff;font-size:13px;margin-top:8px}
-              .stats{color:#bba8ff;font-size:13px;margin-top:12px;font-family:ui-monospace,monospace}
-              .slider{margin:12px auto;max-width:320px;color:#bbb;font-size:13px;display:flex;flex-direction:column;gap:6px}
-              .slider input{width:100%;accent-color:#7849f2}
-              .notice{color:#bba8ff;background:#262335;border-radius:12px;padding:14px;max-width:560px;margin:12px auto;font-size:14px;text-align:left}
-              .hidden{display:none}
-              .preview-wrap{margin:12px auto;max-width:720px}
-              details.settings-section{max-width:720px;margin:16px auto;text-align:left;background:#1a1827;border-radius:12px;padding:8px 16px}
-              details.settings-section summary{cursor:pointer;font-weight:600;padding:8px 0;color:#ddd}
-              details.settings-section fieldset{border:0;margin:8px 0;padding:8px;background:#262335;border-radius:8px}
-              details.settings-section legend{padding:0 6px;color:#bba8ff;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.05em}
-              details.settings-section label{display:flex;align-items:center;gap:10px;color:#ccc;font-size:13px;padding:5px 0;flex-wrap:wrap}
-              details.settings-section select,details.settings-section input[type=number]{background:#1a1827;color:#eee;border:1px solid #3b3754;border-radius:6px;padding:5px 8px;font-size:13px}
-              details.settings-section input[type=range]{flex:1;min-width:160px;accent-color:#7849f2}
-              details.settings-section input[type=checkbox]{accent-color:#7849f2}
-              details.settings-section textarea{flex:1;min-width:240px;background:#1a1827;color:#eee;border:1px solid #3b3754;border-radius:6px;padding:6px;font-family:ui-monospace,monospace;font-size:12px;resize:vertical}
-              .btnish{display:inline-block;background:#262335;color:#eee;border:0;padding:10px 16px;border-radius:8px;font-size:14px;cursor:pointer;text-decoration:none}
-              .btnish:hover{background:#33304a}
-              .pickers label{cursor:pointer}
+              /* Design tokens — single source of truth for colours and spacing. The
+                 dark scheme is the default and the only one we ship; brand violet
+                 matches the in-app Material 3 theme. */
+              :root{
+                --bg:#0E0B17; --bg-elev:#14121C; --surface:#1A1827; --surface-2:#262335;
+                --surface-3:#33304A; --border:#3b3754;
+                --text:#EDEAF7; --text-dim:#bba8ff; --text-mute:#9089a8;
+                --accent:#9B7CFF; --accent-strong:#7849F2; --accent-soft:rgba(120,73,242,.15);
+                --danger:#FF5E5B; --danger-bg:#5a2330;
+                --ok:#66BB6A; --warn:#FFB300; --alert:#E53935;
+                --r-sm:8px; --r-md:12px; --r-lg:16px;
+                --gap-1:6px; --gap-2:10px; --gap-3:14px; --gap-4:20px;
+              }
+              *{box-sizing:border-box}
+              html,body{margin:0;padding:0;background:var(--bg);color:var(--text);
+                        font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+                        font-size:14px;line-height:1.45}
+              a{color:var(--accent);text-decoration:none}
+              a:hover{text-decoration:underline}
+              code{background:var(--surface-2);padding:2px 6px;border-radius:6px;
+                   font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+              img{max-width:100%;display:block}
+
+              /* Page chrome ----------------------------------------------------- */
+              header{display:flex;align-items:center;gap:var(--gap-2);
+                     padding:14px 20px;border-bottom:1px solid var(--surface-2);
+                     position:sticky;top:0;background:var(--bg);z-index:5}
+              header .logo{width:28px;height:28px;border-radius:8px;
+                           background:linear-gradient(135deg,var(--accent),var(--accent-strong));
+                           display:grid;place-items:center;color:#fff;font-weight:700;
+                           font-size:15px}
+              header h1{margin:0;font-size:16px;font-weight:600;letter-spacing:-.01em;flex:1}
+              header .state-badge{display:inline-flex;align-items:center;gap:6px;
+                                  padding:4px 10px;border-radius:999px;font-size:12px;
+                                  font-weight:600;background:var(--surface-2);
+                                  color:var(--text-mute)}
+              header .state-badge .dot{width:8px;height:8px;border-radius:50%;
+                                       background:var(--text-mute)}
+              header .state-badge[data-state=streaming]{background:rgba(102,187,106,.15);
+                                                       color:var(--ok)}
+              header .state-badge[data-state=streaming] .dot{background:var(--ok);
+                                                            animation:pulse 1.5s ease-in-out infinite}
+              header .state-badge[data-state=starting]{background:rgba(255,179,0,.15);color:var(--warn)}
+              header .state-badge[data-state=starting] .dot{background:var(--warn)}
+              header .state-badge[data-state=error]{background:rgba(229,57,53,.15);color:var(--alert)}
+              @keyframes pulse{50%{opacity:.4}}
+
+              main{max-width:1100px;margin:0 auto;padding:20px;
+                   display:grid;grid-template-columns:1fr;gap:var(--gap-4)}
+              @media (min-width:900px){
+                main{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
+              }
+
+              /* Card primitive -------------------------------------------------- */
+              .card{background:var(--surface);border:1px solid var(--surface-2);
+                    border-radius:var(--r-lg);padding:var(--gap-4)}
+              .card h2{margin:0 0 var(--gap-3) 0;font-size:13px;font-weight:600;
+                       text-transform:uppercase;letter-spacing:.07em;color:var(--text-dim)}
+              .card .subtitle{color:var(--text-mute);margin:0 0 var(--gap-3);font-size:13px}
+
+              /* Hero (preview / start) ---------------------------------------- */
+              .hero{grid-column:1/-1}
+              @media (min-width:900px){.hero{grid-column:1/2}}
+              .hero .preview-frame{position:relative;background:#000;border-radius:var(--r-md);
+                                   overflow:hidden;aspect-ratio:16/9}
+              .hero .preview-frame img{width:100%;height:100%;object-fit:contain}
+              .hero .preview-frame .overlay{position:absolute;inset:0;display:grid;
+                                            place-items:center;text-align:center;padding:24px;
+                                            background:radial-gradient(circle at center, rgba(120,73,242,.18), transparent 70%)}
+              .hero .preview-frame .overlay .big{font-size:18px;font-weight:600;color:#fff;
+                                                 margin-bottom:6px}
+              .hero .preview-frame .overlay .small{color:#bba8ff;font-size:13px}
+              .hero .links{display:flex;flex-wrap:wrap;gap:var(--gap-2);
+                           margin-top:var(--gap-3);font-size:12px}
+              .hero .links code{font-size:11px}
+
+              /* Idle hero: protocol picker + Start */
+              .idle-picker{display:flex;flex-direction:column;gap:var(--gap-3)}
+              .idle-picker .proto-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--gap-2)}
+              .idle-picker .proto{cursor:pointer;border:2px solid var(--surface-2);
+                                  background:var(--surface-2);border-radius:var(--r-md);
+                                  padding:var(--gap-3);text-align:left;transition:all .15s}
+              .idle-picker .proto:hover{border-color:var(--surface-3)}
+              .idle-picker .proto input{display:none}
+              .idle-picker .proto input:checked + .proto-inner{color:var(--text)}
+              .idle-picker .proto:has(input:checked){border-color:var(--accent-strong);
+                                                     background:var(--accent-soft)}
+              .idle-picker .proto .proto-name{font-weight:600;margin-bottom:4px}
+              .idle-picker .proto .proto-desc{color:var(--text-mute);font-size:12px;line-height:1.4}
+
+              /* Quick controls + stats ---------------------------------------- */
+              .side{display:flex;flex-direction:column;gap:var(--gap-4)}
+
+              .stats-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--gap-2)}
+              .stat{background:var(--surface-2);border-radius:var(--r-md);
+                    padding:var(--gap-2) var(--gap-3)}
+              .stat .label{font-size:11px;color:var(--text-mute);text-transform:uppercase;
+                           letter-spacing:.05em}
+              .stat .value{font-size:16px;font-weight:600;color:var(--text);
+                           font-variant-numeric:tabular-nums;line-height:1.2}
+              .stat.full{grid-column:1/-1}
+              .vu{height:8px;background:var(--surface-3);border-radius:4px;overflow:hidden;
+                  margin-top:6px}
+              .vu .fill{height:100%;background:var(--ok);transition:width .1s linear,
+                                                                    background-color .2s}
+
+              .quick-controls{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--gap-2)}
+              .quick-controls.row3{grid-template-columns:repeat(3,1fr)}
+
+              /* Buttons -------------------------------------------------------- */
+              .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+                   background:var(--surface-2);color:var(--text);border:0;
+                   padding:10px 14px;border-radius:var(--r-md);font-size:13px;
+                   font-weight:500;cursor:pointer;font-family:inherit;
+                   transition:background .15s,transform .05s}
+              .btn:hover{background:var(--surface-3)}
+              .btn:active{transform:scale(.98)}
+              .btn.primary{background:var(--accent-strong);color:#fff}
+              .btn.primary:hover{background:#9061ff}
+              .btn.danger{background:var(--danger-bg);color:#fff}
+              .btn.danger:hover{background:#7a2f3f}
+              .btn.ghost{background:transparent;border:1px solid var(--surface-2)}
+              .btn:disabled{opacity:.4;cursor:not-allowed}
+              .btn.big{padding:14px 18px;font-size:15px}
+
+              /* Tabs ----------------------------------------------------------- */
+              .settings-card{grid-column:1/-1}
+              .tabs{display:flex;gap:2px;border-bottom:1px solid var(--surface-2);
+                    overflow-x:auto;margin-bottom:var(--gap-3);
+                    scrollbar-width:thin}
+              .tab{flex:none;background:none;border:0;border-bottom:2px solid transparent;
+                   color:var(--text-mute);padding:10px 14px;font-size:13px;cursor:pointer;
+                   font-family:inherit;font-weight:500;white-space:nowrap;transition:all .15s}
+              .tab:hover{color:var(--text)}
+              .tab[aria-selected=true]{color:var(--accent);border-bottom-color:var(--accent)}
+              .panel{display:none;flex-direction:column;gap:var(--gap-3)}
+              .panel[data-active]{display:flex}
+
+              /* Form rows ------------------------------------------------------ */
+              .field{display:flex;align-items:center;gap:var(--gap-3);
+                     padding:var(--gap-2) 0;flex-wrap:wrap}
+              .field > .l{flex:1;min-width:140px;color:var(--text)}
+              .field > .l small{display:block;color:var(--text-mute);font-size:11px;font-weight:400;line-height:1.4}
+              .field > .c{display:flex;align-items:center;gap:var(--gap-2);flex-wrap:wrap}
+              .field input[type=range]{accent-color:var(--accent-strong);min-width:160px}
+              .field input[type=checkbox]{accent-color:var(--accent-strong);width:18px;height:18px}
+              .field select,.field input[type=number],.field input[type=text]{
+                background:var(--bg-elev);color:var(--text);border:1px solid var(--border);
+                border-radius:6px;padding:6px 10px;font-size:13px;font-family:inherit}
+              .field .val{font-variant-numeric:tabular-nums;color:var(--text-mute);
+                          min-width:50px;text-align:right;font-size:12px}
+              .field textarea{width:100%;background:var(--bg-elev);color:var(--text);
+                              border:1px solid var(--border);border-radius:6px;padding:8px;
+                              font-family:ui-monospace,monospace;font-size:12px;resize:vertical;
+                              min-height:80px}
+              .divider{height:1px;background:var(--surface-2);margin:var(--gap-2) 0}
+
+              /* Notice / message ---------------------------------------------- */
+              .notice{background:var(--surface-2);border-radius:var(--r-md);
+                      padding:var(--gap-3);font-size:13px;color:var(--text-dim)}
+              .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+                     background:var(--surface);border:1px solid var(--surface-2);
+                     border-radius:var(--r-md);padding:10px 16px;color:var(--text);
+                     box-shadow:0 8px 24px rgba(0,0,0,.4);font-size:13px;
+                     opacity:0;pointer-events:none;transition:opacity .2s;z-index:10}
+              .toast.show{opacity:1}
+              .toast.error{border-color:var(--alert);color:#ffd1d0}
+
+              .hidden{display:none!important}
+              .row{display:flex;gap:var(--gap-2);flex-wrap:wrap}
+
+              footer{max-width:1100px;margin:0 auto;padding:16px 20px 32px;
+                     color:var(--text-mute);font-size:12px}
+              footer code{font-size:10px;word-break:break-all}
             </style></head>
             <body>
-              <h1>Lenscast Control</h1>
-              <div id="stats" class="stats">…</div>
+              <header>
+                <div class="logo">L</div>
+                <h1>Lenscast Control</h1>
+                <span id="state-badge" class="state-badge" data-state="idle">
+                  <span class="dot"></span><span id="state-text">idle</span>
+                </span>
+              </header>
 
-              <!-- IDLE: protocol picker + Start -->
-              <div id="idle-block" class="hidden">
-                <p class="notice">No stream running. Pick a protocol, then press Start.</p>
-                <div class="pickers">
-                  <label><input type="radio" name="proto" value="mjpeg"> MJPEG (browser, OBS, ffmpeg, VLC)</label>
-                  <label><input type="radio" name="proto" value="rtsp"> RTSP (OBS, ffmpeg, VLC — supports 60/120/240 fps)</label>
-                </div>
-                <div class="controls">
-                  <button data-act="start" class="primary">Start streaming</button>
-                </div>
-              </div>
+              <main>
+                <!-- HERO ============================================== -->
+                <section class="card hero">
+                  <h2 id="hero-title">Live preview</h2>
 
-              <!-- MJPEG live preview + audio sidecar links -->
-              <div id="mjpeg-block" class="hidden preview-wrap">
-                <p><code id="mjpeg-video-url"></code></p>
-                <img id="preview" alt="Live preview">
-                <p>
-                  <code id="mjpeg-audio-url"></code> ·
-                  <code id="mjpeg-shot-url"></code>
-                </p>
-              </div>
-
-              <!-- RTSP URL hint -->
-              <div id="rtsp-block" class="hidden">
-                <p class="notice">
-                  RTSP streaming is active. Browsers can't render RTSP — paste the URL into
-                  OBS / VLC / ffmpeg.
-                </p>
-                <p><code id="rtsp-url"></code></p>
-              </div>
-
-              <!-- LIVE controls — visible when streaming -->
-              <div id="live-block" class="hidden">
-                <div class="controls">
-                  <button data-act="lens">Switch camera</button>
-                  <button data-act="torch">Toggle torch</button>
-                  <button data-act="mirror">Mirror</button>
-                  <button data-act="af">Continuous AF</button>
-                </div>
-                <div class="controls">
-                  <button data-act="zoom" data-arg="dir=in">Zoom +</button>
-                  <button data-act="zoom" data-arg="dir=out">Zoom −</button>
-                  <button data-act="ev" data-arg="dir=up">EV +</button>
-                  <button data-act="ev" data-arg="dir=down">EV −</button>
-                  <button data-act="snapshot" id="snapshot-btn">Snapshot</button>
-                  <button data-act="stop" class="danger">Stop</button>
-                </div>
-                <div class="pickers">
-                  <label>Resolution
-                    <select id="res-sel"></select>
-                  </label>
-                  <label>FPS
-                    <select id="fps-sel"></select>
-                  </label>
-                </div>
-                <div class="slider" id="quality-slider">
-                  <label for="q">JPEG quality <span id="qval">$initialQuality</span></label>
-                  <input id="q" type="range" min="10" max="95" value="$initialQuality">
-                </div>
-              </div>
-
-              <!-- Full Settings parity with the app's Settings sheet. Persisted as soon as
-                   the user changes any control; rebinds the camera where relevant. -->
-              <details class="settings-section" open>
-                <summary>Settings</summary>
-
-                <fieldset>
-                  <legend>Backup</legend>
-                  <p style="color:#999;font-size:12px;margin:4px 0">
-                    Export downloads a JSON file with every setting (including the
-                    stream passcode — treat it as sensitive). Import replaces the
-                    current settings; the stream must be stopped first.
-                  </p>
-                  <div class="controls">
-                    <a href="/export" download="lenscast-settings.json" class="btnish">Export settings</a>
+                  <!-- Idle hero: protocol picker + Start -->
+                  <div id="idle-block" class="hidden idle-picker">
+                    <p class="subtitle">Pick a streaming protocol and tap Start.</p>
+                    <div class="proto-grid">
+                      <label class="proto">
+                        <input type="radio" name="proto" value="mjpeg">
+                        <div class="proto-inner">
+                          <div class="proto-name">MJPEG</div>
+                          <div class="proto-desc">Universal: browser &lt;img&gt;, OBS, VLC. PCM audio sidecar. ≤30 fps.</div>
+                        </div>
+                      </label>
+                      <label class="proto">
+                        <input type="radio" name="proto" value="rtsp">
+                        <div class="proto-inner">
+                          <div class="proto-name">RTSP</div>
+                          <div class="proto-desc">H.264 + AAC. OBS / VLC / ffmpeg. Up to 240 fps. Landscape only.</div>
+                        </div>
+                      </label>
+                    </div>
+                    <button data-act="start" class="btn primary big">Start streaming</button>
                   </div>
-                  <label>Import JSON
-                    <textarea id="import-json" rows="4" placeholder="Paste exported JSON here, then click Import"></textarea>
-                  </label>
-                  <div class="controls">
-                    <button id="import-btn">Import</button>
+
+                  <!-- Live MJPEG hero -->
+                  <div id="mjpeg-block" class="hidden">
+                    <div class="preview-frame">
+                      <img id="preview" alt="Live preview">
+                    </div>
+                    <div class="links">
+                      <code id="mjpeg-video-url"></code>
+                      <code id="mjpeg-audio-url"></code>
+                      <code id="mjpeg-shot-url"></code>
+                    </div>
                   </div>
-                </fieldset>
 
-                <fieldset>
-                  <legend>Camera</legend>
-                  <label>Lens
-                    <select data-setting="lens">
-                      <option value="back">Back</option>
-                      <option value="front">Front</option>
-                    </select>
-                  </label>
-                </fieldset>
+                  <!-- Live RTSP hero -->
+                  <div id="rtsp-block" class="hidden">
+                    <div class="preview-frame">
+                      <div class="overlay">
+                        <div>
+                          <div class="big">RTSP is live</div>
+                          <div class="small">Open in OBS / VLC / ffmpeg — browsers can't render RTSP natively.</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="links"><code id="rtsp-url"></code></div>
+                  </div>
+                </section>
 
-                <fieldset>
-                  <legend>Image (MJPEG path)</legend>
-                  <label><input type="checkbox" data-setting="mirror"> Mirror (horizontal flip)</label>
-                  <label><input type="checkbox" data-setting="continuousAf"> Continuous autofocus</label>
-                  <label>Exposure compensation
-                    <input type="range" min="-12" max="12" step="1" data-setting-range="exposureEv">
-                    <span data-rangeval="exposureEv">0</span> EV
-                  </label>
-                  <label>White balance
-                    <select data-setting="whiteBalance">
-                      <option value="auto">Auto</option>
-                      <option value="incandescent">Tungsten</option>
-                      <option value="fluorescent">Fluorescent</option>
-                      <option value="daylight">Daylight</option>
-                      <option value="cloudy">Cloudy</option>
-                      <option value="shade">Shade</option>
-                    </select>
-                  </label>
-                  <label>Anti-flicker
-                    <select data-setting="antiBanding">
-                      <option value="auto">Auto</option>
-                      <option value="hz50">50 Hz</option>
-                      <option value="hz60">60 Hz</option>
-                      <option value="off">Off</option>
-                    </select>
-                  </label>
-                  <label>Effect
-                    <select data-setting="effect">
-                      <option value="none">None</option>
-                      <option value="mono">Mono</option>
-                      <option value="negative">Negative</option>
-                      <option value="sepia">Sepia</option>
-                      <option value="aqua">Aqua</option>
-                      <option value="solarize">Solarize</option>
-                      <option value="posterize">Posterize</option>
-                      <option value="blackboard">Blackboard</option>
-                      <option value="whiteboard">Whiteboard</option>
-                    </select>
-                  </label>
-                  <label>Scene
-                    <select data-setting="sceneMode">
-                      <option value="disabled">Off</option>
-                      <option value="action">Action</option>
-                      <option value="portrait">Portrait</option>
-                      <option value="landscape">Landscape</option>
-                      <option value="night">Night</option>
-                      <option value="sports">Sports</option>
-                      <option value="theatre">Theatre</option>
-                      <option value="fireworks">Fireworks</option>
-                      <option value="beach">Beach</option>
-                      <option value="snow">Snow</option>
-                      <option value="sunset">Sunset</option>
-                    </select>
-                  </label>
-                  <label><input type="checkbox" data-setting="manualFocus"> Manual focus</label>
-                  <label>Focus distance (cd, 0=∞)
-                    <input type="range" min="0" max="1000" step="50" data-setting-range="manualFocusCentidiopters">
-                    <span data-rangeval="manualFocusCentidiopters">0</span>
-                  </label>
-                  <label id="manual-exp-row"><input type="checkbox" data-setting="manualExposure"> Manual exposure (ISO + shutter)</label>
-                  <p id="manual-exp-unsupported" class="hidden" style="color:#bba8ff;font-size:12px">Not supported on this lens.</p>
-                  <label id="iso-row">ISO
-                    <input type="range" min="50" max="3200" step="50" data-setting-range="iso">
-                    <span data-rangeval="iso">100</span>
-                  </label>
-                  <label id="shutter-row">Shutter (µs)
-                    <input type="range" min="100" max="500000" step="100" data-setting-range="shutterUs">
-                    <span data-rangeval="shutterUs">16666</span>
-                  </label>
-                </fieldset>
+                <!-- SIDE: stats + quick controls ======================= -->
+                <aside class="side">
+                  <section class="card hidden" id="live-card">
+                    <h2>Status</h2>
+                    <div class="stats-grid">
+                      <div class="stat"><div class="label">Protocol</div><div class="value" id="s-proto">—</div></div>
+                      <div class="stat"><div class="label">Lens</div><div class="value" id="s-lens">—</div></div>
+                      <div class="stat"><div class="label">FPS</div><div class="value" id="s-fps">—</div></div>
+                      <div class="stat"><div class="label">Clients</div><div class="value" id="s-clients">0</div></div>
+                      <div class="stat"><div class="label">Resolution</div><div class="value" id="s-res">—</div></div>
+                      <div class="stat"><div class="label">Zoom · EV</div><div class="value" id="s-zoomev">—</div></div>
+                      <div class="stat full" id="audio-stat">
+                        <div class="label">Audio peak <span id="s-peak" style="float:right;color:var(--text-mute)">—</span></div>
+                        <div class="vu"><div class="fill" id="vu-fill" style="width:0%"></div></div>
+                      </div>
+                    </div>
+                  </section>
 
-                <fieldset>
-                  <legend>Audio</legend>
-                  <label><input type="checkbox" data-setting="audioEnabled"> Stream microphone audio</label>
-                  <label>Mic source
-                    <select data-setting="micSource">
-                      <option value="camcorder">Camcorder</option>
-                      <option value="mic">Default mic</option>
-                      <option value="voice_recognition">Voice recognition</option>
-                      <option value="voice_communication">Voice communication</option>
-                      <option value="unprocessed">Unprocessed</option>
-                    </select>
-                  </label>
-                  <label>Gain (dB)
-                    <input type="range" min="-24" max="24" step="1" data-setting-range="audioGainDb">
-                    <span data-rangeval="audioGainDb">0</span> dB
-                  </label>
-                  <label><input type="checkbox" data-setting="noiseSuppress"> Noise suppression</label>
-                  <label><input type="checkbox" data-setting="echoCancel"> Echo cancellation</label>
-                </fieldset>
+                  <section class="card hidden" id="live-controls-card">
+                    <h2>Quick controls</h2>
+                    <div class="quick-controls" id="quick-row1">
+                      <button class="btn" data-act="lens">Switch camera</button>
+                      <button class="btn" data-act="torch">Torch</button>
+                      <button class="btn" data-act="mirror">Mirror</button>
+                      <button class="btn" data-act="af">Continuous AF</button>
+                    </div>
+                    <div class="row" style="margin-top:var(--gap-2)">
+                      <button class="btn" data-act="zoom" data-arg="dir=in">Zoom +</button>
+                      <button class="btn" data-act="zoom" data-arg="dir=out">Zoom −</button>
+                      <button class="btn" data-act="ev"   data-arg="dir=up">EV +</button>
+                      <button class="btn" data-act="ev"   data-arg="dir=down">EV −</button>
+                    </div>
+                    <div class="row" style="margin-top:var(--gap-2)">
+                      <button class="btn" data-act="snapshot" id="snapshot-btn" style="flex:1">Snapshot</button>
+                      <button class="btn danger" data-act="stop" style="flex:1">Stop streaming</button>
+                    </div>
+                    <div class="divider"></div>
+                    <div class="field">
+                      <div class="l">Resolution</div>
+                      <div class="c"><select id="res-sel"></select></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">FPS</div>
+                      <div class="c"><select id="fps-sel"></select></div>
+                    </div>
+                    <div class="field" id="quality-row">
+                      <div class="l">JPEG quality<small>MJPEG only</small></div>
+                      <div class="c">
+                        <input type="range" min="10" max="95" value="$initialQuality" id="q">
+                        <span class="val" id="qval">$initialQuality</span>
+                      </div>
+                    </div>
+                  </section>
+                </aside>
 
-                <fieldset>
-                  <legend>Stream</legend>
-                  <label>JPEG quality
-                    <input type="range" min="10" max="95" step="1" data-setting-range="jpegQuality">
-                    <span data-rangeval="jpegQuality">80</span>
-                  </label>
-                  <label>RTSP bitrate (kbps, 0=auto)
-                    <input type="range" min="0" max="20000" step="500" data-setting-range="rtspBitrateKbps">
-                    <span data-rangeval="rtspBitrateKbps">0</span>
-                  </label>
-                </fieldset>
+                <!-- TABBED SETTINGS ==================================== -->
+                <section class="card settings-card">
+                  <h2>Settings</h2>
+                  <div class="tabs" role="tablist">
+                    <button class="tab" role="tab" data-tab="camera" aria-selected="true">Camera</button>
+                    <button class="tab" role="tab" data-tab="image">Image</button>
+                    <button class="tab" role="tab" data-tab="audio">Audio</button>
+                    <button class="tab" role="tab" data-tab="stream">Stream</button>
+                    <button class="tab" role="tab" data-tab="ux">UX</button>
+                    <button class="tab" role="tab" data-tab="system">System</button>
+                  </div>
 
-                <fieldset>
-                  <legend>UX</legend>
-                  <label><input type="checkbox" data-setting="keepScreenOn"> Keep screen on while streaming</label>
-                  <label><input type="checkbox" data-setting="blankPreview"> Hide preview while streaming</label>
-                  <label>Rotation lock (MJPEG)
-                    <select data-setting="rotationLock">
-                      <option value="auto">Auto</option>
-                      <option value="portrait">Portrait</option>
-                      <option value="landscape_left">Landscape ←</option>
-                      <option value="landscape_right">Landscape →</option>
-                      <option value="portrait_upside_down">Portrait ⤓</option>
-                    </select>
-                  </label>
-                </fieldset>
+                  <!-- Camera tab -->
+                  <div class="panel" data-panel="camera" data-active>
+                    <div class="field">
+                      <div class="l">Lens</div>
+                      <div class="c">
+                        <select data-setting="lens">
+                          <option value="back">Back</option>
+                          <option value="front">Front</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Rotation lock<small>MJPEG output direction</small></div>
+                      <div class="c">
+                        <select data-setting="rotationLock">
+                          <option value="auto">Auto</option>
+                          <option value="portrait">Portrait</option>
+                          <option value="landscape_left">Landscape ←</option>
+                          <option value="landscape_right">Landscape →</option>
+                          <option value="portrait_upside_down">Portrait ⤓</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
 
-                <fieldset>
-                  <legend>Automation</legend>
-                  <label><input type="checkbox" data-setting="autoStart"> Auto-start on app launch</label>
-                  <label><input type="checkbox" data-setting="startOnBoot"> Start streaming on device boot</label>
-                  <label><input type="checkbox" data-setting="recordLocally"> Record to MP4 (RTSP)</label>
-                </fieldset>
+                  <!-- Image tab -->
+                  <div class="panel" data-panel="image">
+                    <div class="field">
+                      <div class="l">Mirror (horizontal flip)</div>
+                      <div class="c"><input type="checkbox" data-setting="mirror"></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Continuous autofocus</div>
+                      <div class="c"><input type="checkbox" data-setting="continuousAf"></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Exposure compensation</div>
+                      <div class="c">
+                        <input type="range" min="-12" max="12" step="1" data-setting-range="exposureEv">
+                        <span class="val" data-rangeval="exposureEv">0</span><span class="val">EV</span>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="l">White balance</div>
+                      <div class="c">
+                        <select data-setting="whiteBalance">
+                          <option value="auto">Auto</option>
+                          <option value="incandescent">Tungsten</option>
+                          <option value="fluorescent">Fluorescent</option>
+                          <option value="daylight">Daylight</option>
+                          <option value="cloudy">Cloudy</option>
+                          <option value="shade">Shade</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Anti-flicker</div>
+                      <div class="c">
+                        <select data-setting="antiBanding">
+                          <option value="auto">Auto</option>
+                          <option value="hz50">50 Hz</option>
+                          <option value="hz60">60 Hz</option>
+                          <option value="off">Off</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Effect</div>
+                      <div class="c">
+                        <select data-setting="effect">
+                          <option value="none">None</option><option value="mono">Mono</option>
+                          <option value="negative">Negative</option><option value="sepia">Sepia</option>
+                          <option value="aqua">Aqua</option><option value="solarize">Solarize</option>
+                          <option value="posterize">Posterize</option><option value="blackboard">Blackboard</option>
+                          <option value="whiteboard">Whiteboard</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Scene mode</div>
+                      <div class="c">
+                        <select data-setting="sceneMode">
+                          <option value="disabled">Off</option><option value="action">Action</option>
+                          <option value="portrait">Portrait</option><option value="landscape">Landscape</option>
+                          <option value="night">Night</option><option value="sports">Sports</option>
+                          <option value="theatre">Theatre</option><option value="fireworks">Fireworks</option>
+                          <option value="beach">Beach</option><option value="snow">Snow</option>
+                          <option value="sunset">Sunset</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="divider"></div>
+                    <div class="field">
+                      <div class="l">Manual focus</div>
+                      <div class="c"><input type="checkbox" data-setting="manualFocus"></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Focus distance<small>0 = infinity</small></div>
+                      <div class="c">
+                        <input type="range" min="0" max="1000" step="50" data-setting-range="manualFocusCentidiopters">
+                        <span class="val" data-rangeval="manualFocusCentidiopters">0</span>
+                      </div>
+                    </div>
+                    <div class="field" id="manual-exp-row">
+                      <div class="l">Manual exposure<small id="manual-exp-unsupported" class="hidden">Not supported on this lens</small></div>
+                      <div class="c"><input type="checkbox" data-setting="manualExposure"></div>
+                    </div>
+                    <div class="field" id="iso-row">
+                      <div class="l">ISO</div>
+                      <div class="c">
+                        <input type="range" min="50" max="3200" step="50" data-setting-range="iso">
+                        <span class="val" data-rangeval="iso">100</span>
+                      </div>
+                    </div>
+                    <div class="field" id="shutter-row">
+                      <div class="l">Shutter (µs)</div>
+                      <div class="c">
+                        <input type="range" min="100" max="500000" step="100" data-setting-range="shutterUs">
+                        <span class="val" data-rangeval="shutterUs">16666</span>
+                      </div>
+                    </div>
+                  </div>
 
-                <fieldset>
-                  <legend>Server ports</legend>
-                  <label>MJPEG port
-                    <input type="number" min="1024" max="65535" data-setting-int="mjpegPort">
-                  </label>
-                  <label>RTSP port
-                    <input type="number" min="1024" max="65535" data-setting-int="rtspPort">
-                  </label>
-                </fieldset>
+                  <!-- Audio tab -->
+                  <div class="panel" data-panel="audio">
+                    <div class="field">
+                      <div class="l">Stream microphone audio</div>
+                      <div class="c"><input type="checkbox" data-setting="audioEnabled"></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Mic source</div>
+                      <div class="c">
+                        <select data-setting="micSource">
+                          <option value="camcorder">Camcorder</option>
+                          <option value="mic">Default mic</option>
+                          <option value="voice_recognition">Voice recognition</option>
+                          <option value="voice_communication">Voice communication</option>
+                          <option value="unprocessed">Unprocessed</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Gain</div>
+                      <div class="c">
+                        <input type="range" min="-24" max="24" step="1" data-setting-range="audioGainDb">
+                        <span class="val" data-rangeval="audioGainDb">0</span><span class="val">dB</span>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Noise suppression</div>
+                      <div class="c"><input type="checkbox" data-setting="noiseSuppress"></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Echo cancellation</div>
+                      <div class="c"><input type="checkbox" data-setting="echoCancel"></div>
+                    </div>
+                  </div>
 
-                <fieldset>
-                  <legend>Security</legend>
-                  <label><input type="checkbox" data-setting="httpsEnabled"> HTTPS (self-signed cert)</label>
-                  <p style="color:#888;font-size:12px;margin:4px 0">
-                    Cert fingerprint:
-                    <code id="tls-fingerprint" style="font-size:11px">—</code>
-                  </p>
-                </fieldset>
-              </details>
+                  <!-- Stream tab -->
+                  <div class="panel" data-panel="stream">
+                    <div class="field">
+                      <div class="l">JPEG quality<small>MJPEG output</small></div>
+                      <div class="c">
+                        <input type="range" min="10" max="95" step="1" data-setting-range="jpegQuality">
+                        <span class="val" data-rangeval="jpegQuality">80</span>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="l">RTSP bitrate cap<small>0 = auto from resolution × fps</small></div>
+                      <div class="c">
+                        <input type="range" min="0" max="20000" step="500" data-setting-range="rtspBitrateKbps">
+                        <span class="val" data-rangeval="rtspBitrateKbps">0</span><span class="val">kbps</span>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Record to MP4 while streaming<small>RTSP only · saves to Movies/Lenscast/</small></div>
+                      <div class="c"><input type="checkbox" data-setting="recordLocally"></div>
+                    </div>
+                  </div>
 
-              <div id="msg" class="msg"></div>
+                  <!-- UX tab -->
+                  <div class="panel" data-panel="ux">
+                    <div class="field">
+                      <div class="l">Keep screen on while streaming</div>
+                      <div class="c"><input type="checkbox" data-setting="keepScreenOn"></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Hide preview while streaming<small>Battery saver</small></div>
+                      <div class="c"><input type="checkbox" data-setting="blankPreview"></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Auto-start streaming on app launch</div>
+                      <div class="c"><input type="checkbox" data-setting="autoStart"></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Start on device boot</div>
+                      <div class="c"><input type="checkbox" data-setting="startOnBoot"></div>
+                    </div>
+                  </div>
+
+                  <!-- System / Advanced tab -->
+                  <div class="panel" data-panel="system">
+                    <div class="field">
+                      <div class="l">MJPEG port</div>
+                      <div class="c"><input type="number" min="1024" max="65535" data-setting-int="mjpegPort"></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">RTSP port</div>
+                      <div class="c"><input type="number" min="1024" max="65535" data-setting-int="rtspPort"></div>
+                    </div>
+                    <div class="divider"></div>
+                    <div class="field">
+                      <div class="l">HTTPS<small>Self-signed cert; receivers click through the warning once</small></div>
+                      <div class="c"><input type="checkbox" data-setting="httpsEnabled"></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Cert fingerprint</div>
+                      <div class="c"><code id="tls-fingerprint" style="font-size:10px">—</code></div>
+                    </div>
+                    <div class="divider"></div>
+                    <div class="field">
+                      <div class="l">Export settings</div>
+                      <div class="c"><a href="/export" download="lenscast-settings.json" class="btn">Download JSON</a></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Import settings<small>Replaces the current settings — stream must be stopped first</small></div>
+                      <div class="c" style="flex-direction:column;align-items:stretch;width:100%">
+                        <textarea id="import-json" placeholder="Paste exported JSON here, then click Import"></textarea>
+                        <button id="import-btn" class="btn" style="align-self:flex-end;margin-top:6px">Import</button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </main>
+
+              <footer id="footer-text"></footer>
+              <div id="toast" class="toast"></div>
 
               <script>
+                // ── URL prep ──────────────────────────────────────────
                 const mjpegPort = $mjpegPortNow;
                 const rtspPort = $rtspPortNow;
                 const mjpegScheme = ${if (mjpegIsHttps()) "'https'" else "'http'"};
                 const host = window.location.hostname;
                 const mjpegBase = mjpegScheme + '://' + host + ':' + mjpegPort;
-                document.getElementById('preview').src = mjpegBase + '/video';
+                // NOTE: don't set preview.src here — at page-load time the MjpegServer
+                // probably isn't running yet, the browser caches the failed connect, and
+                // won't retry when streaming starts. The refresh() loop swaps in a
+                // cache-busting URL on the idle → MJPEG-live transition instead.
                 document.getElementById('mjpeg-video-url').textContent = mjpegBase + '/video';
                 document.getElementById('mjpeg-audio-url').textContent = mjpegBase + '/audio';
                 document.getElementById('mjpeg-shot-url').textContent  = mjpegBase + '/shot.jpg';
                 document.getElementById('rtsp-url').textContent =
                   'rtsp://' + host + ':' + rtspPort + '/lenscast';
+                document.getElementById('footer-text').textContent =
+                  'Lenscast control panel · ' + host;
+
+                // ── Toast (replaces the old #msg single-line strip) ──
+                const toast = document.getElementById('toast');
+                let toastTimer = null;
+                function showToast(text, isError) {
+                  toast.textContent = text;
+                  toast.classList.toggle('error', !!isError);
+                  toast.classList.add('show');
+                  clearTimeout(toastTimer);
+                  toastTimer = setTimeout(() => toast.classList.remove('show'), 2400);
+                }
 
                 async function post(act, arg) {
-                  const m = document.getElementById('msg');
-                  m.textContent = '…';
                   const qs = arg ? ('?' + arg) : '';
                   try {
                     const r = await fetch('/control/' + act + qs, { method: 'POST' });
-                    m.textContent = r.ok ? (act + ': ok') : (act + ': ' + (await r.text()));
-                  } catch (e) { m.textContent = act + ': ' + e; }
+                    if (!r.ok) showToast(act + ': ' + (await r.text()), true);
+                  } catch (e) { showToast(act + ': ' + e, true); }
                 }
-
                 async function setSetting(key, value) {
                   return post('setting', 'key=' + encodeURIComponent(key) + '&v=' + encodeURIComponent(value));
                 }
 
+                // ── Buttons ──────────────────────────────────────────
                 document.querySelectorAll('button[data-act]').forEach(btn => {
                   btn.addEventListener('click', () => post(btn.dataset.act, btn.dataset.arg));
                 });
-
-                // Protocol radio buttons (idle screen only — the page hides them while live).
                 document.querySelectorAll('input[name=proto]').forEach(r => {
                   r.addEventListener('change', () => {
                     if (r.checked) post('protocol', 'v=' + r.value);
                   });
                 });
 
-                // Generic setting dispatcher — selects + checkboxes.
+                // ── Tabs ─────────────────────────────────────────────
+                document.querySelectorAll('.tab').forEach(t => {
+                  t.addEventListener('click', () => {
+                    document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', 'false'));
+                    document.querySelectorAll('.panel').forEach(p => p.removeAttribute('data-active'));
+                    t.setAttribute('aria-selected', 'true');
+                    document.querySelector('[data-panel=' + t.dataset.tab + ']').setAttribute('data-active', '');
+                  });
+                });
+
+                // ── Generic setting dispatchers ───────────────────────
                 document.querySelectorAll('[data-setting]').forEach(el => {
                   el.addEventListener('change', () => {
                     const key = el.dataset.setting;
@@ -593,8 +885,6 @@ class WebControlServer(
                     setSetting(key, value);
                   });
                 });
-
-                // Range sliders — debounce so dragging doesn't hammer the server.
                 document.querySelectorAll('[data-setting-range]').forEach(el => {
                   const key = el.dataset.settingRange;
                   const span = document.querySelector('[data-rangeval="' + key + '"]');
@@ -605,8 +895,6 @@ class WebControlServer(
                     timer = setTimeout(() => setSetting(key, el.value), 150);
                   });
                 });
-
-                // Number inputs — commit on blur / Enter.
                 document.querySelectorAll('[data-setting-int]').forEach(el => {
                   const key = el.dataset.settingInt;
                   const commit = () => setSetting(key, el.value);
@@ -614,24 +902,27 @@ class WebControlServer(
                   el.addEventListener('blur', commit);
                 });
 
-                // Import: POST the textarea body to /import. The phone validates the JSON
-                // and falls back to defaults for any missing fields, so a clipped paste
-                // still works as long as the JSON itself parses.
+                // ── Import button ─────────────────────────────────────
                 document.getElementById('import-btn').addEventListener('click', async () => {
                   const body = document.getElementById('import-json').value.trim();
-                  if (!body) { document.getElementById('msg').textContent = 'import: paste JSON first'; return; }
+                  if (!body) { showToast('import: paste JSON first', true); return; }
                   try {
                     const r = await fetch('/import', { method: 'POST', body, headers: { 'Content-Type': 'application/json' } });
-                    document.getElementById('msg').textContent = r.ok ? 'import: ok' : ('import: ' + (await r.text()));
-                  } catch (e) { document.getElementById('msg').textContent = 'import: ' + e; }
+                    showToast(r.ok ? 'Settings imported' : 'import: ' + (await r.text()), !r.ok);
+                  } catch (e) { showToast('import: ' + e, true); }
                 });
 
-                function show(id, on) {
-                  document.getElementById(id).classList.toggle('hidden', !on);
-                }
+                // ── JPEG quality slider (live, debounced) ─────────────
+                const q = document.getElementById('q');
+                let qTimer = null;
+                q.addEventListener('input', () => {
+                  document.getElementById('qval').textContent = q.value;
+                  clearTimeout(qTimer);
+                  qTimer = setTimeout(() => fetch('/control/quality?v=' + q.value, { method: 'POST' }), 150);
+                });
 
-                let lastResOpts = '';
-                let lastFpsOpts = '';
+                // ── /status refresh + live wiring ─────────────────────
+                function show(id, on) { document.getElementById(id).classList.toggle('hidden', !on); }
                 function populateSelect(el, options, current) {
                   const key = options.join(',') + '|' + current;
                   if (el.dataset.key === key) return;
@@ -644,13 +935,16 @@ class WebControlServer(
                     el.appendChild(o);
                   }
                 }
+                document.getElementById('res-sel').addEventListener('change', e =>
+                  post('resolution', 'v=' + encodeURIComponent(e.target.value)));
+                document.getElementById('fps-sel').addEventListener('change', e =>
+                  post('fps', 'v=' + encodeURIComponent(e.target.value)));
 
-                document.getElementById('res-sel').addEventListener('change', e => {
-                  post('resolution', 'v=' + encodeURIComponent(e.target.value));
-                });
-                document.getElementById('fps-sel').addEventListener('change', e => {
-                  post('fps', 'v=' + encodeURIComponent(e.target.value));
-                });
+                function setIfNotFocused(el, value) {
+                  if (el === document.activeElement) return;
+                  if (el.type === 'checkbox') el.checked = (value === true);
+                  else el.value = value;
+                }
 
                 async function refresh() {
                   let s;
@@ -659,35 +953,85 @@ class WebControlServer(
                     if (!r.ok) return;
                     s = await r.json();
                   } catch (e) { return; }
+
                   const live = s.state === 'streaming' || s.state === 'starting';
+
+                  // Header badge
+                  const badge = document.getElementById('state-badge');
+                  badge.dataset.state = s.state || 'idle';
+                  document.getElementById('state-text').textContent = (s.state || 'idle').toUpperCase();
+
+                  // Hero title
+                  document.getElementById('hero-title').textContent = live
+                    ? (s.protocol === 'mjpeg' ? 'Live preview' : 'RTSP active')
+                    : 'Ready';
+
+                  // Hero swap
                   show('idle-block', !live);
-                  show('live-block', live);
                   show('mjpeg-block', live && s.protocol === 'mjpeg');
-                  show('rtsp-block', live && s.protocol === 'rtsp');
-                  show('quality-slider', live && s.protocol === 'mjpeg');
-                  const snapBtn = document.getElementById('snapshot-btn');
-                  if (snapBtn) snapBtn.style.display = (s.protocol === 'rtsp') ? 'none' : '';
+                  show('rtsp-block',  live && s.protocol === 'rtsp');
 
-                  if (live && s.availableResolutions) {
+                  // Side cards — status + quick controls — only make sense while live.
+                  show('live-card', live);
+                  show('live-controls-card', live);
+
+                  // Live preview hookup: only attach <img src=/video> when we know the
+                  // MJPEG server is up, and bust the cache so the browser doesn't reuse
+                  // a stale failed connection from idle state. Detach on stop so it
+                  // doesn't endlessly retry against a dead server.
+                  const mjpegLive = live && s.protocol === 'mjpeg';
+                  const previewEl = document.getElementById('preview');
+                  if (mjpegLive && !previewEl.dataset.live) {
+                    previewEl.src = mjpegBase + '/video?t=' + Date.now();
+                    previewEl.dataset.live = '1';
+                  } else if (!mjpegLive && previewEl.dataset.live) {
+                    previewEl.removeAttribute('src');
+                    delete previewEl.dataset.live;
+                  }
+
+                  // Hide the snapshot button on RTSP — broadcaster has no frames there.
+                  const snap = document.getElementById('snapshot-btn');
+                  if (snap) snap.style.display = (s.protocol === 'rtsp') ? 'none' : '';
+
+                  // JPEG quality slider only matters for MJPEG
+                  show('quality-row', live && s.protocol === 'mjpeg');
+
+                  // Resolution / FPS pickers (from per-lens capability lists)
+                  if (live && Array.isArray(s.availableResolutions))
                     populateSelect(document.getElementById('res-sel'), s.availableResolutions, s.resolution);
-                  }
-                  if (live && s.availableFps) {
+                  if (live && Array.isArray(s.availableFps))
                     populateSelect(document.getElementById('fps-sel'), s.availableFps, s.targetFps);
-                  }
 
-                  // Mirror the protocol radio with the current saved selection. Only writes
-                  // when not focused, so a user mid-click on a radio doesn't get bounced.
+                  // Protocol radios (idle screen only)
                   document.querySelectorAll('input[name=proto]').forEach(r => {
                     if (r !== document.activeElement) r.checked = (r.value === s.protocol);
                   });
 
-                  // Sync every Settings control with the server state, skipping any field
-                  // the user is currently editing (so we don't fight their typing).
-                  function setIfNotFocused(el, value) {
-                    if (el === document.activeElement) return;
-                    if (el.type === 'checkbox') el.checked = (value === true);
-                    else el.value = value;
+                  // Stats grid
+                  document.getElementById('s-proto').textContent = (s.protocol || '—').toUpperCase();
+                  document.getElementById('s-lens').textContent = (s.lens || '—');
+                  document.getElementById('s-fps').textContent = (s.fps || 0) + ' / ' + (s.targetFps || 0);
+                  document.getElementById('s-clients').textContent = (s.clients || 0);
+                  document.getElementById('s-res').textContent = (s.resolution || '—');
+                  document.getElementById('s-zoomev').textContent =
+                    (s.zoom != null ? s.zoom.toFixed(2) : '1.00') + 'x · ' +
+                    (s.ev >= 0 ? '+' : '') + (s.ev || 0) + ' EV';
+
+                  // VU meter
+                  const peak = (s.audioPeakDbfs != null) ? s.audioPeakDbfs : -90;
+                  const audioOn = !!s.audioEnabled && live;
+                  document.getElementById('audio-stat').style.display = audioOn ? '' : 'none';
+                  if (audioOn) {
+                    const frac = Math.max(0, Math.min(1, (peak + 60) / 60));
+                    const fill = document.getElementById('vu-fill');
+                    fill.style.width = (frac * 100).toFixed(0) + '%';
+                    fill.style.background = peak > -3 ? 'var(--alert)'
+                      : peak > -12 ? 'var(--warn)' : 'var(--ok)';
+                    document.getElementById('s-peak').textContent =
+                      (peak <= -89) ? '—' : peak.toFixed(0) + ' dBFS';
                   }
+
+                  // Mirror all Settings widgets with the server state.
                   document.querySelectorAll('[data-setting]').forEach(el => {
                     const key = el.dataset.setting;
                     if (s[key] !== undefined) setIfNotFocused(el, s[key]);
@@ -705,21 +1049,17 @@ class WebControlServer(
                     if (s[key] !== undefined) setIfNotFocused(el, s[key]);
                   });
 
-                  if (s.tlsFingerprint) {
+                  // TLS fingerprint in the System tab
+                  if (s.tlsFingerprint)
                     document.getElementById('tls-fingerprint').textContent = s.tlsFingerprint;
-                  }
 
-                  // Manual exposure: gate the row + clamp slider ranges to what the lens
-                  // actually reports. When the lens doesn't support MANUAL_SENSOR at all,
-                  // we hide the toggle and grey out the sliders.
+                  // Manual exposure: gate the row + clamp slider ranges
                   const manualOk = !!s.supportsManualSensor;
-                  show('manual-exp-unsupported', !manualOk);
+                  document.getElementById('manual-exp-unsupported').classList.toggle('hidden', manualOk);
                   document.querySelector('[data-setting="manualExposure"]').disabled = !manualOk;
-                  const isoRow = document.getElementById('iso-row');
-                  const shutRow = document.getElementById('shutter-row');
                   const showManual = manualOk && s.manualExposure;
-                  isoRow.style.display = showManual ? '' : 'none';
-                  shutRow.style.display = showManual ? '' : 'none';
+                  document.getElementById('iso-row').style.display = showManual ? '' : 'none';
+                  document.getElementById('shutter-row').style.display = showManual ? '' : 'none';
                   if (Array.isArray(s.isoRange)) {
                     const isoEl = document.querySelector('[data-setting-range="iso"]');
                     isoEl.min = s.isoRange[0]; isoEl.max = s.isoRange[1];
@@ -728,26 +1068,10 @@ class WebControlServer(
                     const sEl = document.querySelector('[data-setting-range="shutterUs"]');
                     sEl.min = s.shutterRangeUs[0]; sEl.max = s.shutterRangeUs[1];
                   }
-
-                  const peak = s.audioPeakDbfs;
-                  const peakStr = (peak !== undefined && peak > -89) ? (' · ' + peak.toFixed(0) + ' dBFS') : '';
-                  document.getElementById('stats').textContent =
-                    '[' + (s.state || 'idle') + '] ' + (s.protocol || '—') + ' · ' + (s.lens || '—') +
-                    ' · ' + (s.resolution || '—') + ' · ' + (s.fps || 0) + ' fps · ' +
-                    (s.clients || 0) + ' clients · zoom ' + (s.zoom || 1).toFixed(2) + 'x · EV ' +
-                    (s.ev || 0) + (s.mirror ? ' · mirror' : '') + (s.torch ? ' · torch' : '') + peakStr;
                 }
 
                 refresh();
                 setInterval(refresh, 1000);
-
-                const q = document.getElementById('q');
-                let qTimer = null;
-                q.addEventListener('input', () => {
-                  document.getElementById('qval').textContent = q.value;
-                  clearTimeout(qTimer);
-                  qTimer = setTimeout(() => fetch('/control/quality?v=' + q.value, { method: 'POST' }), 150);
-                });
               </script>
             </body></html>
         """.trimIndent()

@@ -213,6 +213,32 @@ has the Linux v4l2loopback helper only.
       HTTPS URLs from Lenscast's built-in TLS toggle. Doctor checks for
       `pactl`. README updated with both flags.
 
+## Open
+
+- [ ] **Persistent web control server.** The `WebControlServer` only stays
+      alive while `StreamingService` is alive — which today means a stream is
+      running, or the Activity is bound. When the user backgrounds the app
+      without streaming, the OS can reap the service and the web page
+      stops responding. Options to keep it reachable:
+      - Promote the service to a low-priority foreground notification any
+        time the web control toggle is on (just like streaming, but with a
+        different notification text).
+      - A separate "control-only" service with its own foreground type.
+      - Document the trade-off (always-on notification) and make it the
+        default; let the user opt out via Settings.
+- [ ] **Privacy / call-handling mode.** When a phone call comes in, today
+      we just keep streaming the mic — fine for some users, terrible for
+      others. Add a `Settings.callBehavior` enum the user picks once:
+      - `IGNORE` — current behaviour, audio keeps flowing.
+      - `MUTE_STREAM` — listen for `TelephonyManager.CALL_STATE_RINGING`
+        / `OFFHOOK` (via `PhoneStateListener` / `TelephonyCallback` on
+        API 31+) and zero the gain on `PcmCapture` + `AacEncoder` for the
+        call's lifetime. Resumes when state goes back to `IDLE`.
+      - `DROP_CALL` — auto-reject incoming calls so streaming is never
+        interrupted. Requires `MANAGE_OWN_CALLS` + the
+        `TelecomManager.endCall()` path. Best-effort: telephony APIs are
+        flaky across OEMs.
+
 ## Out of scope / not planned
 
 - **Native UVC gadget from inside Lenscast** — covered and rejected in

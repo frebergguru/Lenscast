@@ -1,16 +1,27 @@
 package dev.lenscast.ui
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -22,6 +33,10 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
@@ -78,9 +93,14 @@ fun SettingsSheet(
             Text(
                 stringResource(R.string.settings_title),
                 style = MaterialTheme.typography.headlineSmall,
-                modifier = Modifier.padding(bottom = 16.dp),
+                modifier = Modifier.padding(bottom = 4.dp),
             )
 
+            // Hoisted to the top so every SettingsGroup lambda can close over the same
+            // context — it's used in capability checks across multiple cards.
+            val context = LocalContext.current
+
+            SettingsGroup(title = "Streaming basics", initiallyExpanded = true) {
             // Protocol — picking RTSP unlocks high fps + audio.
             SectionLabel(stringResource(R.string.settings_protocol))
             SegmentedRow(
@@ -112,12 +132,9 @@ fun SettingsSheet(
             }
 
             Spacer(Modifier.height(16.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(16.dp))
 
             // Camera — switchable mid-stream for MJPEG, locked at Start for RTSP.
             // FPS is clamped on lens switch (front cams typically don't do high-speed).
-            val context = LocalContext.current
             SectionLabel(stringResource(R.string.settings_camera))
             SegmentedRow(
                 options = Lens.entries.toList(),
@@ -211,10 +228,9 @@ fun SettingsSheet(
                 )
                 Spacer(Modifier.height(16.dp))
             }
+            } // ← close Streaming basics card
 
-            HorizontalDivider()
-            Spacer(Modifier.height(16.dp))
-
+            SettingsGroup(title = "Image", initiallyExpanded = true) {
             // Image controls — MJPEG path only on the current pass (RTSP encoder consumes the
             // camera Surface directly and uses sensor defaults; matching these into the RTSP
             // CaptureRequest is a planned follow-up).
@@ -443,10 +459,9 @@ fun SettingsSheet(
                 )
             }
 
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(16.dp))
+            } // ← close Image card
 
+            SettingsGroup(title = "Stream output & audio") {
             // Server port — editable per active protocol. Disabled while streaming since the
             // server is already bound; user has to Stop first.
             SectionLabel(stringResource(R.string.settings_port_section))
@@ -605,10 +620,9 @@ fun SettingsSheet(
                 )
             }
 
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(16.dp))
+            } // ← close Stream output & audio card
 
+            SettingsGroup(title = "Security & access") {
             SectionLabel(stringResource(R.string.settings_security_section))
             var pwd by remember(settings.streamPassword) { mutableStateOf(settings.streamPassword) }
             OutlinedTextField(
@@ -650,10 +664,9 @@ fun SettingsSheet(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(16.dp))
+            } // ← close Security & access card
 
+            SettingsGroup(title = "Automation") {
             SectionLabel(stringResource(R.string.settings_automation_section))
             ToggleRow(
                 title = stringResource(R.string.settings_auto_start),
@@ -674,10 +687,9 @@ fun SettingsSheet(
                 )
             }
 
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(16.dp))
+            } // ← close Automation card
 
+            SettingsGroup(title = "Web control panel") {
             SectionLabel(stringResource(R.string.settings_web_control_section))
             ToggleRow(
                 title = stringResource(R.string.settings_web_control_enabled),
@@ -693,32 +705,30 @@ fun SettingsSheet(
                 )
             }
 
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(16.dp))
-            PresetsSection(settings, streaming, onChange)
+            } // ← close Web control panel card
+
+            SettingsGroup(title = "Presets") {
+                PresetsSection(settings, streaming, onChange)
+            }
 
             if (SystemWebcam.isSupported(context)) {
-                Spacer(Modifier.height(16.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(16.dp))
-
-                SectionLabel(stringResource(R.string.settings_system_webcam_title))
-                Text(
-                    text = stringResource(R.string.settings_system_webcam_explainer),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 12.dp),
-                )
-                OutlinedButton(onClick = { SystemWebcam.openUsbSettings(context) }) {
-                    Text(stringResource(R.string.settings_system_webcam_open))
+                SettingsGroup(title = "System webcam") {
+                    SectionLabel(stringResource(R.string.settings_system_webcam_title))
+                    Text(
+                        text = stringResource(R.string.settings_system_webcam_explainer),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                    OutlinedButton(onClick = { SystemWebcam.openUsbSettings(context) }) {
+                        Text(stringResource(R.string.settings_system_webcam_open))
+                    }
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(16.dp))
-            BackupSection(settings, streaming, onChange)
+            SettingsGroup(title = "Backup") {
+                BackupSection(settings, streaming, onChange)
+            }
 
             // Read versionName at runtime from PackageManager so the footer always
             // matches whatever Gradle compiled — no risk of the string drifting from
@@ -737,6 +747,71 @@ fun SettingsSheet(
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Collapsible "group" card around a subset of related Settings rows. Replaces the old
+ * flat-scroll layout where every section was always visible — on a screen with 30+
+ * settings, that was a wall of text. The group title sits in a clickable header with a
+ * chevron that rotates on expand; tapping anywhere on the header toggles open/closed.
+ *
+ * Cards that the user touches most (Streaming basics, Image) default expanded; the
+ * rest start collapsed. State persists via [rememberSaveable] so it survives rotation
+ * and recompositions but resets when the sheet is dismissed.
+ */
+@Composable
+private fun SettingsGroup(
+    title: String,
+    initiallyExpanded: Boolean = false,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var expanded by rememberSaveable(title) { mutableStateOf(initiallyExpanded) }
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "settings-group-chevron",
+    )
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp)
+            .animateContentSize(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                imageVector = Icons.Outlined.ExpandMore,
+                contentDescription = if (expanded) "Collapse" else "Expand",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .size(20.dp)
+                    .rotate(chevronRotation),
+            )
+        }
+        if (expanded) {
+            Column(
+                modifier = Modifier.padding(
+                    start = 16.dp, end = 16.dp, bottom = 14.dp, top = 0.dp,
+                ),
+            ) {
+                content()
             }
         }
     }
