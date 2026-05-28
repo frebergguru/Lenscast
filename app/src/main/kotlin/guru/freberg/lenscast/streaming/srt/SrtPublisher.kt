@@ -131,12 +131,41 @@ class SrtPublisher(
     }
 
     private fun pumpUntilClosed(s: SrtSocket) {
+        // SRT LIVE mode is built around 1316-byte (7×188) TS chunks — the default
+        // SRT_PAYLOAD_SIZE. Sending one 188-byte packet per `send()` call works but
+        // wastes ~70 % of the SRT data-packet overhead, which is exactly what causes
+        // the TSBPD `RCV-DROPPED` flood when the receiver's latency window is small.
+        // We coalesce up to 7 TS packets into a single send and flush whenever we'd
+        // otherwise wait more than 5 ms — that's tight enough to keep glass-to-glass
+        // latency low and still amortise the SRT framing cost.
+        val bundle = ByteArray(TS_BUNDLE_BYTES)
+        var bundleOffset = 0
+        var bytesSentLog = 0L
         try {
             while (running.get() && s.isValid) {
-                val pkt = try { queue.poll(50, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { return }
-                    ?: continue
-                val n = s.send(pkt)
-                if (n > 0) bytesSent += n
+                val pkt = try { queue.poll(5, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { return }
+                if (pkt != null) {
+                    System.arraycopy(pkt, 0, bundle, bundleOffset, 188)
+                    bundleOffset += 188
+                    if (bundleOffset >= TS_BUNDLE_BYTES) {
+                        val n = s.send(bundle)
+                        if (n > 0) bytesSent += n
+                        bytesSentLog += n
+                        bundleOffset = 0
+                    }
+                } else if (bundleOffset > 0) {
+                    // No new packet in 5 ms — flush whatever's buffered so the receiver
+                    // doesn't sit waiting for the bundle to fill.
+                    val partial = bundle.copyOf(bundleOffset)
+                    val n = s.send(partial)
+                    if (n > 0) bytesSent += n
+                    bytesSentLog += n
+                    bundleOffset = 0
+                }
+                if (bytesSentLog > 0 && bytesSent % (1024 * 1024) < 4096) {
+                    // Once every ~1 MB, log progress. Helps confirm the pump is alive.
+                    Log.d(TAG, "SRT pump: ${bytesSent / 1024} KB shipped")
+                }
             }
         } catch (t: Throwable) {
             Log.w(TAG, "SRT pump ended: ${t.message}")
@@ -179,5 +208,7 @@ class SrtPublisher(
         private const val TAG = "SrtPublisher"
         // Roughly 1 MB of buffered TS at 188 bytes per packet.
         private const val MAX_QUEUE = 5000
+        // 7 × 188 = 1316. The default SRT_PAYLOAD_SIZE for LIVE mode.
+        private const val TS_BUNDLE_BYTES = 7 * 188
     }
 }
