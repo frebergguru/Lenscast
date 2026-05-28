@@ -64,6 +64,8 @@ object SettingsCodec {
             put("iso", s.iso)
             put("shutterUs", s.shutterUs)
             put("httpsEnabled", s.httpsEnabled)
+            put("callBehavior", s.callBehavior.name)
+            put("persistentWebControl", s.persistentWebControl)
         }
         return o.toString(2)
     }
@@ -113,6 +115,8 @@ object SettingsCodec {
             iso = o.optInt("iso", d.iso),
             shutterUs = o.optLong("shutterUs", d.shutterUs),
             httpsEnabled = o.optBoolean("httpsEnabled", d.httpsEnabled),
+            callBehavior = enumByName(o, "callBehavior", d.callBehavior),
+            persistentWebControl = o.optBoolean("persistentWebControl", d.persistentWebControl),
         )
     }
 

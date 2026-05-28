@@ -151,6 +151,7 @@ class RtspManager(
 
     fun setTorch(on: Boolean) { camera?.setTorch(on) }
     fun setAudioGainDb(db: Int) { audioEncoder?.setGainDb(db) }
+    fun setAudioMuted(muted: Boolean) { audioEncoder?.muted = muted }
     fun audioPeakDbfs(): Float = audioEncoder?.lastPeakDbfs() ?: -90f
 
     /** Total H.264 VCL frames produced since [start]. */

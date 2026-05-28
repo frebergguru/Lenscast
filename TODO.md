@@ -215,29 +215,28 @@ has the Linux v4l2loopback helper only.
 
 ## Open
 
-- [ ] **Persistent web control server.** The `WebControlServer` only stays
-      alive while `StreamingService` is alive — which today means a stream is
-      running, or the Activity is bound. When the user backgrounds the app
-      without streaming, the OS can reap the service and the web page
-      stops responding. Options to keep it reachable:
-      - Promote the service to a low-priority foreground notification any
-        time the web control toggle is on (just like streaming, but with a
-        different notification text).
-      - A separate "control-only" service with its own foreground type.
-      - Document the trade-off (always-on notification) and make it the
-        default; let the user opt out via Settings.
-- [ ] **Privacy / call-handling mode.** When a phone call comes in, today
-      we just keep streaming the mic — fine for some users, terrible for
-      others. Add a `Settings.callBehavior` enum the user picks once:
-      - `IGNORE` — current behaviour, audio keeps flowing.
-      - `MUTE_STREAM` — listen for `TelephonyManager.CALL_STATE_RINGING`
-        / `OFFHOOK` (via `PhoneStateListener` / `TelephonyCallback` on
-        API 31+) and zero the gain on `PcmCapture` + `AacEncoder` for the
-        call's lifetime. Resumes when state goes back to `IDLE`.
-      - `DROP_CALL` — auto-reject incoming calls so streaming is never
-        interrupted. Requires `MANAGE_OWN_CALLS` + the
-        `TelecomManager.endCall()` path. Best-effort: telephony APIs are
-        flaky across OEMs.
+- [x] **Persistent web control server.** Opt-in
+      `Settings.persistentWebControl`. When on + `webControlEnabled`, the
+      service promotes itself to a SPECIAL_USE foreground notification
+      (own low-importance channel `lenscast.webcontrol`) so the OS can't
+      reap it while the user is in another app. `BootReceiver` and
+      `MainActivity` both fire `ACTION_PERSIST_WEB` to start it cold;
+      `onCreate` observes the setting and swaps state at runtime;
+      `stopStreaming` falls back into the web notification instead of
+      dropping foreground entirely. Manifest grew `specialUse` to the
+      service's `foregroundServiceType`, a `<property>` element with the
+      Android 14 explanation, and a `FOREGROUND_SERVICE_SPECIAL_USE`
+      permission.
+- [x] **Privacy / call-handling mode.** `Settings.callBehavior` enum
+      (IGNORE / MUTE_STREAM / DROP_CALL). `TelephonyMonitor` registers a
+      `TelephonyCallback.CallStateListener` on API 31+ and falls back to
+      `PhoneStateListener` on older releases. On non-IDLE: MUTE_STREAM
+      sets a `muted` flag on `PcmCapture` + `AacEncoder` (zero the buffer
+      before gain so the wire carries true silence and the VU drops to
+      −90 dBFS); DROP_CALL calls `TelecomManager.endCall()` and falls
+      back to mute when the API is rejected. READ_PHONE_STATE +
+      ANSWER_PHONE_CALLS requested at runtime when the user picks a
+      non-IGNORE option; if denied, the monitor silently no-ops.
 
 ## Out of scope / not planned
 

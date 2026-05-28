@@ -20,6 +20,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -57,6 +60,7 @@ import androidx.compose.ui.unit.dp
 import dev.lenscast.R
 import dev.lenscast.camera.CameraCapabilities
 import dev.lenscast.prefs.AntiBanding
+import dev.lenscast.prefs.CallBehavior
 import dev.lenscast.prefs.CameraEffect
 import dev.lenscast.prefs.Fps
 import dev.lenscast.prefs.Lens
@@ -269,11 +273,10 @@ fun SettingsSheet(
             )
 
             Spacer(Modifier.height(12.dp))
-            SectionLabel(stringResource(R.string.settings_white_balance))
-            SegmentedRow(
+            EnumDropdown(
+                label = stringResource(R.string.settings_white_balance),
                 options = WhiteBalance.entries.toList(),
                 selected = settings.whiteBalance,
-                enabled = true,
                 labelOf = {
                     when (it) {
                         WhiteBalance.AUTO        -> stringResource(R.string.settings_wb_auto)
@@ -389,11 +392,10 @@ fun SettingsSheet(
             }
 
             Spacer(Modifier.height(12.dp))
-            SectionLabel(stringResource(R.string.settings_effect))
-            SegmentedRow(
+            EnumDropdown(
+                label = stringResource(R.string.settings_effect),
                 options = CameraEffect.entries.toList(),
                 selected = settings.effect,
-                enabled = true,
                 labelOf = {
                     when (it) {
                         CameraEffect.NONE       -> stringResource(R.string.effect_none)
@@ -411,11 +413,10 @@ fun SettingsSheet(
             )
 
             Spacer(Modifier.height(12.dp))
-            SectionLabel(stringResource(R.string.settings_scene))
-            SegmentedRow(
+            EnumDropdown(
+                label = stringResource(R.string.settings_scene),
                 options = SceneMode.entries.toList(),
                 selected = settings.sceneMode,
-                enabled = true,
                 labelOf = {
                     when (it) {
                         SceneMode.DISABLED  -> stringResource(R.string.scene_disabled)
@@ -494,8 +495,8 @@ fun SettingsSheet(
             )
             if (settings.audioEnabled) {
                 Spacer(Modifier.height(8.dp))
-                SectionLabel(stringResource(R.string.settings_mic_source))
-                    SegmentedRow(
+                    EnumDropdown(
+                        label = stringResource(R.string.settings_mic_source),
                         options = MicSource.entries.toList(),
                         selected = settings.micSource,
                         enabled = !streaming,
@@ -664,6 +665,44 @@ fun SettingsSheet(
                 }
             }
 
+            Spacer(Modifier.height(12.dp))
+            // Permission prompt — fired the first time the user picks a non-IGNORE option.
+            // TelephonyMonitor handles missing permission gracefully (silently no-ops), so
+            // a denial doesn't break anything, just makes the feature inert.
+            val phonePermLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestMultiplePermissions(),
+            ) { /* result ignored — service falls back if missing */ }
+            EnumDropdown(
+                label = stringResource(R.string.settings_call_behavior),
+                options = CallBehavior.entries.toList(),
+                selected = settings.callBehavior,
+                labelOf = {
+                    when (it) {
+                        CallBehavior.IGNORE      -> stringResource(R.string.call_ignore)
+                        CallBehavior.MUTE_STREAM -> stringResource(R.string.call_mute)
+                        CallBehavior.DROP_CALL   -> stringResource(R.string.call_drop)
+                    }
+                },
+                onSelect = { newBehavior ->
+                    onChange(settings.copy(callBehavior = newBehavior))
+                    if (newBehavior != CallBehavior.IGNORE) {
+                        val needed = mutableListOf(android.Manifest.permission.READ_PHONE_STATE)
+                        if (newBehavior == CallBehavior.DROP_CALL) {
+                            needed += android.Manifest.permission.ANSWER_PHONE_CALLS
+                        }
+                        phonePermLauncher.launch(needed.toTypedArray())
+                    }
+                },
+            )
+            if (settings.callBehavior != CallBehavior.IGNORE) {
+                Text(
+                    text = stringResource(R.string.settings_call_behavior_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+
             } // ← close Security & access card
 
             SettingsGroup(title = "Automation") {
@@ -703,6 +742,19 @@ fun SettingsSheet(
                     enabled = true,
                     onPortChange = { onChange(settings.copy(webControlPort = it)) },
                 )
+                ToggleRow(
+                    title = stringResource(R.string.settings_persist_web),
+                    checked = settings.persistentWebControl,
+                    onCheckedChange = { onChange(settings.copy(persistentWebControl = it)) },
+                )
+                if (settings.persistentWebControl) {
+                    Text(
+                        text = stringResource(R.string.settings_persist_web_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
             }
 
             } // ← close Web control panel card
@@ -825,6 +877,54 @@ private fun SectionLabel(text: String) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(bottom = 8.dp),
     )
+}
+
+/**
+ * Picker row backed by [ExposedDropdownMenuBox] — same role as [SegmentedRow] but for
+ * long option lists that would otherwise squash labels into single-character columns.
+ * Used for white balance (6), effect (9) and scene mode (11).
+ */
+@Composable
+private fun <T> EnumDropdown(
+    label: String,
+    options: List<T>,
+    selected: T,
+    labelOf: @Composable (T) -> String,
+    onSelect: (T) -> Unit,
+    enabled: Boolean = true,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val currentLabel = labelOf(selected)
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { if (enabled) expanded = it else expanded = false },
+    ) {
+        OutlinedTextField(
+            value = currentLabel,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            enabled = enabled,
+            modifier = Modifier
+                .menuAnchor(androidx.compose.material3.MenuAnchorType.PrimaryNotEditable, enabled)
+                .fillMaxWidth(),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            options.forEach { opt ->
+                DropdownMenuItem(
+                    text = { Text(labelOf(opt)) },
+                    onClick = {
+                        onSelect(opt)
+                        expanded = false
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable

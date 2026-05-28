@@ -18,6 +18,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import dev.lenscast.streaming.StreamingService
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import dev.lenscast.ui.MainScreen
 import dev.lenscast.ui.theme.LenscastTheme
 
@@ -47,6 +49,19 @@ class MainActivity : ComponentActivity() {
         // happens when the user taps Start so we don't need camera permission upfront.
         val intent = Intent(this, StreamingService::class.java)
         bindService(intent, connection, Context.BIND_AUTO_CREATE)
+
+        // If the user has opted into a persistent web panel, fire startForegroundService
+        // with ACTION_PERSIST_WEB so the service stays alive past Activity unbind. The
+        // service itself reconciles the actual foreground state via its Settings flow
+        // observer; this is just to start it from cold.
+        kotlinx.coroutines.MainScope().launch {
+            val s = dev.lenscast.prefs.SettingsRepository(this@MainActivity).flow.first()
+            if (s.persistentWebControl && s.webControlEnabled) {
+                val persistIntent = Intent(this@MainActivity, StreamingService::class.java)
+                    .setAction(StreamingService.ACTION_PERSIST_WEB)
+                ContextCompat.startForegroundService(this@MainActivity, persistIntent)
+            }
+        }
 
         setContent {
             val svc by serviceState

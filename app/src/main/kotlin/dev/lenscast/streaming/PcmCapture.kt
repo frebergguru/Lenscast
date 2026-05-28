@@ -39,6 +39,13 @@ class PcmCapture(
     private val peakDbfs = AtomicReference(-90f)
     fun lastPeakDbfs(): Float = peakDbfs.get()
 
+    /**
+     * Hard-mute toggle used by the call-handling path. When true the captured PCM buffer
+     * is zeroed before gain + meter, so the broadcasted stream is true silence (not just
+     * inaudibly quiet); the VU drops to -90 dBFS for the duration.
+     */
+    @Volatile var muted: Boolean = false
+
     private var recorder: AudioRecord? = null
     private var ns: NoiseSuppressor? = null
     private var aec: AcousticEchoCanceler? = null
@@ -78,6 +85,7 @@ class PcmCapture(
             while (running) {
                 val n = try { ar.read(buf, 0, buf.size) } catch (_: Throwable) { -1 }
                 if (n <= 0) continue
+                if (muted) java.util.Arrays.fill(buf, 0, n, 0)
                 applyGainAndMeter(buf, n, gainLinear)
                 if (n == buf.size) onPcm(buf.copyOf())
                 else onPcm(buf.copyOf(n))

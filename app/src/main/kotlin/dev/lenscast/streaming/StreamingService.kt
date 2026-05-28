@@ -24,6 +24,8 @@ import dev.lenscast.camera.CameraCapabilities
 import dev.lenscast.camera.CameraController
 import dev.lenscast.net.NsdAdvertiser
 import dev.lenscast.net.TlsManager
+import dev.lenscast.prefs.CallBehavior
+import dev.lenscast.system.TelephonyMonitor
 import dev.lenscast.prefs.AntiBanding
 import dev.lenscast.prefs.CameraEffect
 import dev.lenscast.prefs.MicSource
@@ -72,6 +74,10 @@ class StreamingService : LifecycleService() {
     private var nsd: NsdAdvertiser? = null
     private var webControlServer: WebControlServer? = null
     private var webControlSettings: Triple<Boolean, Int, Boolean>? = null
+    private var telephonyMonitor: TelephonyMonitor? = null
+    @Volatile private var currentCallBehavior: CallBehavior = CallBehavior.IGNORE
+    /** True while we hold a SPECIAL_USE foreground notification for the web panel. */
+    @Volatile private var persistWebForeground: Boolean = false
     private var wakeLock: PowerManager.WakeLock? = null
     private var pendingPreviewProvider: androidx.camera.core.Preview.SurfaceProvider? = null
     // (RTSP path runs without an on-device preview; see startRtsp for the reasoning.)
@@ -122,6 +128,144 @@ class StreamingService : LifecycleService() {
                     reconfigureWebControl(enabled, port, https)
                 }
         }
+        // Keep _status.value.settings in lockstep with whatever's persisted in
+        // SettingsRepository so app-side edits flow into /status (and from there
+        // into the web control panel on its next 1 Hz poll). Without this, the
+        // web sees a stale snapshot until the next web-side write.
+        lifecycleScope.launch {
+            repo.flow
+                .distinctUntilChanged()
+                .collect { s -> _status.value = _status.value.copy(settings = s) }
+        }
+        // Privacy / call-handling — observe the setting and start/stop the monitor.
+        lifecycleScope.launch {
+            repo.flow
+                .map { it.callBehavior }
+                .distinctUntilChanged()
+                .collect { configureCallMonitor(it) }
+        }
+        // Persistent web foreground — promote when the user opts in, demote when off.
+        // Only acts while no stream is running (the streaming path manages its own
+        // foreground notification with the camera type).
+        lifecycleScope.launch {
+            repo.flow
+                .map { it.persistentWebControl && it.webControlEnabled }
+                .distinctUntilChanged()
+                .collect { wantPersistent ->
+                    if (_status.value.state == State.STREAMING ||
+                        _status.value.state == State.STARTING) return@collect
+                    if (wantPersistent) showWebControlForeground()
+                    else hideWebControlForeground()
+                }
+        }
+    }
+
+    private fun showWebControlForeground() {
+        val s = _status.value.settings
+        val launchPending = PendingIntent.getActivity(
+            this, 1, Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val ip = dev.lenscast.net.NetworkUtils.getLocalIpv4(this) ?: "0.0.0.0"
+        val notif: Notification = NotificationCompat.Builder(this, LenscastApp.CHANNEL_WEB_CONTROL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(getString(R.string.notif_title_web_control))
+            .setContentText(getString(R.string.notif_text_web_control, ip, s.webControlPort))
+            .setContentIntent(launchPending)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .build()
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIF_ID, notif,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                @Suppress("DEPRECATION")
+                startForeground(NOTIF_ID, notif)
+            }
+            persistWebForeground = true
+        } catch (t: Throwable) {
+            Log.w(TAG, "showWebControlForeground failed: ${t.message}")
+        }
+    }
+
+    private fun hideWebControlForeground() {
+        if (!persistWebForeground) return
+        persistWebForeground = false
+        if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) {
+            // Streaming path is still running — leave foreground; it owns the notif now.
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        stopSelf()
+    }
+
+    private fun configureCallMonitor(behavior: CallBehavior) {
+        currentCallBehavior = behavior
+        if (behavior == CallBehavior.IGNORE) {
+            try { telephonyMonitor?.stop() } catch (_: Throwable) {}
+            telephonyMonitor = null
+            applyMute(false)
+            return
+        }
+        if (telephonyMonitor == null) {
+            val monitor = TelephonyMonitor(this, mainExecutor) { active ->
+                onCallActiveChanged(active)
+            }
+            try { monitor.start(); telephonyMonitor = monitor } catch (t: Throwable) {
+                Log.w(TAG, "TelephonyMonitor.start failed: ${t.message}")
+            }
+        }
+    }
+
+    private fun onCallActiveChanged(active: Boolean) {
+        when (currentCallBehavior) {
+            CallBehavior.IGNORE       -> applyMute(false)
+            CallBehavior.MUTE_STREAM  -> applyMute(active)
+            CallBehavior.DROP_CALL    -> {
+                if (active) {
+                    val dropped = tryEndCall()
+                    // If endCall isn't permitted on this device/skin, fall back to mute so
+                    // the user still gets *some* protection while the call connects.
+                    if (!dropped) applyMute(true) else applyMute(false)
+                } else {
+                    applyMute(false)
+                }
+            }
+        }
+    }
+
+    private fun applyMute(muted: Boolean) {
+        mjpegAudioCapture?.muted = muted
+        rtspManager?.setAudioMuted(muted)
+    }
+
+    /**
+     * Best-effort `TelecomManager.endCall()`. Requires `ANSWER_PHONE_CALLS`; if the user
+     * hasn't granted it we silently return false and the caller falls back to mute. Some
+     * OEM ROMs reject endCall from non-dialer apps even with the permission — we treat
+     * that the same as missing permission.
+     */
+    private fun tryEndCall(): Boolean {
+        return try {
+            val tm = getSystemService(android.telecom.TelecomManager::class.java)
+            if (tm == null) return false
+            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                    this, android.Manifest.permission.ANSWER_PHONE_CALLS,
+                ) != android.content.pm.PackageManager.PERMISSION_GRANTED) return false
+            tm.endCall()
+        } catch (t: Throwable) {
+            Log.w(TAG, "endCall failed: ${t.message}")
+            false
+        }
     }
 
     private fun reconfigureWebControl(enabled: Boolean, port: Int, httpsEnabled: Boolean) {
@@ -137,6 +281,11 @@ class StreamingService : LifecycleService() {
                 rtspPort = { _status.value.settings.rtspPort },
                 sslContext = if (httpsEnabled) TlsManager.sslContext() else null,
                 mjpegIsHttps = { _status.value.settings.httpsEnabled },
+                appVersion = {
+                    runCatching {
+                        packageManager.getPackageInfo(packageName, 0).versionName.orEmpty()
+                    }.getOrDefault("")
+                },
             )
             try { srv.start(); webControlServer = srv } catch (t: Throwable) {
                 Log.w(TAG, "WebControlServer start failed on port $port: ${t.message}")
@@ -150,7 +299,7 @@ class StreamingService : LifecycleService() {
         when (intent?.action) {
             ACTION_STOP -> {
                 stopStreaming()
-                stopSelf()
+                if (!persistWebForeground) stopSelf()
             }
             ACTION_START_TILE -> {
                 lifecycleScope.launch {
@@ -158,8 +307,14 @@ class StreamingService : LifecycleService() {
                     startStreaming(saved)
                 }
             }
+            ACTION_PERSIST_WEB -> {
+                // System will reap us within 5 s if startForeground isn't called.
+                showWebControlForeground()
+            }
         }
-        return START_NOT_STICKY
+        // STREAMING/persistent-web flow promotes itself; keep STICKY here so the system
+        // restarts the persistent-web case after low-memory kills.
+        return if (persistWebForeground) START_STICKY else START_NOT_STICKY
     }
 
     fun startStreaming(settings: Settings) {
@@ -519,6 +674,11 @@ class StreamingService : LifecycleService() {
                     if (streaming) return null
                     Pair({ it.copy(httpsEnabled = b) }, false)
                 }
+                "callBehavior" -> {
+                    val cb = CallBehavior.entries.firstOrNull { it.name.equals(v, true) } ?: return null
+                    Pair({ it.copy(callBehavior = cb) }, false)
+                }
+                "persistentWebControl" -> Pair({ it.copy(persistentWebControl = b) }, false)
                 "manualExposure" -> Pair({ it.copy(manualExposure = b) }, true)
                 "iso" -> {
                     val n = value.toIntOrNull() ?: return null
@@ -641,6 +801,8 @@ class StreamingService : LifecycleService() {
                 """"shutterUs":${s.shutterUs},""" +
                 """"httpsEnabled":${s.httpsEnabled},""" +
                 """"tlsFingerprint":"${TlsManager.fingerprintSha256() ?: ""}",""" +
+                """"callBehavior":"${lower(s.callBehavior)}",""" +
+                """"persistentWebControl":${s.persistentWebControl},""" +
                 """"supportsManualSensor":${CameraCapabilities.supportsManualSensor(this@StreamingService, s.lens)},""" +
                 """"isoRange":${CameraCapabilities.isoRange(this@StreamingService, s.lens)?.let { "[${it.lower},${it.upper}]" } ?: "null"},""" +
                 """"shutterRangeUs":${CameraCapabilities.exposureTimeRangeNs(this@StreamingService, s.lens)?.let { "[${it.lower / 1000L},${it.upper / 1000L}]" } ?: "null"},""" +
@@ -974,17 +1136,29 @@ class StreamingService : LifecycleService() {
         try { cameraController?.unbind() } catch (_: Throwable) {}
         previewBoundKey = null
         releaseWakeLock()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
+        // After streaming, decide where the service goes next: persistent web control
+        // foreground (if the user opted in) or out of foreground entirely.
+        val s = _status.value.settings
+        val wantPersistent = s.persistentWebControl && s.webControlEnabled
+        if (wantPersistent) {
+            // Reuse the foreground state by swapping the notification to the web one.
+            persistWebForeground = false  // will be re-set inside showWebControlForeground
+            showWebControlForeground()
         } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
         }
         _status.value = Status(state = State.IDLE, settings = _status.value.settings)
     }
 
     override fun onDestroy() {
         stopStreaming()
+        try { telephonyMonitor?.stop() } catch (_: Throwable) {}
+        telephonyMonitor = null
         try { webControlServer?.stop() } catch (_: Throwable) {}
         webControlServer = null
         try { cameraController?.shutdown() } catch (_: Throwable) {}
@@ -1048,5 +1222,12 @@ class StreamingService : LifecycleService() {
         private const val NOTIF_ID = 0xCA1
         const val ACTION_STOP = "dev.lenscast.action.STOP"
         const val ACTION_START_TILE = "dev.lenscast.action.START_TILE"
+        /**
+         * Internal action: promote the service to a SPECIAL_USE foreground notification so
+         * the web control panel stays reachable while the app is backgrounded. Fired by the
+         * boot receiver, by MainActivity on launch, and by `reconfigurePersistentForeground`
+         * inside the service itself when the setting flips on at runtime.
+         */
+        const val ACTION_PERSIST_WEB = "dev.lenscast.action.PERSIST_WEB"
     }
 }

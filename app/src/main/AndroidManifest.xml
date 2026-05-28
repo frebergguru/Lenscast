@@ -15,9 +15,16 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- Persistent web control panel: keeps the HTTP server alive even when no stream
+         is running, via a low-priority SPECIAL_USE foreground notification. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Privacy mode: observe call state so streaming audio can mute on incoming calls. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- Privacy mode → DROP_CALL: end the incoming call instead of letting it interrupt. -->
+    <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
 
     <application
         android:name=".LenscastApp"
@@ -46,7 +53,12 @@
         <service
             android:name=".streaming.StreamingService"
             android:exported="false"
-            android:foregroundServiceType="camera|microphone" />
+            android:foregroundServiceType="camera|microphone|specialUse">
+            <!-- API 34+ requires an explanation for the SPECIAL_USE foreground type. -->
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Long-running HTTP control panel that lets the user start, stop and tune a stream from any browser on the LAN, even while the Lenscast app is backgrounded." />
+        </service>
 
         <receiver
             android:name=".system.BootReceiver"

@@ -58,10 +58,12 @@ class SettingsRepository(private val context: Context) {
             prefs[K_RECORD] = next.recordLocally
             prefs[K_WC_ENABLED] = next.webControlEnabled
             prefs[K_WC_PORT] = next.webControlPort.coerceIn(1024, 65535)
+            prefs[K_WC_PERSIST] = next.persistentWebControl
             prefs[K_MANUAL_EXP] = next.manualExposure
             prefs[K_ISO] = next.iso
             prefs[K_SHUTTER] = next.shutterUs
             prefs[K_HTTPS] = next.httpsEnabled
+            prefs[K_CALL_BEHAVIOR] = next.callBehavior.ordinal
         }
     }
 
@@ -99,10 +101,12 @@ class SettingsRepository(private val context: Context) {
         recordLocally = p[K_RECORD] ?: false,
         webControlEnabled = p[K_WC_ENABLED] ?: true,
         webControlPort = (p[K_WC_PORT] ?: 8080).coerceIn(1024, 65535),
+        persistentWebControl = p[K_WC_PERSIST] ?: false,
         manualExposure = p[K_MANUAL_EXP] ?: false,
         iso = p[K_ISO] ?: 100,
         shutterUs = p[K_SHUTTER] ?: 16_666L,
         httpsEnabled = p[K_HTTPS] ?: false,
+        callBehavior = CallBehavior.entries.getOrNull(p[K_CALL_BEHAVIOR] ?: 0) ?: CallBehavior.IGNORE,
     )
 
     /**
@@ -164,9 +168,11 @@ class SettingsRepository(private val context: Context) {
         val K_RECORD = booleanPreferencesKey("record_locally")
         val K_WC_ENABLED = booleanPreferencesKey("web_control_enabled")
         val K_WC_PORT = intPreferencesKey("web_control_port")
+        val K_WC_PERSIST = booleanPreferencesKey("web_control_persist")
         val K_MANUAL_EXP = booleanPreferencesKey("manual_exposure")
         val K_ISO = intPreferencesKey("iso")
         val K_SHUTTER = longPreferencesKey("shutter_us")
         val K_HTTPS = booleanPreferencesKey("https_enabled")
+        val K_CALL_BEHAVIOR = intPreferencesKey("call_behavior")
     }
 }

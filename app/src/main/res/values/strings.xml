@@ -60,6 +60,10 @@
 
     <string name="notif_channel_streaming">Streaming</string>
     <string name="notif_channel_streaming_description">Shown while Lenscast is actively streaming to your PC.</string>
+    <string name="notif_channel_web_control">Web control panel</string>
+    <string name="notif_channel_web_control_description">Persistent low-priority notification shown while the web control panel is reachable in the background.</string>
+    <string name="notif_title_web_control">Web control panel running</string>
+    <string name="notif_text_web_control">http://%1$s:%2$d/  ·  tap to open Lenscast</string>
     <string name="notif_title_streaming">Lenscast is streaming</string>
     <string name="notif_text_streaming">%1$s on port %2$d</string>
     <string name="notif_action_stop">Stop</string>
@@ -98,6 +102,11 @@
     <string name="settings_password_hint">Leave blank for open access. Username: lenscast</string>
     <string name="settings_https">HTTPS (self-signed cert)</string>
     <string name="settings_https_hint">Receivers will see a "self-signed" warning the first time — click through. Cert fingerprint:</string>
+    <string name="settings_call_behavior">When a phone call comes in</string>
+    <string name="settings_call_behavior_hint">Needs the Phone permission to detect calls. "Drop call" also needs ANSWER_PHONE_CALLS — some OEM ROMs ignore it.</string>
+    <string name="call_ignore">Ignore (audio keeps flowing)</string>
+    <string name="call_mute">Mute the stream during the call</string>
+    <string name="call_drop">Drop the call automatically</string>
 
     <string name="settings_backup_section">Backup</string>
     <string name="settings_export">Export settings</string>
@@ -187,4 +196,6 @@
     <string name="settings_web_control_enabled">Run the web control panel</string>
     <string name="settings_web_control_port">Web control port</string>
     <string name="settings_web_control_hint">Open <code>http://&lt;phone-ip&gt;:%1$d/</code> on any LAN device to start/stop and tune the stream.</string>
+    <string name="settings_persist_web">Keep web panel reachable in background</string>
+    <string name="settings_persist_web_hint">Adds a persistent low-priority notification so the panel keeps working when you switch to another app. Without this, the OS can kill the server within seconds.</string>
 </resources>

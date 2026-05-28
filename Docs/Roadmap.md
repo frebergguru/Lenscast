@@ -90,6 +90,38 @@
 - **Web control — JPEG quality slider** — debounced `POST /control/quality?v=NN`
   endpoint; the slider in the landing page updates `CameraController.jpegQuality`
   live without rebinding the camera.
+- **Persistent web control panel.** Opt-in `Settings.persistentWebControl`.
+  When the user turns it on, `StreamingService` promotes itself to a
+  low-importance SPECIAL_USE foreground notification so the OS can't reap
+  it when the app is backgrounded. `BootReceiver` brings it up after
+  reboot, `MainActivity` covers cold launches, and `stopStreaming` falls
+  back into the web notification instead of leaving foreground entirely.
+  Manifest gained `specialUse` + the Android-14 `<property>` explanation
+  and `FOREGROUND_SERVICE_SPECIAL_USE` permission.
+- **Picker overflow fix.** Enum pickers for white balance (6), effect
+  (9), scene (11), mic source (5) and call behaviour (3 long labels) now
+  use an `ExposedDropdownMenu` instead of the M3 segmented row that was
+  squashing labels into single-character vertical columns.
+- **Privacy / call-handling mode.** `Settings.callBehavior` (IGNORE /
+  MUTE_STREAM / DROP_CALL). `TelephonyMonitor` watches CallState via
+  `TelephonyCallback` on API 31+ and the deprecated `PhoneStateListener`
+  on older. On non-IDLE: MUTE_STREAM zeros the PcmCapture / AacEncoder
+  buffer before gain (true silence on the wire, VU drops to −90 dBFS);
+  DROP_CALL tries `TelecomManager.endCall()` and falls back to mute if
+  the API is rejected by an OEM ROM. Runtime permissions
+  (READ_PHONE_STATE + ANSWER_PHONE_CALLS for drop) are requested when
+  the user picks a non-IGNORE option; denial leaves the feature inert.
+- **Web ↔ app live sync.** `StreamingService.onCreate` now observes the
+  whole `SettingsRepository.flow` and copies it into `_status.value.settings`,
+  so edits made in the phone Settings sheet flow into `/status` on the
+  next 1 Hz web poll. App reads via `repo.flow.collectAsState`, so the
+  reverse direction already worked. Net effect: editing on either side
+  updates the other within ~1 second.
+- **Web UI quick-pass.** Resolution + FPS pickers moved to the Camera
+  tab of the Settings panel so they're available before Start (not only
+  inside the streaming-only Quick controls card). App version surfaced
+  in the page footer; passed in via a new `appVersion` lambda on
+  `WebControlServer`.
 - **Web control panel redesign.** Full rewrite of `WebControlServer.renderLandingHtml`
   with a modern design system (CSS variables, consistent spacing, sticky header
   with state badge). Two-column grid on desktop, single-column stack on mobile.

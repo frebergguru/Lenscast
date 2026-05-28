@@ -53,6 +53,8 @@ class WebControlServer(
     private val sslContext: SSLContext? = null,
     /** True when MJPEG is also serving HTTPS; the page uses https:// for the preview URL. */
     private val mjpegIsHttps: () -> Boolean = { false },
+    /** App version string (e.g. "1.0.1") — rendered in the page footer. */
+    private val appVersion: () -> String = { "" },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var server: ServerSocket? = null
@@ -269,6 +271,7 @@ class WebControlServer(
         val mjpegPortNow = mjpegPort()
         val rtspPortNow = rtspPort()
         val initialQuality = control.jpegQuality()
+        val version = appVersion().ifEmpty { "" }
         return """
             <!doctype html>
             <html><head><title>Lenscast Control</title>
@@ -590,6 +593,14 @@ class WebControlServer(
                       </div>
                     </div>
                     <div class="field">
+                      <div class="l">Resolution<small>Available list comes from the active lens's capability map</small></div>
+                      <div class="c"><select id="res-sel-tab"></select></div>
+                    </div>
+                    <div class="field">
+                      <div class="l">FPS<small>Valid range depends on lens × resolution × protocol</small></div>
+                      <div class="c"><select id="fps-sel-tab"></select></div>
+                    </div>
+                    <div class="field">
                       <div class="l">Rotation lock<small>MJPEG output direction</small></div>
                       <div class="c">
                         <select data-setting="rotationLock">
@@ -799,6 +810,21 @@ class WebControlServer(
                     </div>
                     <div class="divider"></div>
                     <div class="field">
+                      <div class="l">Incoming call behavior<small>Needs READ_PHONE_STATE; DROP also needs ANSWER_PHONE_CALLS</small></div>
+                      <div class="c">
+                        <select data-setting="callBehavior">
+                          <option value="ignore">Ignore (audio keeps flowing)</option>
+                          <option value="mute_stream">Mute the stream</option>
+                          <option value="drop_call">Drop the call</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="l">Keep web panel reachable in background<small>Adds a persistent low-priority notification</small></div>
+                      <div class="c"><input type="checkbox" data-setting="persistentWebControl"></div>
+                    </div>
+                    <div class="divider"></div>
+                    <div class="field">
                       <div class="l">Export settings</div>
                       <div class="c"><a href="/export" download="lenscast-settings.json" class="btn">Download JSON</a></div>
                     </div>
@@ -833,7 +859,7 @@ class WebControlServer(
                 document.getElementById('rtsp-url').textContent =
                   'rtsp://' + host + ':' + rtspPort + '/lenscast';
                 document.getElementById('footer-text').textContent =
-                  'Lenscast control panel · ' + host;
+                  'Lenscast ${if (version.isEmpty()) "" else "v$version "}· control panel · ' + host;
 
                 // ── Toast (replaces the old #msg single-line strip) ──
                 const toast = document.getElementById('toast');
@@ -935,10 +961,10 @@ class WebControlServer(
                     el.appendChild(o);
                   }
                 }
-                document.getElementById('res-sel').addEventListener('change', e =>
-                  post('resolution', 'v=' + encodeURIComponent(e.target.value)));
-                document.getElementById('fps-sel').addEventListener('change', e =>
-                  post('fps', 'v=' + encodeURIComponent(e.target.value)));
+                ['res-sel', 'res-sel-tab'].forEach(id => document.getElementById(id)
+                  .addEventListener('change', e => post('resolution', 'v=' + encodeURIComponent(e.target.value))));
+                ['fps-sel', 'fps-sel-tab'].forEach(id => document.getElementById(id)
+                  .addEventListener('change', e => post('fps', 'v=' + encodeURIComponent(e.target.value))));
 
                 function setIfNotFocused(el, value) {
                   if (el === document.activeElement) return;
@@ -996,11 +1022,17 @@ class WebControlServer(
                   // JPEG quality slider only matters for MJPEG
                   show('quality-row', live && s.protocol === 'mjpeg');
 
-                  // Resolution / FPS pickers (from per-lens capability lists)
-                  if (live && Array.isArray(s.availableResolutions))
-                    populateSelect(document.getElementById('res-sel'), s.availableResolutions, s.resolution);
-                  if (live && Array.isArray(s.availableFps))
-                    populateSelect(document.getElementById('fps-sel'), s.availableFps, s.targetFps);
+                  // Resolution / FPS pickers — populated whenever the status carries the
+                  // capability lists, so the Camera tab picker works idle *and* live, and
+                  // the Quick-controls picker mirrors it while streaming.
+                  if (Array.isArray(s.availableResolutions)) {
+                    populateSelect(document.getElementById('res-sel'),     s.availableResolutions, s.resolution);
+                    populateSelect(document.getElementById('res-sel-tab'), s.availableResolutions, s.resolution);
+                  }
+                  if (Array.isArray(s.availableFps)) {
+                    populateSelect(document.getElementById('fps-sel'),     s.availableFps, s.targetFps);
+                    populateSelect(document.getElementById('fps-sel-tab'), s.availableFps, s.targetFps);
+                  }
 
                   // Protocol radios (idle screen only)
                   document.querySelectorAll('input[name=proto]').forEach(r => {

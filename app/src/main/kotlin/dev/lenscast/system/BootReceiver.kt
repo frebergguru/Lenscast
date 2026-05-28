@@ -36,6 +36,12 @@ class BootReceiver : BroadcastReceiver() {
                     val svcIntent = Intent(context, StreamingService::class.java)
                         .setAction(StreamingService.ACTION_START_TILE)
                     ContextCompat.startForegroundService(context, svcIntent)
+                } else if (settings.persistentWebControl && settings.webControlEnabled) {
+                    // No auto-start, but the user wants the web panel always reachable —
+                    // bring the service up in its low-priority foreground mode.
+                    val svcIntent = Intent(context, StreamingService::class.java)
+                        .setAction(StreamingService.ACTION_PERSIST_WEB)
+                    ContextCompat.startForegroundService(context, svcIntent)
                 }
             } catch (_: Throwable) {
                 // Boot is a hostile environment — battery saver, locked DataStore, no perms.

@@ -51,6 +51,9 @@ class AacEncoder(
     private val peakDbfs = AtomicReference(-90f)
     fun lastPeakDbfs(): Float = peakDbfs.get()
 
+    /** Hard-mute (true silence on the wire) — used by the privacy / call-handling path. */
+    @Volatile var muted: Boolean = false
+
     private var codec: MediaCodec? = null
     private var recorder: AudioRecord? = null
     private var ns: NoiseSuppressor? = null
@@ -139,6 +142,7 @@ class AacEncoder(
             // Read PCM and queue input.
             val n = try { ar.read(pcm, 0, pcm.size) } catch (_: Throwable) { -1 }
             if (n <= 0) continue
+            if (muted) java.util.Arrays.fill(pcm, 0, n, 0)
             applyGainAndMeter(pcm, n, gainLinear)
             val inIdx = try { c.dequeueInputBuffer(10_000) } catch (_: Throwable) { -1 }
             if (inIdx < 0) continue
