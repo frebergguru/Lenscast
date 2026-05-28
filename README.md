@@ -21,7 +21,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
 1. Open Lenscast on the phone, grant camera + notifications permission.
-2. Tap **Start streaming**.
+2. Tap **Start streaming** — or open `http://<phone-ip>:8080/` from any browser on the
+   LAN and use the web control panel.
 3. In OBS: **Sources → + → Media Source**, uncheck "Local File", paste the URL the app
    shows you (e.g. `http://192.168.1.42:4747/video`).
 
@@ -30,18 +31,66 @@ Full setup, USB tethering, and troubleshooting are in
 
 ## Features
 
-- Material 3 Compose UI, dynamic color on Android 12+
-- Live preview before you start streaming
-- Front / back camera with mid-stream lens switching
-- Flashlight toggle, configurable resolution (480p / 720p / 1080p), FPS, JPEG quality
-- MJPEG (any orientation) or RTSP H.264 + AAC (landscape only, up to 240 fps)
-- Linux v4l2loopback helper turns the stream into a regular system webcam
-- DeviceAsWebcam nudge on supported Android 14+ devices (Pixel 8+ and similar)
-- Manually configurable server port per protocol (1024–65535)
-- Foreground service that survives screen lock
-- One tap to copy the stream URL or the `adb forward` command
-- Browser-friendly landing page at `/` for quick sanity checks
-- Snapshot endpoint at `/shot.jpg`
+**Streaming**
+
+- **MJPEG-over-HTTP** (default 4747, any orientation, up to 30 fps) and **RTSP** (H.264 +
+  AAC, default 5540, landscape only, up to 240 fps via Camera2 high-speed sessions)
+- **Audio sidecar** on both transports — RTSP carries audio in-session; MJPEG exposes a
+  PCM-16LE WAV stream at `/audio` with near-zero receiver-side buffering
+- **Local recording** — RTSP-only toggle that mirrors the live encoders to an MP4 in
+  `Movies/Lenscast/` while you stream
+- **HTTPS toggle** — self-signed cert generated via AndroidKeyStore, fingerprint shown
+  in the app and on the web panel
+- **HTTP Basic auth** passcode for the MJPEG endpoints (`/video`, `/shot.jpg`, `/audio`)
+- **mDNS / NSD advertisement** — OBS, VLC and Bonjour-aware tools discover the phone
+  without typing an IP
+- **Foreground service** that survives screen lock; **Quick Settings tile** to toggle
+  streaming from the notification shade; **auto-start on launch** + **start-on-boot**
+  options
+
+**Web control panel** (`http://<phone-ip>:8080/`)
+
+- Independent HTTP server, configurable port, runs whenever the app is alive
+- Pick MJPEG or RTSP and **Start streaming** straight from a browser
+- Full Settings parity with the app — camera / image / audio / stream / UX / automation
+  / server ports / security
+- Live preview embedded for MJPEG; RTSP URL hint for the OBS-side workflow
+- `GET /export` + `POST /import` for backing settings up between devices
+
+**Camera controls**
+
+- Front / back lens with mid-stream switching, **pinch-to-zoom**, **tap-to-focus**,
+  **mirror** flip, **continuous-AF** toggle, **manual focus** with diopter slider
+- **Exposure compensation**, **white balance**, **anti-flicker**, **camera effects**
+  (mono / sepia / negative / aqua / solarize / posterize / blackboard / whiteboard),
+  **scene modes** (action / portrait / night / sports / fireworks / beach / snow /
+  sunset…)
+- **Manual exposure** — ISO + shutter sliders clamped to the lens's reported ranges
+  (hidden on lenses without the MANUAL_SENSOR capability)
+- **Snapshot** to `Pictures/Lenscast/` via overlay button (long-press for a 5-shot burst)
+- **Rotation lock** — Auto / Portrait / Landscape ← / Landscape → / Portrait ⤓
+- **Picture-in-picture** when you press Home while streaming
+- **Battery-saver** blank-preview mode
+
+**Audio polish (RTSP path)**
+
+- Microphone source picker (Camcorder / Default / Voice recog / Voice comm / Unprocessed)
+- Software gain stage (-24 to +24 dB), noise suppression and echo-cancel toggles, live
+  VU meter
+
+**Webcam paths**
+
+- Linux **v4l2loopback** helper (`pc/lenscast-virtualcam`) with audio forwarding,
+  reconnect, HTTPS support, and a `--doctor` mode that sanity-checks the system
+- **DeviceAsWebcam** deep-link on Android 14+ devices that ship the system service
+
+**UI**
+
+- Material 3 Compose UI with dynamic colour on Android 12+
+- Live preview before streaming, on-camera overlay for the common controls, a stats
+  row with FPS / clients / audio peak while streaming
+- Tap-to-copy stream URLs, USB-tethering URL, `adb forward` command, and the audio /
+  web-control / RTSP URLs as they apply
 
 ## Docs
 
@@ -50,6 +99,7 @@ Full setup, USB tethering, and troubleshooting are in
 | [Build.md](Docs/Build.md)                          | JDK / SDK / build environment setup on Manjaro / Arch         |
 | [OBS-Integration.md](Docs/OBS-Integration.md)      | OBS Media Source config, Wi-Fi vs USB, troubleshooting        |
 | [Webcam.md](Docs/Webcam.md)                        | Using Lenscast as a regular system webcam (Linux + OBS paths) |
+| [USB.md](Docs/USB.md)                              | Streaming over USB via `adb forward` (no Wi-Fi needed)        |
 | [Architecture.md](Docs/Architecture.md)            | Module layout, design decisions, threading model              |
 | [Roadmap.md](Docs/Roadmap.md)                      | Planned and shipped features, plus what's deliberately out    |
 
