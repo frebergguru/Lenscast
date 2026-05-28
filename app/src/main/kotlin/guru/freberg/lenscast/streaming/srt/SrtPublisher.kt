@@ -136,6 +136,16 @@ class SrtPublisher(
         // the receiver. Required when we set LATENCY.
         s.setSockFlag(SockOpt.TRANSTYPE, Transtype.LIVE)
         s.setSockFlag(SockOpt.LATENCY, config.latencyMs)
+        // Bump the SRT send buffer well above the default 8 MB so a 4K keyframe
+        // (~100 KB → 530 TS packets in one burst from the encoder) never overflows.
+        // Without this, large keyframes occasionally truncate when the buffer's full
+        // and the receiver sees a corrupt frame's worth of macroblock concealment.
+        s.setSockFlag(SockOpt.SNDBUF, 32 * 1024 * 1024)
+        s.setSockFlag(SockOpt.RCVBUF, 32 * 1024 * 1024)
+        // OHEADBW: percent of the input bandwidth SRT is allowed to use for retransmits.
+        // Default is 25 %; raising it to 50 % gives SRT more headroom to recover lost
+        // packets on jittery WiFi, at the cost of a bit more bandwidth.
+        s.setSockFlag(SockOpt.OHEADBW, 50)
         if (config.passphrase.isNotEmpty()) {
             // 16/24/32-byte AES key length. We use 16 (AES-128) which is libsrt's default.
             s.setSockFlag(SockOpt.PASSPHRASE, config.passphrase)
@@ -163,8 +173,19 @@ class SrtPublisher(
         var bytesSentLog = 0L
         try {
             while (running.get() && s.isValid) {
-                val pkt = try { queue.poll(5, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { return }
+                // 1 ms poll — keeps the bundle-flush loop tight at high bitrates. The
+                // previous 5 ms gave us 200 polls/sec while a 16 Mbps stream produces
+                // ~10 600 packets/sec, so we'd burst-send dozens of bundles per poll
+                // window. SRT's send buffer pacing didn't love it.
+                val pkt = try { queue.poll(1, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { return }
                 if (pkt != null) {
+                    if (bundleOffset + 188 > bundle.size) {
+                        // Defensive: should never happen with the size check below, but if
+                        // it ever did, ship what we have rather than corrupt memory.
+                        val n = s.send(bundle.copyOf(bundleOffset))
+                        if (n > 0) bytesSent += n
+                        bundleOffset = 0
+                    }
                     System.arraycopy(pkt, 0, bundle, bundleOffset, 188)
                     bundleOffset += 188
                     if (bundleOffset >= TS_BUNDLE_BYTES) {
@@ -234,8 +255,9 @@ class SrtPublisher(
 
     companion object {
         private const val TAG = "SrtPublisher"
-        // Roughly 1 MB of buffered TS at 188 bytes per packet.
-        private const val MAX_QUEUE = 5000
+        // ~4 MB of buffered TS at 188 bytes per packet — enough to absorb the
+        // ~530-packet burst of a 4K keyframe without forcing the muxer into back-pressure.
+        private const val MAX_QUEUE = 20_000
         // 7 × 188 = 1316. The default SRT_PAYLOAD_SIZE for LIVE mode.
         private const val TS_BUNDLE_BYTES = 7 * 188
     }

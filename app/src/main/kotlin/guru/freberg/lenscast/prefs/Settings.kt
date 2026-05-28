@@ -226,7 +226,7 @@ data class Settings(
      * cellular uplinks. Lower = lower glass-to-glass delay at the cost of more
      * dropped frames under packet loss.
      */
-    val srtLatencyMs: Int = 200,
+    val srtLatencyMs: Int = 500,
     /**
      * Optional `streamid` for the listener to route the connection. The CALLER
      * sends it on connect; LISTENER-side filtering is the receiver's job.
