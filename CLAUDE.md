@@ -7,9 +7,12 @@ client) can consume directly. Two streaming protocols are live today:
 - **RTSP** (H.264 + AAC, default port 5540) — locked to the sensor's native landscape
   orientation, supports 60/120/240 fps via Camera2 high-speed sessions.
 
-Both ports are user-editable in the Settings sheet (range 1024–65535). Planned: USB UVC
-webcam mode. The project deliberately has **no PC-side software** — OBS connects via its
-built-in Media Source.
+Both ports are user-editable in the Settings sheet (range 1024–65535). For
+"phone-as-regular-webcam" use cases (Zoom, Chrome, Discord) there's an optional Linux
+helper at `pc/lenscast-virtualcam` and a DeviceAsWebcam nudge in the Settings sheet for
+Android 14+ devices that ship the system service. OBS users don't need either —
+OBS reads the MJPEG/RTSP URL via its built-in Media Source. See
+[Docs/Webcam.md](Docs/Webcam.md).
 
 This was renamed from "OBSCam" in May 2026 (the original name was already taken by
 another project, and Lenscast covers the future non-OBS use cases too).
@@ -115,5 +118,7 @@ adb shell am force-stop dev.lenscast.debug
 
 - [Docs/Build.md](Docs/Build.md) — JDK / SDK / build setup
 - [Docs/OBS-Integration.md](Docs/OBS-Integration.md) — OBS source config + troubleshooting
+- [Docs/Webcam.md](Docs/Webcam.md) — Lenscast as a regular system webcam (Linux helper + OBS Virtual Camera)
 - [Docs/Architecture.md](Docs/Architecture.md) — full design rationale
 - [Docs/Roadmap.md](Docs/Roadmap.md) — what's planned and how to add it
+- `pc/` — Linux v4l2loopback helper (`lenscast-virtualcam`); not part of the APK build

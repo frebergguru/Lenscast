@@ -8,6 +8,13 @@
 - Foreground service that survives screen-lock
 - Tap-to-copy connection URLs, settings sheet, Material 3 UI
 - Per-protocol port is user-editable in the Settings sheet (1024–65535)
+- **Linux virtual-camera helper** (`pc/lenscast-virtualcam`) — phone shows up as
+  `/dev/videoN` for Zoom / Chrome / Discord / OBS via `v4l2loopback`. See
+  [Webcam.md](Webcam.md).
+- **DeviceAsWebcam nudge** — on Android 14+ devices that ship the system
+  DeviceAsWebcam service (Pixel 8+, some other OEMs), the Settings sheet offers a
+  deep-link into USB preferences so the user can flip the system-level "Use phone
+  as webcam" toggle. The actual UVC frames come from the OS, not from Lenscast.
 
 ## Known architectural cap: MJPEG ≤ 30 fps
 
@@ -67,24 +74,30 @@ Media Source → Transform → Rotate 90° CW (or use a filter). Lossless for th
 
 ## Planned
 
-### USB UVC webcam mode
+### Native UVC gadget from inside Lenscast — not feasible from a third-party app
 
-Android 14+ supports the `UsbManager` UVC (USB Video Class) gadget mode on devices with
-USB role-switch capability. The phone could present itself to a connected PC as a
-plug-and-play webcam — no `adb reverse`, no app on the PC. The OS picks it up like any
-other webcam.
+The dream version of "phone as webcam" is the phone presenting itself to the PC as
+a UVC (USB Video Class) device with Lenscast supplying the frames. This is **not
+reachable from a regular app**, even on Android 14+:
 
-Sketch of the integration:
-- New "USB Webcam" protocol entry alongside MJPEG in `Settings`.
-- A `UvcGadgetSession` that, when activated, programs the device's USB role to gadget,
-  exposes the video function, and pipes CameraX frames into the gadget surface via the
-  `DeviceAsWebcam` AIDL interface (`android.companion.virtual` / `IDeviceAsWebcam`).
-- UI: a third tile in the Settings protocol selector, or an "advanced" toggle.
+- The system DeviceAsWebcam service exists on Pixel 8+ and some OEMs, but
+  `IDeviceAsWebcam` is `@SystemApi` and only callable by platform-signed apps.
+  The frames the host PC sees come from the OS's own camera service, not from
+  Lenscast.
+- Bypassing the system service means writing to
+  `/sys/kernel/config/usb_gadget/`, which requires root and a kernel built with
+  the UVC gadget driver. Only a sliver of devices cooperate.
 
-Caveats:
-- Not all devices ship the `DeviceAsWebcam` system service. Pixel 8+ does; many OEMs
-  don't. Detect and gracefully fall back to MJPEG.
-- Requires a real cable that supports OTG and works as data, not just charging.
+Two pragmatic alternatives that **are** shipped:
+
+- **Linux PC-side helper** ([Webcam.md](Webcam.md)) — `pc/lenscast-virtualcam`
+  bridges the MJPEG stream into a `v4l2loopback` device.
+- **DeviceAsWebcam nudge** — on devices that ship the system service, the
+  Settings sheet deep-links into USB preferences so the user can enable it.
+
+A real Windows / macOS virtual-camera driver (signed DirectShow filter or macOS
+System Extension) would extend the PC-side approach to those platforms but
+brings a code-signing/notarization yak-shave that's deliberately out of scope.
 
 ### RTSP portrait support
 

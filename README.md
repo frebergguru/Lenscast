@@ -1,12 +1,16 @@
 # Lenscast
 
 Turn an Android phone into a network camera for OBS Studio (and any other HTTP client).
-Free, no watermark, no PC-side software.
+Free, no watermark.
 
 The phone runs a tiny **MJPEG-over-HTTP** server (default port 4747) and an optional
 **RTSP** server (H.264 + AAC, default port 5540, landscape only). OBS connects directly
 via its built-in **Media Source** — no plugin, no helper app. Wi-Fi and USB (via
 `adb forward`) are both supported.
+
+For apps that don't take a URL (Zoom, Chrome, Discord, Meet) Lenscast can also act as
+a regular webcam: on Linux via the included `pc/lenscast-virtualcam` helper, or on any
+platform via OBS Virtual Camera. See [Docs/Webcam.md](Docs/Webcam.md).
 
 ## Quick start
 
@@ -31,6 +35,8 @@ Full setup, USB tethering, and troubleshooting are in
 - Front / back camera with mid-stream lens switching
 - Flashlight toggle, configurable resolution (480p / 720p / 1080p), FPS, JPEG quality
 - MJPEG (any orientation) or RTSP H.264 + AAC (landscape only, up to 240 fps)
+- Linux v4l2loopback helper turns the stream into a regular system webcam
+- DeviceAsWebcam nudge on supported Android 14+ devices (Pixel 8+ and similar)
 - Manually configurable server port per protocol (1024–65535)
 - Foreground service that survives screen lock
 - One tap to copy the stream URL or the `adb forward` command
@@ -43,8 +49,9 @@ Full setup, USB tethering, and troubleshooting are in
 |----------------------------------------------------|---------------------------------------------------------------|
 | [Build.md](Docs/Build.md)                          | JDK / SDK / build environment setup on Manjaro / Arch         |
 | [OBS-Integration.md](Docs/OBS-Integration.md)      | OBS Media Source config, Wi-Fi vs USB, troubleshooting        |
+| [Webcam.md](Docs/Webcam.md)                        | Using Lenscast as a regular system webcam (Linux + OBS paths) |
 | [Architecture.md](Docs/Architecture.md)            | Module layout, design decisions, threading model              |
-| [Roadmap.md](Docs/Roadmap.md)                      | Planned: USB UVC webcam mode, RTSP, tap-to-focus, zoom        |
+| [Roadmap.md](Docs/Roadmap.md)                      | Planned and shipped features, plus what's deliberately out    |
 
 `CLAUDE.md` at the repo root is an orientation file for AI assistants — safe to ignore
 if you're a human reader.

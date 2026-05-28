@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# lenscast-virtualcam — bridge a Lenscast MJPEG stream into a Linux v4l2 device,
+# so the phone shows up as a regular webcam in Zoom, Chrome, Discord, OBS, etc.
+#
+# Wraps ffmpeg + v4l2loopback. No PC-side OBS required.
+
+set -euo pipefail
+
+URL=""
+DEVICE=""
+LABEL="Lenscast"
+FPS=""
+DOCTOR=0
+
+usage() {
+  cat <<EOF
+Usage: lenscast-virtualcam [options] <stream-url>
+
+  <stream-url>     e.g. http://192.168.1.42:4747/video
+
+Options:
+  -d, --device DEV    v4l2 loopback device (default: auto-detect, fallback /dev/video10)
+  -f, --fps N         Target framerate (default: source's native cadence)
+  -l, --label NAME    Friendly device label (used in error hints; default: Lenscast)
+      --doctor        Check prerequisites and exit
+  -h, --help          Show this help
+
+Examples:
+  lenscast-virtualcam http://192.168.1.42:4747/video
+  lenscast-virtualcam -d /dev/video20 http://192.168.1.42:4747/video
+  lenscast-virtualcam --doctor
+
+One-time setup (run once per boot, or persist in /etc/modules-load.d):
+  sudo modprobe v4l2loopback video_nr=10 card_label="Lenscast" exclusive_caps=1
+
+See pc/README.md for distro-specific install steps.
+EOF
+}
+
+doctor() {
+  local ok=1
+  echo "lenscast-virtualcam doctor:"
+  if command -v ffmpeg >/dev/null 2>&1; then
+    echo "  [ok]  ffmpeg: $(ffmpeg -version | head -n1)"
+  else
+    echo "  [!!]  ffmpeg missing — install via your package manager"
+    ok=0
+  fi
+  if lsmod 2>/dev/null | grep -q '^v4l2loopback'; then
+    echo "  [ok]  v4l2loopback module loaded"
+  elif modinfo v4l2loopback >/dev/null 2>&1; then
+    echo "  [..]  v4l2loopback installed but not loaded — run:"
+    echo "         sudo modprobe v4l2loopback video_nr=10 card_label=\"Lenscast\" exclusive_caps=1"
+  else
+    echo "  [!!]  v4l2loopback kernel module not installed"
+    ok=0
+  fi
+  if command -v v4l2-ctl >/dev/null 2>&1; then
+    echo "  [ok]  v4l2-ctl available"
+    local found
+    found="$(v4l2-ctl --list-devices 2>/dev/null | awk '/v4l2loopback/{getline; sub(/^[[:space:]]+/,""); print; exit}')"
+    if [ -n "$found" ]; then
+      echo "        loopback device: $found"
+    else
+      echo "        no loopback device visible yet"
+    fi
+  else
+    echo "  [..]  v4l2-ctl not found — install v4l-utils for nicer device listing (optional)"
+  fi
+  if [ "$ok" -eq 1 ]; then
+    echo "  ready."
+    exit 0
+  fi
+  exit 1
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d|--device) DEVICE="${2:?missing value for --device}"; shift 2 ;;
+    -f|--fps)    FPS="${2:?missing value for --fps}"; shift 2 ;;
+    -l|--label)  LABEL="${2:?missing value for --label}"; shift 2 ;;
+    --doctor)    DOCTOR=1; shift ;;
+    -h|--help)   usage; exit 0 ;;
+    --)          shift; URL="${1-}"; shift || true ;;
+    -*)          echo "unknown option: $1" >&2; usage; exit 2 ;;
+    *)           URL="$1"; shift ;;
+  esac
+done
+
+[ "$DOCTOR" -eq 1 ] && doctor
+
+if [ -z "$URL" ]; then
+  echo "error: missing stream URL" >&2
+  usage >&2
+  exit 2
+fi
+
+detect_loopback() {
+  command -v v4l2-ctl >/dev/null 2>&1 || return 1
+  v4l2-ctl --list-devices 2>/dev/null \
+    | awk '/v4l2loopback/{getline; sub(/^[[:space:]]+/,""); print; exit}'
+}
+
+if [ -z "$DEVICE" ]; then
+  DEVICE="$(detect_loopback || true)"
+  if [ -z "$DEVICE" ]; then
+    DEVICE="/dev/video10"
+  fi
+fi
+
+if [ ! -e "$DEVICE" ]; then
+  cat >&2 <<EOF
+error: $DEVICE does not exist. Load the v4l2loopback module first:
+
+  sudo modprobe v4l2loopback video_nr=10 card_label="$LABEL" exclusive_caps=1
+
+Then re-run this command, or pass --device <path> if your loopback lives elsewhere.
+EOF
+  exit 3
+fi
+
+echo "Lenscast → $DEVICE"
+echo "  source: $URL"
+echo "  Ctrl-C to stop."
+
+FPS_FLAG=()
+[ -n "$FPS" ] && FPS_FLAG=(-r "$FPS")
+
+trap 'echo; echo "stopping..."; exit 0' INT TERM
+
+# ffmpeg exits when the stream drops (phone sleep, Wi-Fi blip, app stopped).
+# Reconnect with a short backoff so unplug/replug "just works".
+while true; do
+  # MJPEG decodes to yuvj420p (JPEG full-range YUV); v4l2 consumers expect yuv420p
+  # (BT.601 limited-range). The explicit scale filter does that conversion without
+  # the implicit-range swscaler warning that ffmpeg prints otherwise.
+  ffmpeg -hide_banner -loglevel warning \
+    -fflags nobuffer -flags low_delay \
+    -f mjpeg -i "$URL" \
+    "${FPS_FLAG[@]}" \
+    -an \
+    -vf "scale=in_range=full:out_range=tv,format=yuv420p" \
+    -c:v rawvideo \
+    -f v4l2 "$DEVICE" \
+    || true
+  echo "stream dropped; reconnecting in 2s..." >&2
+  sleep 2
+done

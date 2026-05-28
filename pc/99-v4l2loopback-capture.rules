@@ -1,0 +1,16 @@
+# Tell PipeWire / wireplumber that v4l2loopback virtual devices can be captured from.
+#
+# Without this rule, udev tags v4l2loopback devices with ID_V4L_CAPABILITIES=:video_output:
+# at device creation time (no producer is writing yet, so the kernel only advertises
+# output capability). PipeWire then ignores the device because it isn't ":capture:" —
+# and any app that goes through PipeWire (kamoso, Chrome/Firefox WebRTC, Qt6 multimedia,
+# GNOME Web, etc.) silently fails to see the loopback.
+#
+# This rule overrides the tag so PipeWire enumerates the device as a capture source.
+# Install with:
+#   sudo install -m 644 99-v4l2loopback-capture.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --subsystem-match=video4linux
+#   systemctl --user restart wireplumber pipewire
+
+SUBSYSTEM=="video4linux", DEVPATH=="*/virtual/video4linux/*", ENV{ID_V4L_CAPABILITIES}=":capture:"

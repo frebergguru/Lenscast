@@ -12,6 +12,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -27,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -36,6 +38,7 @@ import dev.lenscast.prefs.Lens
 import dev.lenscast.prefs.Protocol
 import dev.lenscast.prefs.Resolution
 import dev.lenscast.prefs.Settings
+import dev.lenscast.system.SystemWebcam
 
 @Composable
 fun SettingsSheet(
@@ -196,6 +199,24 @@ fun SettingsSheet(
                 checked = settings.keepScreenOn,
                 onCheckedChange = { onChange(settings.copy(keepScreenOn = it)) },
             )
+
+            val context = LocalContext.current
+            if (SystemWebcam.isSupported(context)) {
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(16.dp))
+
+                SectionLabel(stringResource(R.string.settings_system_webcam_title))
+                Text(
+                    text = stringResource(R.string.settings_system_webcam_explainer),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+                OutlinedButton(onClick = { SystemWebcam.openUsbSettings(context) }) {
+                    Text(stringResource(R.string.settings_system_webcam_open))
+                }
+            }
         }
     }
 }
