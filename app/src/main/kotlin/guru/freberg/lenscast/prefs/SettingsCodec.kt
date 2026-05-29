@@ -122,11 +122,8 @@ object SettingsCodec {
         )
     }
 
-    private inline fun <reified T : Enum<T>> enumByName(o: JSONObject, key: String, fallback: T): T {
-        val name = o.optString(key, "")
-        if (name.isEmpty()) return fallback
-        return enumValues<T>().firstOrNull { it.name.equals(name, ignoreCase = true) } ?: fallback
-    }
+    private inline fun <reified T : Enum<T>> enumByName(o: JSONObject, key: String, fallback: T): T =
+        enumValueOrNull<T>(o.optString(key, "")) ?: fallback
 
     private fun parsePresets(arr: JSONArray?): List<Preset> {
         if (arr == null) return emptyList()
@@ -134,12 +131,10 @@ object SettingsCodec {
         for (i in 0 until arr.length()) {
             val p = arr.optJSONObject(i) ?: continue
             val name = p.optString("name", "").takeIf { it.isNotBlank() } ?: continue
-            val protocol = Protocol.entries.firstOrNull { it.name.equals(p.optString("protocol"), true) }
-                ?: continue
-            val resolution = Resolution.entries.firstOrNull { it.name.equals(p.optString("resolution"), true) }
-                ?: continue
+            val protocol = enumValueOrNull<Protocol>(p.optString("protocol")) ?: continue
+            val resolution = enumValueOrNull<Resolution>(p.optString("resolution")) ?: continue
             val fps = Fps.fromValue(p.optInt("fps", Fps.FPS30.value))
-            val lens = Lens.entries.firstOrNull { it.name.equals(p.optString("lens"), true) } ?: Lens.BACK
+            val lens = enumValueOrNull<Lens>(p.optString("lens")) ?: Lens.BACK
             out += Preset(name, protocol, resolution, fps, lens)
         }
         return out

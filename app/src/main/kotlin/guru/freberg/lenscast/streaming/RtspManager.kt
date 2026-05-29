@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import android.util.Size
 import android.view.Surface
-import android.media.MediaRecorder
 import guru.freberg.lenscast.prefs.Lens
 import guru.freberg.lenscast.prefs.MicSource
 import guru.freberg.lenscast.streaming.rtsp.AacEncoder
@@ -113,8 +112,8 @@ class RtspManager(
 
         if (config.audioEnabled) {
             val ae = AacEncoder(
-                audioSource = audioSourceFor(config.micSource),
-                gainLinear = dbToLinear(config.audioGainDb),
+                audioSource = AudioUtils.audioSourceFor(config.micSource),
+                gainLinear = AudioUtils.dbToLinear(config.audioGainDb),
                 enableNoiseSuppress = config.noiseSuppress,
                 enableEchoCancel = config.echoCancel,
             ).also { audioEncoder = it }
@@ -426,20 +425,6 @@ class RtspManager(
             lastLossReportAtMs = System.currentTimeMillis()
         }
     }
-
-    private fun audioSourceFor(src: MicSource): Int = when (src) {
-        MicSource.CAMCORDER           -> MediaRecorder.AudioSource.CAMCORDER
-        MicSource.MIC                 -> MediaRecorder.AudioSource.MIC
-        MicSource.VOICE_RECOGNITION   -> MediaRecorder.AudioSource.VOICE_RECOGNITION
-        MicSource.VOICE_COMMUNICATION -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
-        MicSource.UNPROCESSED         -> if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-            MediaRecorder.AudioSource.UNPROCESSED
-        } else {
-            MediaRecorder.AudioSource.MIC
-        }
-    }
-
-    private fun dbToLinear(db: Int): Float = Math.pow(10.0, db / 20.0).toFloat()
 
     companion object {
         private const val TAG = "RtspManager"

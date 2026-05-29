@@ -8,9 +8,6 @@ import android.media.audiofx.AcousticEchoCanceler
 import android.media.audiofx.NoiseSuppressor
 import android.util.Log
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.math.log10
-import kotlin.math.max
-import kotlin.math.pow
 
 /**
  * Direct PCM-16LE capture for the MJPEG audio sidecar. Skips MediaCodec entirely —
@@ -52,7 +49,7 @@ class PcmCapture(
     @Volatile private var running = false
     @Volatile private var captureThread: Thread? = null
 
-    fun setGainDb(db: Int) { gainLinear = 10.0.pow(db / 20.0).toFloat() }
+    fun setGainDb(db: Int) { gainLinear = AudioUtils.dbToLinear(db) }
 
     @SuppressLint("MissingPermission")
     fun start(onPcm: (ByteArray) -> Unit) {
@@ -73,7 +70,8 @@ class PcmCapture(
             return
         }
         recorder = ar
-        attachAudioEffects(ar.audioSessionId)
+        AudioUtils.attachAudioEffects(ar.audioSessionId, enableNoiseSuppress, enableEchoCancel)
+            .let { (noiseSuppressor, echoCanceler) -> ns = noiseSuppressor; aec = echoCanceler }
         ar.startRecording()
         running = true
         // Emit in ~10 ms chunks (441 samples mono) for a tight latency profile. Chosen
@@ -86,7 +84,7 @@ class PcmCapture(
                 val n = try { ar.read(buf, 0, buf.size) } catch (_: Throwable) { -1 }
                 if (n <= 0) continue
                 if (muted) java.util.Arrays.fill(buf, 0, n, 0)
-                applyGainAndMeter(buf, n, gainLinear)
+                peakDbfs.set(AudioUtils.applyGainAndMeter(buf, n, gainLinear))
                 if (n == buf.size) onPcm(buf.copyOf())
                 else onPcm(buf.copyOf(n))
             }
@@ -105,45 +103,6 @@ class PcmCapture(
         try { recorder?.release() } catch (_: Throwable) {}
         recorder = null
         peakDbfs.set(-90f)
-    }
-
-    private fun attachAudioEffects(sessionId: Int) {
-        if (enableNoiseSuppress && NoiseSuppressor.isAvailable()) {
-            try { ns = NoiseSuppressor.create(sessionId)?.apply { enabled = true } }
-            catch (t: Throwable) { Log.w(TAG, "NS attach failed: ${t.message}") }
-        }
-        if (enableEchoCancel && AcousticEchoCanceler.isAvailable()) {
-            try { aec = AcousticEchoCanceler.create(sessionId)?.apply { enabled = true } }
-            catch (t: Throwable) { Log.w(TAG, "AEC attach failed: ${t.message}") }
-        }
-    }
-
-    /** Same shape as the version inside AacEncoder — see it for the bit-twiddling notes. */
-    private fun applyGainAndMeter(buf: ByteArray, validBytes: Int, linear: Float) {
-        var peak = 0
-        val unity = linear == 1f
-        var i = 0
-        while (i + 1 < validBytes) {
-            val lo = buf[i].toInt() and 0xFF
-            val hi = buf[i + 1].toInt()
-            var sample = (hi shl 8) or lo
-            if (sample > 32767) sample -= 65536
-            if (!unity) {
-                val scaled = (sample * linear).toInt()
-                sample = when {
-                    scaled > 32767  -> 32767
-                    scaled < -32768 -> -32768
-                    else            -> scaled
-                }
-                buf[i] = (sample and 0xFF).toByte()
-                buf[i + 1] = ((sample ushr 8) and 0xFF).toByte()
-            }
-            val abs = if (sample < 0) -sample else sample
-            if (abs > peak) peak = abs
-            i += 2
-        }
-        val dbfs = if (peak == 0) -90f else max(-90f, 20f * log10(peak / 32768f))
-        peakDbfs.set(dbfs)
     }
 
     companion object {

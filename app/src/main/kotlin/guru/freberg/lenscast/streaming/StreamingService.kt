@@ -21,7 +21,6 @@ import androidx.lifecycle.lifecycleScope
 import guru.freberg.lenscast.MainActivity
 import guru.freberg.lenscast.LenscastApp
 import guru.freberg.lenscast.R
-import android.media.MediaRecorder
 import guru.freberg.lenscast.camera.CameraCapabilities
 import guru.freberg.lenscast.camera.CameraController
 import guru.freberg.lenscast.net.NsdAdvertiser
@@ -30,7 +29,7 @@ import guru.freberg.lenscast.prefs.CallBehavior
 import guru.freberg.lenscast.system.TelephonyMonitor
 import guru.freberg.lenscast.prefs.AntiBanding
 import guru.freberg.lenscast.prefs.CameraEffect
-import guru.freberg.lenscast.prefs.MicSource
+import guru.freberg.lenscast.prefs.enumValueOrNull
 import guru.freberg.lenscast.prefs.Protocol
 import guru.freberg.lenscast.prefs.SceneMode
 import guru.freberg.lenscast.prefs.Settings
@@ -407,8 +406,8 @@ class StreamingService : LifecycleService() {
             val pcm = PcmCapture(
                 sampleRateHz = ab.sampleRate,
                 channels = ab.channels,
-                audioSource = micAudioSourceFor(settings.micSource),
-                gainLinear = micDbToLinear(settings.audioGainDb),
+                audioSource = AudioUtils.audioSourceFor(settings.micSource),
+                gainLinear = AudioUtils.dbToLinear(settings.audioGainDb),
                 enableNoiseSuppress = settings.noiseSuppress,
                 enableEchoCancel = settings.echoCancel,
             )
@@ -428,21 +427,6 @@ class StreamingService : LifecycleService() {
         mjpegServer = server
         startNsd(NsdAdvertiser.TYPE_MJPEG, settings.mjpegPort)
     }
-
-    private fun micAudioSourceFor(src: MicSource): Int = when (src) {
-        MicSource.CAMCORDER           -> MediaRecorder.AudioSource.CAMCORDER
-        MicSource.MIC                 -> MediaRecorder.AudioSource.MIC
-        MicSource.VOICE_RECOGNITION   -> MediaRecorder.AudioSource.VOICE_RECOGNITION
-        MicSource.VOICE_COMMUNICATION -> MediaRecorder.AudioSource.VOICE_COMMUNICATION
-        MicSource.UNPROCESSED         -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            MediaRecorder.AudioSource.UNPROCESSED
-        } else {
-            MediaRecorder.AudioSource.MIC
-        }
-    }
-
-    private fun micDbToLinear(db: Int): Float =
-        Math.pow(10.0, db / 20.0).toFloat()
 
     /**
      * Bridge handed to [MjpegServer] for the browser control page. Keeps the server
@@ -695,23 +679,19 @@ class StreamingService : LifecycleService() {
                     Pair({ it.copy(exposureEv = ev) }, false)
                 }
                 "whiteBalance" -> {
-                    val wb = guru.freberg.lenscast.prefs.WhiteBalance.entries
-                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    val wb = enumValueOrNull<guru.freberg.lenscast.prefs.WhiteBalance>(v) ?: return null
                     Pair({ it.copy(whiteBalance = wb) }, true)
                 }
                 "antiBanding" -> {
-                    val ab = guru.freberg.lenscast.prefs.AntiBanding.entries
-                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    val ab = enumValueOrNull<guru.freberg.lenscast.prefs.AntiBanding>(v) ?: return null
                     Pair({ it.copy(antiBanding = ab) }, true)
                 }
                 "effect" -> {
-                    val e = guru.freberg.lenscast.prefs.CameraEffect.entries
-                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    val e = enumValueOrNull<guru.freberg.lenscast.prefs.CameraEffect>(v) ?: return null
                     Pair({ it.copy(effect = e) }, true)
                 }
                 "sceneMode" -> {
-                    val sm = guru.freberg.lenscast.prefs.SceneMode.entries
-                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    val sm = enumValueOrNull<guru.freberg.lenscast.prefs.SceneMode>(v) ?: return null
                     Pair({ it.copy(sceneMode = sm) }, true)
                 }
                 "manualFocus" -> Pair({ it.copy(manualFocus = b) }, true)
@@ -724,7 +704,7 @@ class StreamingService : LifecycleService() {
                     Pair({ it.copy(httpsEnabled = b) }, false)
                 }
                 "callBehavior" -> {
-                    val cb = CallBehavior.entries.firstOrNull { it.name.equals(v, true) } ?: return null
+                    val cb = enumValueOrNull<CallBehavior>(v) ?: return null
                     Pair({ it.copy(callBehavior = cb) }, false)
                 }
                 "persistentWebControl" -> Pair({ it.copy(persistentWebControl = b) }, false)
@@ -743,8 +723,7 @@ class StreamingService : LifecycleService() {
                 }
                 "micSource" -> {
                     if (streaming) return null
-                    val src = guru.freberg.lenscast.prefs.MicSource.entries
-                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    val src = enumValueOrNull<guru.freberg.lenscast.prefs.MicSource>(v) ?: return null
                     Pair({ it.copy(micSource = src) }, false)
                 }
                 "audioGainDb" -> {
@@ -771,8 +750,7 @@ class StreamingService : LifecycleService() {
                 "keepScreenOn"   -> Pair({ it.copy(keepScreenOn = b) }, false)
                 "blankPreview"   -> Pair({ it.copy(blankPreview = b) }, false)
                 "rotationLock" -> {
-                    val rl = guru.freberg.lenscast.prefs.RotationLock.entries
-                        .firstOrNull { it.name.equals(v, true) } ?: return null
+                    val rl = enumValueOrNull<guru.freberg.lenscast.prefs.RotationLock>(v) ?: return null
                     Pair({ it.copy(rotationLock = rl) }, false)
                 }
                 "autoStart"      -> Pair({ it.copy(autoStart = b) }, false)

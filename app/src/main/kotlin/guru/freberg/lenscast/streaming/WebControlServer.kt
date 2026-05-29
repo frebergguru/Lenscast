@@ -7,7 +7,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -273,32 +272,12 @@ class WebControlServer(
     fun start() {
         if (running) return
         running = true
-        acceptJob = scope.launch {
-            try {
-                val s = if (sslContext != null) {
-                    sslContext.serverSocketFactory.createServerSocket().also {
-                        it.reuseAddress = true
-                        it.bind(InetSocketAddress(port))
-                    }
-                } else {
-                    ServerSocket().also {
-                        it.reuseAddress = true
-                        it.bind(InetSocketAddress(port))
-                    }
-                }
-                server = s
-                val scheme = if (sslContext != null) "https" else "http"
-                Log.i(TAG, "Web control $scheme listening on 0.0.0.0:$port")
-                while (running && isActive) {
-                    val client = try { s.accept() } catch (_: IOException) { break }
-                    client.tcpNoDelay = true
-                    client.soTimeout = 5_000
-                    launch { handle(client) }
-                }
-            } catch (t: Throwable) {
-                Log.e(TAG, "Web-control accept loop crashed", t)
-            }
-        }
+        acceptJob = scope.launchHttpAcceptLoop(
+            port, sslContext, TAG, "Web control",
+            isRunning = { running },
+            onBound = { server = it },
+            handle = ::handle,
+        )
     }
 
     fun stop() {

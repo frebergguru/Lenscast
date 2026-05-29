@@ -7,7 +7,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
@@ -136,33 +135,12 @@ class MjpegServer(
     fun start() {
         if (running) return
         running = true
-        acceptJob = scope.launch {
-            try {
-                val s = if (sslContext != null) {
-                    sslContext.serverSocketFactory.createServerSocket().also {
-                        it.reuseAddress = true
-                        it.bind(InetSocketAddress(port))
-                    }
-                } else {
-                    ServerSocket().also {
-                        it.reuseAddress = true
-                        it.bind(InetSocketAddress(port))
-                    }
-                }
-                server = s
-                val scheme = if (sslContext != null) "https" else "http"
-                Log.i(TAG, "MJPEG $scheme server listening on 0.0.0.0:$port")
-                while (running && isActive) {
-                    val client = try { s.accept() } catch (e: IOException) { break }
-                    // TLS sockets need the TCP_NODELAY before the handshake.
-                    client.tcpNoDelay = true
-                    client.soTimeout = 5_000
-                    launch { handle(client) }
-                }
-            } catch (t: Throwable) {
-                Log.e(TAG, "Accept loop crashed", t)
-            }
-        }
+        acceptJob = scope.launchHttpAcceptLoop(
+            port, sslContext, TAG, "MJPEG",
+            isRunning = { running },
+            onBound = { server = it },
+            handle = ::handle,
+        )
     }
 
     fun stop() {
