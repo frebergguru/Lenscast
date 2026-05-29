@@ -22,10 +22,12 @@ client) can consume directly. Five streaming protocols are live today:
   not a port of its own. Owns Camera2 directly like RTSP (via `Camera2Capturer`).
 
 The MJPEG, RTSP, SRT, and RIST ports are user-editable in the Settings sheet (range
-1024–65535). Beyond streaming, the app also runs a **web control panel**
-(`WebControlServer`, default port 8080) with full settings parity and start/stop, plus
-optional **local MP4 recording**, **SFTP upload**, a **text watermark**, and
-**HTTPS / RTSPS** (self-signed RSA-2048, Bouncy Castle PKCS12). For
+1024–65535). The codec paths (RTSP/SRT/RIST) can also run an optional **MJPEG sidecar**
+(`Settings.mjpegSidecar`, on by default, ≤30 fps) that serves a parallel `/video` browser
+preview and drives the on-device preview off the same camera. Beyond streaming, the app
+also runs a **web control panel** (`WebControlServer`, default port 8080) with full
+settings parity and start/stop, plus optional **local MP4 recording**, **SFTP upload**, a
+**text watermark**, and **HTTPS / RTSPS** (self-signed RSA-2048, Bouncy Castle PKCS12). For
 "phone-as-regular-webcam" use cases (Zoom, Chrome, Discord) there's an optional Linux
 helper at `pc/lenscast-virtualcam` and a DeviceAsWebcam nudge in the Settings sheet for
 Android 14+ devices that ship the system service. OBS users don't need either —
@@ -65,7 +67,9 @@ Build environment quirks (full detail in [Docs/Build.md](Docs/Build.md)):
   `rotationDegrees`, then `YuvImage.compressToJpeg`. The NV21 copy is required —
   skipping it lets `YuvImage` emit corrupted JPEGs when `rowStride ≠ width`.
 - **`FrameBroadcaster`** is a single `AtomicReference<ByteArray>` holding the latest
-  JPEG. Lock-free, no per-client queues.
+  JPEG. Lock-free, no per-client queues. Fed by CameraX on the MJPEG path and by the
+  MJPEG-sidecar `ImageReader` on the codec paths; read by `MjpegServer` *and* the on-device
+  Compose preview.
 - **`MjpegServer`** is a hand-rolled `ServerSocket` + coroutine-per-client. Serves
   `/video`, `/shot.jpg`, `/` (landing page), the `/audio` PCM-WAV sidecar, and the
   WebRTC/WHEP handshake routes (`webRtcAnswer`, `webRtcWhepCreate`, `webRtcWhepDelete`).
@@ -73,8 +77,9 @@ Build environment quirks (full detail in [Docs/Build.md](Docs/Build.md)):
   version-negotiated 1.0/2.0, multi-client fan-out, TCP-interleaved + UDP transports,
   reads RTCP RR back for the adaptive-bitrate loop), `RtspCameraDriver` (Camera2 high-speed
   session), `H264Encoder` + `AacEncoder`, RTP packetizers, SDP builder. Owns Camera2
-  directly while streaming, so CameraX is bypassed and the screen falls back to a
-  `SurfaceView` for preview.
+  directly while streaming, so CameraX is bypassed; the on-device preview during streaming
+  is rendered from the MJPEG sidecar's JPEG frames (see the sidecar note under "RTSP / SRT
+  path caveats"), falling back to a placeholder when the sidecar is off.
 - **`streaming/srt/`** is the SRT path: `SrtManager` (lifecycle + in-place
   `reconfigureVideo` on rotation), `SrtPublisher`, `MpegTsMuxer`. Shares the `GlRotator`
   EGL stage and the H.264/AAC encoders.
@@ -129,6 +134,16 @@ Full breakdown: [Docs/Architecture.md](Docs/Architecture.md).
 - **Audio** is optional (off by default), gated behind `RECORD_AUDIO` and the
   `microphone` foreground-service type. Toggling Audio in Settings changes which
   permissions are requested.
+- **MJPEG sidecar / preview parity.** All three codec paths share one optional sidecar:
+  a second `ImageReader` output on the Camera2 session whose YUV frames are JPEG-encoded
+  into `FrameBroadcaster`, serving `/video` on `mjpegPort` for a browser preview *and*
+  driving the on-device Compose preview while a codec owns the camera. Wired via
+  `StreamingService.buildSidecarSurface` / `attachSidecarListener` / `startSidecarMjpegServer`;
+  `SrtManager`/`RistManager` hold the surface and re-apply it across mid-stream rotation and
+  lens switch. Rotation is computed here lens-aware (front `sensor+device`, back
+  `sensor-device`) because these raw frames skip the GL stage — and the listener must be
+  attached *after* the plan resolves (`_lastRtspPlan` is null until then). High-speed
+  (>30 fps) sessions reject the extra output, so there's no sidecar there.
 
 ## Verification before declaring a change done
 

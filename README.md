@@ -51,6 +51,8 @@ Full setup, USB tethering, and troubleshooting are in
   (`POST`/`DELETE /whep/<id>`) for WHEP-aware players — both served off the web-control port
 - **Audio sidecar** on the network transports — RTSP and SRT carry audio in-session; MJPEG
   exposes a PCM-16LE WAV stream at `/audio` with near-zero receiver-side buffering
+- **MJPEG video sidecar** — RTSP/SRT/RIST can serve a parallel `/video` MJPEG preview off
+  the same camera (browser **and** on-device preview); on by default, ≤30 fps
 - **Local recording** — toggle on the H.264 paths (RTSP / SRT / RIST) that mirrors the live
   H.264/AAC encoders to an MP4 in `Movies/Lenscast/` while you stream (MJPEG and WebRTC don't
   expose an encoded H.264 stream, so recording is unavailable there)
@@ -74,7 +76,8 @@ Full setup, USB tethering, and troubleshooting are in
   browser
 - Full Settings parity with the app — camera / image / audio / stream / UX / automation
   / server ports / security
-- Live preview embedded for MJPEG; RTSP URL hint for the OBS-side workflow
+- Live preview embedded for every protocol — MJPEG natively, RTSP/SRT/RIST via the MJPEG
+  sidecar, WebRTC via WHEP — alongside the receiver URL hints
 - `GET /export` + `POST /import` for backing settings up between devices
 
 **Camera controls**

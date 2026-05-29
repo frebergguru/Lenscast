@@ -98,9 +98,12 @@ happens transparently and OBS reconnects through the brief frame gap.
 ### 3. Single broadcaster, lock-free latest-frame
 
 `FrameBroadcaster` holds an `AtomicReference<ByteArray>` containing the most recent JPEG.
-The CameraX analyzer writes to it. Each connected HTTP client coroutine reads at its own
-FPS-throttled cadence. Slow clients naturally drop frames — no per-client queues, no
-backpressure logic, no thread fan-out.
+The CameraX analyzer writes to it on the MJPEG path; on the codec paths (RTSP/SRT/RIST)
+CameraX is bypassed, so the optional MJPEG sidecar's `ImageReader` listener
+(`StreamingService.makeSidecarListener`) writes to it instead. Each connected HTTP client
+coroutine reads at its own FPS-throttled cadence — and the on-device Compose preview reads
+the latest frame from it while a codec owns the camera. Slow clients naturally drop frames
+— no per-client queues, no backpressure logic, no thread fan-out.
 
 Frame counter (`framesProduced`) is exposed so the UI can show observed FPS.
 
