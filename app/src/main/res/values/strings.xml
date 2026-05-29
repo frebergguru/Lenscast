@@ -67,6 +67,7 @@
     <string name="settings_rtsp_landscape_note">Set the orientation before you start — RTSP locks it for the whole stream (clients fix the video size when they connect and can\'t change it mid-stream). 60 fps and above is landscape only. Use SRT if you need to rotate while live.</string>
     <string name="settings_srt_rotation_note">Rotation follows the phone live — turn the device while streaming and the picture rotates to match.</string>
     <string name="rtsp_rotation_locked_toast">RTSP orientation is locked while streaming. Stop, rotate the phone, then start again — or use SRT to rotate live.</string>
+    <string name="camera_switch_blocked_rtsp_resolution">Can\'t switch camera on RTSP — the other camera doesn\'t support %1$s, and RTSP can\'t change resolution mid-stream. Stop and switch, lower the resolution, or use SRT.</string>
     <string name="settings_mjpeg_rotation_note">Rotation locks at Start. To change orientation, Stop the stream, rotate the phone, then Start again.</string>
 
     <string name="settings_system_webcam_title">Use as USB webcam (system)</string>

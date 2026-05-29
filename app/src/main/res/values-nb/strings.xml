@@ -67,6 +67,7 @@
     <string name="settings_rtsp_landscape_note">Velg retning før du starter — RTSP låser den for hele strømmen (klienter fastsetter bildestørrelsen når de kobler til, og kan ikke endre den underveis). 60 bps og høyere er kun liggende. Bruk SRT hvis du vil rotere mens du sender.</string>
     <string name="settings_srt_rotation_note">Rotasjonen følger telefonen direkte — snu enheten mens du strømmer, og bildet roterer med.</string>
     <string name="rtsp_rotation_locked_toast">RTSP-retningen er låst mens du strømmer. Stopp, snu telefonen, og start på nytt — eller bruk SRT for å rotere direkte.</string>
+    <string name="camera_switch_blocked_rtsp_resolution">Kan ikke bytte kamera på RTSP — det andre kameraet støtter ikke %1$s, og RTSP kan ikke endre oppløsning underveis. Stopp og bytt, senk oppløsningen, eller bruk SRT.</string>
     <string name="settings_mjpeg_rotation_note">Rotasjonen låses ved Start. For å endre orientering: Stopp strømmen, snu telefonen, og Start på nytt.</string>
 
     <string name="settings_system_webcam_title">Bruk som USB-webkamera (system)</string>

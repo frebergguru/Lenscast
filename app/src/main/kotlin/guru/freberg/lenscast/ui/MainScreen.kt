@@ -342,34 +342,46 @@ fun MainScreen(
                 torchOn = torchOn,
                 blankPreview = settings.blankPreview,
                 onSwitchCamera = {
-                    torchOn = false
-                    service?.setTorch(false)
                     scope.launch {
-                        repo.update {
-                            val newLens = if (it.lens == Lens.BACK) Lens.FRONT else Lens.BACK
-                            // Front sensors often don't advertise the current resolution (1440p
-                            // / 4K back, max 1080p front is the common pattern) and almost
-                            // never advertise high-speed FPS. Clamp resolution first, then
-                            // derive an FPS that's valid for the clamped (lens, resolution).
-                            val supportedRes = guru.freberg.lenscast.camera.CameraCapabilities
-                                .supportedResolutions(ctx, newLens)
-                            val newRes = guru.freberg.lenscast.camera.CameraCapabilities
-                                .nextBestResolution(supportedRes, it.resolution)
-                            val supportedFps = guru.freberg.lenscast.camera.CameraCapabilities
-                                .supportedFps(ctx, newLens, newRes, it.protocol)
-                            val newFps = guru.freberg.lenscast.camera.CameraCapabilities
-                                .nextBestFps(supportedFps, it.fps)
-                            it.copy(lens = newLens, resolution = newRes, fps = newFps)
+                        val cur = repo.flow.first()
+                        val newLens = if (cur.lens == Lens.BACK) Lens.FRONT else Lens.BACK
+                        // Front sensors often don't advertise the current resolution (1440p /
+                        // 4K back, max 1080p front is the common pattern) and almost never
+                        // advertise high-speed FPS. Clamp resolution first, then derive an FPS
+                        // that's valid for the clamped (lens, resolution).
+                        val supportedRes = guru.freberg.lenscast.camera.CameraCapabilities
+                            .supportedResolutions(ctx, newLens)
+                        val newRes = guru.freberg.lenscast.camera.CameraCapabilities
+                            .nextBestResolution(supportedRes, cur.resolution)
+                        // RTSP can't change resolution mid-stream (clients pin decoder dims from
+                        // the SDP), so a switch that would change resolution can't be served
+                        // without dropping the receiver. Block it and explain rather than force
+                        // a reconnect. SRT absorbs the change inline, so it's allowed there.
+                        if (streaming &&
+                            cur.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP &&
+                            newRes != cur.resolution) {
+                            android.widget.Toast.makeText(
+                                ctx,
+                                ctx.getString(R.string.camera_switch_blocked_rtsp_resolution, cur.resolution.label),
+                                android.widget.Toast.LENGTH_LONG,
+                            ).show()
+                            return@launch
                         }
+                        torchOn = false
+                        service?.setTorch(false)
+                        val supportedFps = guru.freberg.lenscast.camera.CameraCapabilities
+                            .supportedFps(ctx, newLens, newRes, cur.protocol)
+                        val newFps = guru.freberg.lenscast.camera.CameraCapabilities
+                            .nextBestFps(supportedFps, cur.fps)
+                        repo.update { it.copy(lens = newLens, resolution = newRes, fps = newFps) }
                         // For protocols that lock the camera at start (RTSP, SRT), the
                         // settings-flow rebind path the MJPEG service uses is a no-op: those
                         // pipelines own Camera2 directly. Try a seamless in-place lens swap
                         // first (keeps the receiver connected); fall back to a full restart
-                        // only when the swap can't be served in place (e.g. RTSP where the new
-                        // lens forces a different resolution).
+                        // only when the swap can't be served in place.
                         if (streaming &&
-                            (settings.protocol == guru.freberg.lenscast.prefs.Protocol.SRT ||
-                                settings.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP)) {
+                            (cur.protocol == guru.freberg.lenscast.prefs.Protocol.SRT ||
+                                cur.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP)) {
                             val refreshed = repo.flow.first()
                             val seamless = service?.switchLensSeamless(refreshed) ?: false
                             if (!seamless) service?.restartStreaming(refreshed)
