@@ -316,7 +316,14 @@ class RtspSession(
         sink = null
     }
 
-    private data class Request(val method: String, val uri: String, val headers: Map<String, String>) {
+    private data class Request(
+        val method: String,
+        val uri: String,
+        /** Protocol token from the request line, e.g. "RTSP/1.0" or "RTSP/2.0". Echoed verbatim
+         *  in the response status line so 1.0 clients get 1.0 and 2.0 clients get 2.0. */
+        val version: String,
+        val headers: Map<String, String>,
+    ) {
         fun cseq(): String = headers["cseq"] ?: "0"
     }
 
@@ -330,6 +337,7 @@ class RtspSession(
         if (parts.size < 3) return null
         val method = parts[0]
         val uri = parts[1]
+        val version = parts[2]
         val headers = mutableMapOf<String, String>()
         while (true) {
             val l = readAsciiLine(input) ?: break
@@ -338,7 +346,20 @@ class RtspSession(
             if (idx <= 0) continue
             headers[l.substring(0, idx).trim().lowercase()] = l.substring(idx + 1).trim()
         }
-        return Request(method, uri, headers)
+        // Consume any entity body so it can't be misread as the next request. RTSP messages
+        // carry a body only when Content-Length says so (e.g. some clients' SET_PARAMETER
+        // pings); leaving those bytes in the stream desynchronises the parser (RFC 7826 §20.2).
+        val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
+        if (contentLength > 0) {
+            var remaining = contentLength
+            val skip = ByteArray(minOf(remaining, 8192))
+            while (remaining > 0) {
+                val r = input.read(skip, 0, minOf(remaining, skip.size))
+                if (r < 0) break
+                remaining -= r
+            }
+        }
+        return Request(method, uri, version, headers)
     }
 
     /** Reads bytes up to and including \n, returns the line minus trailing \r\n. */
@@ -356,7 +377,12 @@ class RtspSession(
     }
 
     private fun handle(req: Request) {
-        android.util.Log.i("RtspSession", "${req.method} ${req.uri} transport=${req.headers["transport"]}")
+        android.util.Log.i("RtspSession", "${req.method} ${req.uri} ${req.version} transport=${req.headers["transport"]}")
+        // Version negotiation: we speak both 1.0 (RFC 2326) and 2.0 (RFC 7826). Anything
+        // else gets 505 so a future 3.x client fails cleanly rather than being misparsed.
+        if (req.version != "RTSP/1.0" && req.version != "RTSP/2.0") {
+            respondVersionNotSupported(req); return
+        }
         val method = req.method.uppercase()
         // OPTIONS stays unauthenticated so clients can negotiate before the user types
         // creds — mirrors every IP camera (Hikvision, Axis, Reolink). Everything else
@@ -365,12 +391,21 @@ class RtspSession(
             respondUnauthorized(req)
             return
         }
+        // We support no optional feature tags, so any Require/Proxy-Require must be refused
+        // with the unsupported tags echoed back (RFC 7826 §18.43 / RFC 2326 §12.32).
+        val require = req.headers["require"] ?: req.headers["proxy-require"]
+        if (!require.isNullOrBlank()) {
+            respond(req, 551, "Option not supported", extra = "Unsupported: $require\r\n"); return
+        }
         when (method) {
-            "OPTIONS" -> respond(req, 200, "OK", extra = "Public: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER\r\n")
+            "OPTIONS" -> respond(req, 200, "OK", extra = "Public: $PUBLIC_METHODS\r\n")
             "DESCRIBE" -> handleDescribe(req)
             "SETUP" -> handleSetup(req)
             "PLAY" -> handlePlay(req)
             "PAUSE" -> {
+                // Real PAUSE: stop delivery but keep the session/transports so a later PLAY
+                // resumes (RFC 7826 §13.6). PAUSE in READY is a no-op per spec.
+                if (state == State.PLAYING) { state = State.READY; pauseDelivery() }
                 respond(req, 200, "OK", extra = "Session: $sessionId\r\n")
             }
             "TEARDOWN" -> {
@@ -384,8 +419,24 @@ class RtspSession(
             "GET_PARAMETER", "SET_PARAMETER" -> {
                 respond(req, 200, "OK", extra = "Session: $sessionId\r\n")
             }
-            else -> respond(req, 501, "Not Implemented")
+            else -> respond(req, 501, "Not Implemented", extra = "Allow: $PUBLIC_METHODS\r\n")
         }
+    }
+
+    /**
+     * Stops RTP/RTCP delivery to this client without dropping the session (used by PAUSE,
+     * and to clear stale wiring before a re-PLAY). Unwires the sink so the manager stops
+     * fanning packets here, and tears down the RTCP SR sender + UDP RR readers — both of
+     * which key off [State.PLAYING] and would otherwise leave a dead thread that
+     * [startRtcp]'s `rtcpThread != null` guard refuses to replace on resume.
+     */
+    private fun pauseDelivery() {
+        val s = sink
+        sink = null
+        if (s != null) provider.onClientTeardown(s)
+        rtcpThread?.interrupt(); rtcpThread = null
+        for (t in rtcpReaderThreads) t.interrupt()
+        rtcpReaderThreads.clear()
     }
 
     private fun isAuthorized(req: Request): Boolean {
@@ -448,9 +499,12 @@ class RtspSession(
             videoTransport = chosen
         }
         state = State.READY
+        // 2.0 carries the live-source descriptors on SETUP too (RFC 7826 §18.29/§18.5).
+        val liveProps = if (req.version == "RTSP/2.0")
+            "Media-Properties: No-Seeking, Time-Progressing\r\nAccept-Ranges: NPT\r\n" else ""
         respond(
             req, 200, "OK",
-            extra = "Transport: $responseTransport\r\nSession: $sessionId;timeout=60\r\n",
+            extra = "Transport: $responseTransport\r\nSession: $sessionId;timeout=60\r\n$liveProps",
         )
     }
 
@@ -486,23 +540,29 @@ class RtspSession(
 
     private fun handlePlay(req: Request) {
         if (state != State.READY && state != State.PLAYING) {
-            respond(req, 455, "Method Not Valid in This State"); return
+            respond(req, 455, "Method Not Valid in This State", extra = "Allow: $PUBLIC_METHODS\r\n"); return
         }
+        // Re-PLAY while already playing (or after PAUSE): drop the old wiring first so we
+        // don't register a second sink and double-send every packet.
+        if (state == State.PLAYING) pauseDelivery()
         state = State.PLAYING
+        val is20 = req.version == "RTSP/2.0"
 
         // Build RTP-Info — VLC won't render frames without it because it can't synchronize
-        // RTP timestamps with the wall-clock start of playback.
+        // RTP timestamps with the wall-clock start of playback. RTSP 2.0 (RFC 7826 §18.45)
+        // quotes the url and carries per-stream ssrc; 1.0 (RFC 2326 §12.33) uses the bare form.
         val base = req.uri.trimEnd('/')
         val rtpInfoParts = mutableListOf<String>()
-        if (videoTransport != null) {
-            val vi = provider.videoRtpInfo()
-            rtpInfoParts += "url=$base/trackID=0;seq=${vi.seq};rtptime=${vi.rtpTime}"
-        }
-        if (audioTransport != null) {
-            val ai = provider.audioRtpInfo()
-            rtpInfoParts += "url=$base/trackID=1;seq=${ai.seq};rtptime=${ai.rtpTime}"
-        }
+        fun rtpInfoEntry(track: Int, info: RtspServer.RtpInfo): String =
+            if (is20) "url=\"$base/trackID=$track\";seq=${info.seq};rtptime=${info.rtpTime};ssrc=${"%08x".format(info.ssrc)}"
+            else "url=$base/trackID=$track;seq=${info.seq};rtptime=${info.rtpTime}"
+        if (videoTransport != null) rtpInfoParts += rtpInfoEntry(0, provider.videoRtpInfo())
+        if (audioTransport != null) rtpInfoParts += rtpInfoEntry(1, provider.audioRtpInfo())
         val rtpInfoHeader = if (rtpInfoParts.isNotEmpty()) "RTP-Info: ${rtpInfoParts.joinToString(",")}\r\n" else ""
+        // Live source: open-ended, non-seekable, clock-advancing. 2.0 clients consume these
+        // to set their seek UI and playback clock; 1.0 has no equivalent so the bare Range stands.
+        val rangeHeader = if (is20) "Range: npt=now-\r\n" else "Range: npt=0.000-\r\n"
+        val liveProps = if (is20) "Media-Properties: No-Seeking, Time-Progressing\r\nAccept-Ranges: NPT\r\n" else ""
 
         sink = object : RtspServer.OutgoingPacketSink {
             override fun sendVideo(rtp: ByteArray) {
@@ -518,7 +578,7 @@ class RtspSession(
                 }
             }
         }
-        respond(req, 200, "OK", extra = "Session: $sessionId\r\nRange: npt=0.000-\r\n$rtpInfoHeader")
+        respond(req, 200, "OK", extra = "Session: $sessionId\r\n$rangeHeader$liveProps$rtpInfoHeader")
         provider.onClientPlay(sink!!)
         startRtcp()
         startUdpRtcpReader(videoTransport)
@@ -665,17 +725,30 @@ class RtspSession(
     }
 
     private fun respond(req: Request, code: Int, status: String, extra: String = "") {
-        val msg = "RTSP/1.0 $code $status\r\nCSeq: ${req.cseq()}\r\n$extra\r\n"
+        val msg = "${req.version} $code $status\r\nCSeq: ${req.cseq()}\r\n${commonHeaders()}$extra\r\n"
         writeLine(msg)
     }
 
     private fun respondWithBody(req: Request, code: Int, status: String, headers: String, body: ByteArray) {
-        val head = "RTSP/1.0 $code $status\r\nCSeq: ${req.cseq()}\r\n$headers\r\n"
+        val head = "${req.version} $code $status\r\nCSeq: ${req.cseq()}\r\n${commonHeaders()}$headers\r\n"
         synchronized(writeLock) {
             try {
                 out.write(head.toByteArray(Charsets.US_ASCII)); out.write(body); out.flush()
             } catch (_: IOException) {}
         }
+    }
+
+    /** Sent when the request line carries a version we don't speak (anything but 1.0/2.0). */
+    private fun respondVersionNotSupported(req: Request) {
+        val msg = "RTSP/2.0 505 RTSP Version Not Supported\r\nCSeq: ${req.cseq()}\r\n${commonHeaders()}\r\n"
+        writeLine(msg)
+    }
+
+    /** `Server` + `Date` on every response (RFC 7826 §18.20/§18.46 SHOULD; harmless on 1.0). */
+    private fun commonHeaders(): String {
+        val fmt = java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US)
+        fmt.timeZone = java.util.TimeZone.getTimeZone("GMT")
+        return "Server: Lenscast\r\nDate: ${fmt.format(java.util.Date())}\r\n"
     }
 
     private fun writeLine(s: String) {
@@ -685,4 +758,11 @@ class RtspSession(
     }
 
     @Suppress("unused") fun bytesSentSoFar(): Long = bytesSent.get()
+
+    companion object {
+        // Advertised in OPTIONS `Public:` and echoed in `Allow:` on 455/501 — every method
+        // we actually dispatch (RFC 7826 §18.6 requires Allow to list valid methods).
+        private const val PUBLIC_METHODS =
+            "OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER, SET_PARAMETER"
+    }
 }
