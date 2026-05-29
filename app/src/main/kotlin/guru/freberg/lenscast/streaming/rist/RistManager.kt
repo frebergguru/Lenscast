@@ -7,6 +7,7 @@ import android.view.Surface
 import guru.freberg.lenscast.prefs.Lens
 import guru.freberg.lenscast.prefs.MicSource
 import guru.freberg.lenscast.streaming.AudioUtils
+import guru.freberg.lenscast.streaming.ImageControls
 import guru.freberg.lenscast.streaming.RecordingMuxer
 import guru.freberg.lenscast.streaming.rtsp.AacEncoder
 import guru.freberg.lenscast.streaming.rtsp.H264Encoder
@@ -47,6 +48,7 @@ class RistManager(private val context: Context) {
         val ristProfile: RistPublisher.Profile = RistPublisher.Profile.SIMPLE,
         val ristPassphrase: String = "",
         val ristKeyBits: Int = 128,
+        val imageControls: ImageControls = ImageControls(),
     )
 
     private var videoEncoder: H264Encoder? = null
@@ -180,6 +182,7 @@ class RistManager(private val context: Context) {
             cameraBufferWidth = plan.size.width,
             cameraBufferHeight = plan.size.height,
             rotationDegrees = glRotation,
+            mirror = config.imageControls.mirror,
         ).also { rotator = it }
         ve.start { nal, ptsUs, isKey ->
             val ps = ve.parameterSets
@@ -202,7 +205,7 @@ class RistManager(private val context: Context) {
             }
         }
 
-        cam.start(plan, glRotator.cameraSurface, heldPreviewSurface)
+        cam.start(plan, glRotator.cameraSurface, heldPreviewSurface, imageControls = config.imageControls)
         try { videoEncoder?.requestKeyframe() } catch (_: Throwable) {}
     }
 
@@ -255,6 +258,15 @@ class RistManager(private val context: Context) {
     }
 
     fun setTorch(on: Boolean) { camera?.setTorch(on) }
+
+    /** Apply image controls live: ISP keys via the camera request, mirror via the GL stage.
+     *  Stored in [currentConfig] so a rotation / lens swap rebuilds with them. */
+    fun setImageControls(controls: ImageControls) {
+        currentConfig = currentConfig?.copy(imageControls = controls)
+        camera?.setImageControls(controls)
+        rotator?.setMirror(controls.mirror)
+    }
+
     fun setAudioMuted(muted: Boolean) { audioEncoder?.muted = muted }
     fun audioPeakDbfs(): Float = audioEncoder?.lastPeakDbfs() ?: -90f
     fun framesProduced(): Long = videoEncoder?.framesProduced() ?: 0L

@@ -492,7 +492,9 @@ class StreamingService : LifecycleService() {
                     it.copy(exposureEv = newEv)
                 }
                 setExposureEv(newEv)
-                _status.value = _status.value.copy(settings = repo.flow.first())
+                val s = repo.flow.first()
+                applyImageControlsToActiveStream(s)
+                _status.value = _status.value.copy(settings = s)
             }
         }
         override fun toggleMirror() {
@@ -504,7 +506,9 @@ class StreamingService : LifecycleService() {
                     it.copy(mirror = nextMirror)
                 }
                 cameraController?.mirror = nextMirror
-                _status.value = _status.value.copy(settings = repo.flow.first())
+                val s = repo.flow.first()
+                applyImageControlsToActiveStream(s)
+                _status.value = _status.value.copy(settings = s)
             }
         }
         override fun toggleContinuousAf() {
@@ -512,19 +516,10 @@ class StreamingService : LifecycleService() {
             lifecycleScope.launch {
                 repo.update { it.copy(continuousAf = !it.continuousAf) }
                 val s = repo.flow.first()
-                // Continuous-AF is in BindKey → rebind to swap the AF_MODE.
-                bindCameraIfNeeded(
-                    s.lens, s.resolution, s.fps.value, s.jpegQuality,
-                    mirror = s.mirror,
-                    whiteBalance = s.whiteBalance,
-                    antiBanding = s.antiBanding,
-                    continuousAf = s.continuousAf,
-                    exposureEv = s.exposureEv,
-                    effect = s.effect,
-                    sceneMode = s.sceneMode,
-                    manualFocus = s.manualFocus,
-                    manualFocusCentidiopters = s.manualFocusCentidiopters,
-                )
+                // Continuous-AF swaps the AF_MODE. rebindCameraFor rebinds CameraX on the MJPEG
+                // path and pushes it to the live Camera2 request on the H.264 path (which must
+                // NOT take a CameraX rebind — that would fight the encoder's Surface).
+                rebindCameraFor(s)
                 _status.value = _status.value.copy(settings = s)
             }
         }
@@ -632,9 +627,11 @@ class StreamingService : LifecycleService() {
 
         private fun applyLiveTweakables(key: String, s: Settings) {
             when (key) {
-                "mirror"        -> cameraController?.mirror = s.mirror
+                // Mirror and EV are live on MJPEG (CameraController) and on the H.264 path
+                // (GL mirror / capture-request EV) — apply to both; the inactive one no-ops.
+                "mirror"        -> { cameraController?.mirror = s.mirror; applyImageControlsToActiveStream(s) }
                 "watermarkText" -> cameraController?.watermarkText = s.watermarkText
-                "exposureEv"    -> cameraController?.applyExposureEv(s.exposureEv)
+                "exposureEv"    -> { cameraController?.applyExposureEv(s.exposureEv); applyImageControlsToActiveStream(s) }
                 "jpegQuality"   -> cameraController?.jpegQuality = s.jpegQuality
                 "audioGainDb"   -> {
                     mjpegAudioCapture?.setGainDb(s.audioGainDb)
@@ -1054,10 +1051,16 @@ class StreamingService : LifecycleService() {
      * mid-RTSP-stream tears down the encoder Surface.
      */
     private suspend fun rebindCameraFor(s: Settings) {
-        // RTSP, SRT and RIST all lock the camera at stream-start via the Camera2 driver.
+        // RTSP, SRT and RIST own Camera2 directly via the driver — a CameraX rebind would tear
+        // down their encoder Surface. Instead push the image controls to the live session
+        // (sensor/ISP keys + GL mirror), so white balance / effect / AF / manual exposure etc.
+        // take effect mid-stream just like they do on the MJPEG path.
         val p = _status.value.activeProtocol
         if (_status.value.state == State.STREAMING &&
-            (p == Protocol.RTSP || p == Protocol.SRT || p == Protocol.RIST)) return
+            (p == Protocol.RTSP || p == Protocol.SRT || p == Protocol.RIST)) {
+            applyImageControlsToActiveStream(s)
+            return
+        }
         bindCameraIfNeeded(
             s.lens, s.resolution, s.fps.value, s.jpegQuality,
             mirror = s.mirror,
@@ -1074,6 +1077,20 @@ class StreamingService : LifecycleService() {
             iso = s.iso,
             shutterUs = s.shutterUs,
         )
+    }
+
+    /**
+     * Push the current image controls to whichever H.264 manager is live (RTSP/SRT/RIST). Cheap
+     * and idempotent: the driver rebuilds its repeating capture request and the GL stage swaps
+     * its mirror — no session/encoder teardown. No-op for MJPEG/WebRTC (those managers are null)
+     * and when not streaming. High-speed RTSP sessions ignore the ISP keys (Camera2 constraint).
+     */
+    private fun applyImageControlsToActiveStream(s: Settings) {
+        if (_status.value.state != State.STREAMING) return
+        val c = s.toImageControls()
+        rtspManager?.setImageControls(c)
+        srtManager?.setImageControls(c)
+        ristManager?.setImageControls(c)
     }
 
     @Volatile private var lastFpsCount: Long = 0
@@ -1193,6 +1210,7 @@ class StreamingService : LifecycleService() {
                 authUsername = settings.streamUsername,
                 authPassword = settings.streamPassword,
                 sslContext = if (settings.httpsEnabled) TlsManager.forContext(this).sslContext() else null,
+                imageControls = settings.toImageControls(),
             ),
             previewSurface = null,
             sidecarSurface = sidecarSurface,
@@ -1308,6 +1326,7 @@ class StreamingService : LifecycleService() {
                 srtPassphrase = settings.srtPassphrase,
                 srtLatencyMs = settings.srtLatencyMs,
                 srtStreamId = settings.srtStreamId,
+                imageControls = settings.toImageControls(),
             ),
             previewSurface = null,
         )
@@ -1372,6 +1391,7 @@ class StreamingService : LifecycleService() {
                 ristProfile = ristProfile,
                 ristPassphrase = settings.ristEncryptionPassphrase,
                 ristKeyBits = settings.ristAesKeyBits,
+                imageControls = settings.toImageControls(),
             ),
             previewSurface = null,
         )
@@ -1711,6 +1731,15 @@ class StreamingService : LifecycleService() {
     }
 
     fun setExposureEv(ev: Int) { cameraController?.applyExposureEv(ev) }
+
+    // UI "Quick controls" — delegate to the same control object the web panel drives, so each
+    // one updates the persisted setting AND applies live across every active path (CameraX for
+    // MJPEG/WebRTC, the Camera2 request + GL mirror for RTSP/SRT/RIST).
+    fun uiToggleMirror() = mjpegControl.toggleMirror()
+    fun uiToggleContinuousAf() = mjpegControl.toggleContinuousAf()
+    fun uiZoomBy(factor: Float) = mjpegControl.zoomBy(factor)
+    fun uiNudgeExposure(delta: Int) = mjpegControl.nudgeExposure(delta)
+
     fun setAudioGainDb(db: Int) { rtspManager?.setAudioGainDb(db) }
     /** Last-buffer peak in dBFS, clamped to -90..0. `-90` when no audio path is active. */
     /** "Clients" for SRT = 1 when connected, 0 otherwise (single-receiver protocol). */

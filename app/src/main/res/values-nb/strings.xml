@@ -479,6 +479,12 @@
     <string name="cd_snapshot">Ta stillbilde (hold for serie)</string>
     <string name="cd_turn_flash_on">Slå på lommelykt</string>
     <string name="cd_turn_flash_off">Slå av lommelykt</string>
+    <string name="cd_mirror">Speilvend bildet</string>
+    <string name="cd_autofocus">Kontinuerlig autofokus</string>
+    <string name="cd_zoom_in">Zoom inn</string>
+    <string name="cd_zoom_out">Zoom ut</string>
+    <string name="cd_exposure_up">Øk eksponering</string>
+    <string name="cd_exposure_down">Reduser eksponering</string>
 
     <string name="qr_dialog_title">Skann for å åpne</string>
     <string name="qr_dialog_close">Lukk</string>

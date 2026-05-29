@@ -9,6 +9,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -27,11 +29,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Cameraswitch
+import androidx.compose.material.icons.outlined.CenterFocusStrong
+import androidx.compose.material.icons.outlined.CenterFocusWeak
 import androidx.compose.material.icons.outlined.FlashOff
 import androidx.compose.material.icons.outlined.FlashOn
+import androidx.compose.material.icons.outlined.Flip
 import androidx.compose.material.icons.outlined.PhotoCamera
+import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.ZoomIn
+import androidx.compose.material.icons.outlined.ZoomOut
 import androidx.compose.material.icons.outlined.PhotoCameraFront
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Settings
@@ -511,6 +520,26 @@ fun MainScreen(
                     torchOn = false
                 },
             )
+            // Quick controls — the same live camera tweaks the web panel exposes, mirrored into
+            // the app right under Stop. Only shown while streaming; reuses the preview overlay's
+            // lens/torch/snapshot handlers and drives mirror/AF/zoom/EV through the service.
+            if (streaming) {
+                QuickControls(
+                    torchOn = torchOn,
+                    torchEnabled = settings.lens == Lens.BACK,
+                    mirrorOn = settings.mirror,
+                    continuousAfOn = settings.continuousAf,
+                    onSwitchCamera = { camStateRef.value.onSwitchCamera() },
+                    onToggleTorch = { camStateRef.value.onToggleTorch() },
+                    onToggleMirror = { service?.uiToggleMirror() },
+                    onToggleAf = { service?.uiToggleContinuousAf() },
+                    onZoomIn = { service?.uiZoomBy(1.25f) },
+                    onZoomOut = { service?.uiZoomBy(1f / 1.25f) },
+                    onEvUp = { service?.uiNudgeExposure(1) },
+                    onEvDown = { service?.uiNudgeExposure(-1) },
+                    onSnapshot = { camStateRef.value.onSnapshot() },
+                )
+            }
             if (!perm.granted) {
                 PermissionRequestRow(
                     missing = perm.missing,
@@ -745,6 +774,91 @@ private fun TopBar(
  * reads clearly against both bright and dark frames. Disabled state desaturates without
  * removing the button so users can tell the control still exists.
  */
+/**
+ * Quick controls — a scrollable row of live camera tweaks shown directly under the Stop button
+ * while streaming (hidden otherwise). Mirrors the web panel's quick-control set. Reuses the
+ * preview overlay's circular [OverlayIconButton]; mirror / AF highlight when active. The
+ * buttons wrap across as many rows as needed for the screen width (no horizontal scrolling).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun QuickControls(
+    torchOn: Boolean,
+    torchEnabled: Boolean,
+    mirrorOn: Boolean,
+    continuousAfOn: Boolean,
+    onSwitchCamera: () -> Unit,
+    onToggleTorch: () -> Unit,
+    onToggleMirror: () -> Unit,
+    onToggleAf: () -> Unit,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onEvUp: () -> Unit,
+    onEvDown: () -> Unit,
+    onSnapshot: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+    ) {
+        FlowRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            OverlayIconButton(
+                icon = Icons.Outlined.Cameraswitch,
+                contentDescription = stringResource(R.string.action_switch_camera),
+                enabled = true, onClick = onSwitchCamera,
+            )
+            OverlayIconButton(
+                icon = if (torchOn) Icons.Outlined.FlashOn else Icons.Outlined.FlashOff,
+                contentDescription = if (torchOn) stringResource(R.string.cd_turn_flash_off)
+                                     else stringResource(R.string.cd_turn_flash_on),
+                enabled = torchEnabled, highlighted = torchOn, onClick = onToggleTorch,
+            )
+            OverlayIconButton(
+                icon = Icons.Outlined.Flip,
+                contentDescription = stringResource(R.string.cd_mirror),
+                enabled = true, highlighted = mirrorOn, onClick = onToggleMirror,
+            )
+            OverlayIconButton(
+                icon = if (continuousAfOn) Icons.Outlined.CenterFocusStrong else Icons.Outlined.CenterFocusWeak,
+                contentDescription = stringResource(R.string.cd_autofocus),
+                enabled = true, highlighted = continuousAfOn, onClick = onToggleAf,
+            )
+            OverlayIconButton(
+                icon = Icons.Outlined.ZoomOut,
+                contentDescription = stringResource(R.string.cd_zoom_out),
+                enabled = true, onClick = onZoomOut,
+            )
+            OverlayIconButton(
+                icon = Icons.Outlined.ZoomIn,
+                contentDescription = stringResource(R.string.cd_zoom_in),
+                enabled = true, onClick = onZoomIn,
+            )
+            OverlayIconButton(
+                icon = Icons.Outlined.Remove,
+                contentDescription = stringResource(R.string.cd_exposure_down),
+                enabled = true, onClick = onEvDown,
+            )
+            OverlayIconButton(
+                icon = Icons.Outlined.Add,
+                contentDescription = stringResource(R.string.cd_exposure_up),
+                enabled = true, onClick = onEvUp,
+            )
+            OverlayIconButton(
+                icon = Icons.Outlined.CameraAlt,
+                contentDescription = stringResource(R.string.cd_snapshot),
+                enabled = true, onClick = onSnapshot,
+            )
+        }
+    }
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun OverlayIconButton(

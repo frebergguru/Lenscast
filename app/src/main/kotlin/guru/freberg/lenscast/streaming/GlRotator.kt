@@ -45,7 +45,8 @@ class GlRotator(
     private val encoderHeight: Int,
     cameraBufferWidth: Int,
     cameraBufferHeight: Int,
-    rotationDegrees: Int,
+    private val rotationDegrees: Int,
+    mirror: Boolean = false,
 ) {
 
     /** Surface to hand the Camera2 driver. The camera writes frames here; we rotate them. */
@@ -77,7 +78,11 @@ class GlRotator(
     // straight to gl_Position with no such flip, so the direction is unambiguous: the
     // known-good landscape baseline (rotationDegrees == 0) proves NDC space has no net
     // flip, so a clockwise vertex rotation is a clockwise picture rotation.
-    private val vertexBuffer: FloatBuffer = floatBufferOf(*rotatedQuad(rotationDegrees))
+    // Vertex geometry carries both the rotation and the optional horizontal mirror, so a live
+    // mirror toggle just swaps this buffer on the GL thread — no encoder/session rebuild. Read
+    // and written only on [handler]'s thread (renderFrame + setMirror both run there).
+    @Volatile private var mirror: Boolean = mirror
+    private var vertexBuffer: FloatBuffer = floatBufferOf(*rotatedQuad(rotationDegrees, mirror))
     private val texCoordBuffer: FloatBuffer = floatBufferOf(
         // TRIANGLE_STRIP order: bottom-left, bottom-right, top-left, top-right.
         0f, 0f,  1f, 0f,  0f, 1f,  1f, 1f,
@@ -103,6 +108,16 @@ class GlRotator(
         latch.await()
         initError?.let { release(); throw it }
         cameraSurface = Surface(surfaceTexture!!)
+    }
+
+    /** Live horizontal-flip toggle. Recomputes the quad on the GL thread so it composes with
+     *  the fixed rotation without rebuilding the encoder pipeline. */
+    fun setMirror(on: Boolean) {
+        handler.post {
+            if (released.get() || mirror == on) return@post
+            mirror = on
+            vertexBuffer = floatBufferOf(*rotatedQuad(rotationDegrees, on))
+        }
     }
 
     fun release() {
@@ -278,7 +293,7 @@ class GlRotator(
          * spans the symmetric NDC square (-1..1), a 90°/270° rotation permutes the
          * corners and still fills the (portrait) viewport exactly.
          */
-        private fun rotatedQuad(deg: Int): FloatArray {
+        private fun rotatedQuad(deg: Int, mirror: Boolean = false): FloatArray {
             val base = floatArrayOf(-1f, -1f,  1f, -1f,  -1f, 1f,  1f, 1f)
             val out = FloatArray(8)
             for (i in 0 until 4) {
@@ -289,7 +304,11 @@ class GlRotator(
                     270 -> -y to x     // clockwise 270 (== ccw 90)
                     else -> x to y
                 }
-                out[i * 2] = rx; out[i * 2 + 1] = ry
+                // Mirror is a horizontal flip of the *displayed* frame: negate the final NDC x
+                // (the viewport's horizontal axis) after rotation, so it's a left-right flip
+                // regardless of the rotation applied above.
+                out[i * 2] = if (mirror) -rx else rx
+                out[i * 2 + 1] = ry
             }
             return out
         }

@@ -96,7 +96,9 @@ data class Settings(
     val keepScreenOn: Boolean = true,
     val mjpegPort: Int = 4747,
     val rtspPort: Int = 5540,
-    // Image controls. All MJPEG-path only on the current pass; RTSP gets parity later.
+    // Image controls. Applied on the MJPEG/CameraX path and, at parity, on the H.264 paths
+    // (RTSP/SRT/RIST standard ≤30 fps sessions) via the Camera2 capture request + GL mirror.
+    // High-speed RTSP (60/120/240 fps) can't take them (constrained Camera2), same as rotation.
     val mirror: Boolean = false,
     val continuousAf: Boolean = true,
     /** Exposure compensation in camera-native EV steps (0 = auto). Clamped at apply time. */

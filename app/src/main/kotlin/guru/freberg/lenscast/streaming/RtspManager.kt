@@ -46,6 +46,7 @@ class RtspManager(
         val authUsername: String = "Lenscast",
         val authPassword: String = "",
         val sslContext: javax.net.ssl.SSLContext? = null,
+        val imageControls: ImageControls = ImageControls(),
     )
 
     private var videoEncoder: H264Encoder? = null
@@ -224,6 +225,7 @@ class RtspManager(
                 cameraBufferWidth = plan.size.width,
                 cameraBufferHeight = plan.size.height,
                 rotationDegrees = glRotation,
+                mirror = config.imageControls.mirror,
             ).also { rotator = it }.cameraSurface
         } else {
             encoderInputSurface
@@ -257,7 +259,7 @@ class RtspManager(
             if (isKey) Log.v(TAG, "Sent IDR (${packets.size} pkts, ${nal.size}B NAL) to ${activeSinks.size} client(s)")
         }
 
-        cam.start(plan, cameraTargetSurface, heldPreviewSurface, heldSidecarSurface)
+        cam.start(plan, cameraTargetSurface, heldPreviewSurface, heldSidecarSurface, config.imageControls)
         // Force an IDR so a freshly-(re)built encoder hands connected clients a decodable
         // frame (with the new SPS) immediately rather than after the natural GOP.
         try { videoEncoder?.requestKeyframe() } catch (_: Throwable) {}
@@ -359,6 +361,15 @@ class RtspManager(
     }
 
     fun setTorch(on: Boolean) { camera?.setTorch(on) }
+
+    /** Apply image controls to the live stream: ISP keys via the camera request, mirror via the
+     *  GL stage. Stored in [currentConfig] so a later rotation / lens swap rebuilds with them. */
+    fun setImageControls(controls: ImageControls) {
+        currentConfig = currentConfig?.copy(imageControls = controls)
+        camera?.setImageControls(controls)
+        rotator?.setMirror(controls.mirror)
+    }
+
     fun setAudioGainDb(db: Int) { audioEncoder?.setGainDb(db) }
     fun setAudioMuted(muted: Boolean) { audioEncoder?.muted = muted }
     fun audioPeakDbfs(): Float = audioEncoder?.lastPeakDbfs() ?: -90f

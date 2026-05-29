@@ -490,6 +490,13 @@
     <string name="cd_snapshot">Save snapshot (long-press for burst)</string>
     <string name="cd_turn_flash_on">Turn flash on</string>
     <string name="cd_turn_flash_off">Turn flash off</string>
+    <!-- Quick-controls row (shown under Stop while streaming). -->
+    <string name="cd_mirror">Mirror image</string>
+    <string name="cd_autofocus">Continuous autofocus</string>
+    <string name="cd_zoom_in">Zoom in</string>
+    <string name="cd_zoom_out">Zoom out</string>
+    <string name="cd_exposure_up">Increase exposure</string>
+    <string name="cd_exposure_down">Decrease exposure</string>
 
     <!-- QR code dialog. -->
     <string name="qr_dialog_title">Scan to open</string>

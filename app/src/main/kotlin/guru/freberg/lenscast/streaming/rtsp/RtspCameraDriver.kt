@@ -21,6 +21,7 @@ import android.util.Size
 import android.view.Surface
 import androidx.core.content.ContextCompat
 import guru.freberg.lenscast.prefs.Lens
+import guru.freberg.lenscast.streaming.ImageControls
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -52,7 +53,10 @@ class RtspCameraDriver(
     private var device: CameraDevice? = null
     private var session: CameraCaptureSession? = null
     private var torchOn: Boolean = false
-        set(value) { field = value; reapplyTorch() }
+        set(value) { field = value; rebuildRepeatingRequest() }
+    // Sensor/ISP image controls (white balance, AF, effect, scene, manual exposure, …). Applied
+    // only on the standard session — constrained high-speed requests reject most of these keys.
+    @Volatile private var imageControls: ImageControls = ImageControls()
     private val cameraThread = HandlerThread("LenscastRtspCam").also { it.start() }
     private val cameraHandler = Handler(cameraThread.looper)
     private var currentPlan: Plan? = null
@@ -83,11 +87,13 @@ class RtspCameraDriver(
         encoderSurface: Surface,
         previewSurface: Surface?,
         sidecarSurface: Surface? = null,
+        imageControls: ImageControls = ImageControls(),
     ) {
         check(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             "CAMERA permission must be granted before RtspCameraDriver.start"
         }
         stop()
+        this.imageControls = imageControls
         currentPlan = plan
         this.encoderSurface = encoderSurface
         this.previewSurface = previewSurface
@@ -188,7 +194,8 @@ class RtspCameraDriver(
         val builder = device.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
             for (s in outputs) addTarget(s)
             set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, plan.fpsRange)
-            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+            // applyTo sets CONTROL_MODE (AUTO, or USE_SCENE_MODE when a scene is engaged).
+            imageControls.applyTo(this, evRange(plan.cameraId))
             applyTorch(this, torchOn)
         }
         created.setRepeatingRequest(builder.build(), null, cameraHandler)
@@ -197,7 +204,20 @@ class RtspCameraDriver(
 
     fun setTorch(on: Boolean) { torchOn = on }
 
-    private fun reapplyTorch() {
+    /**
+     * Push new sensor/ISP controls (white balance, AF, effect, scene, manual exposure, …) to a
+     * live session without dropping it. No-op for the ISP keys on high-speed sessions, which
+     * reject them; the request is still rebuilt for fps/torch. Mirror is handled by [GlRotator].
+     */
+    fun setImageControls(controls: ImageControls) {
+        imageControls = controls
+        if (session != null) rebuildRepeatingRequest()
+    }
+
+    /** Rebuild the repeating request from the current torch + image-control state. Used by the
+     *  torch setter and [setImageControls]; builds from TEMPLATE_RECORD each time so cleared
+     *  controls (e.g. manual exposure turned off → AE back to ON) revert cleanly. */
+    private fun rebuildRepeatingRequest() {
         val plan = currentPlan ?: return
         val s = session ?: return
         val d = device ?: return
@@ -207,6 +227,7 @@ class RtspCameraDriver(
                 previewSurface?.let { addTarget(it) }
                 sidecarSurface?.let { addTarget(it) }
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, plan.fpsRange)
+                if (!plan.highSpeed) imageControls.applyTo(this, evRange(plan.cameraId))
                 applyTorch(this, torchOn)
             }
             if (plan.highSpeed) {
@@ -216,9 +237,15 @@ class RtspCameraDriver(
                 s.setRepeatingRequest(builder.build(), null, cameraHandler)
             }
         } catch (t: Throwable) {
-            Log.w(TAG, "Torch update failed: ${t.message}")
+            Log.w(TAG, "Repeating-request rebuild failed: ${t.message}")
         }
     }
+
+    /** The sensor's exposure-compensation range, for clamping EV. Null if unavailable. */
+    private fun evRange(cameraId: String): Range<Int>? = try {
+        val cm = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        cm.getCameraCharacteristics(cameraId).get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+    } catch (_: Throwable) { null }
 
     private fun applyTorch(b: CaptureRequest.Builder, on: Boolean) {
         b.set(
