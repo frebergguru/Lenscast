@@ -21,20 +21,32 @@ import guru.freberg.lenscast.streaming.rtsp.RtspCameraDriver
  */
 object CameraCapabilities {
 
+    // Per-device capabilities are read from static CameraCharacteristics, so they never
+    // change for the life of the process. The web panel's /status endpoint queries these
+    // at 1 Hz (and RTSP/SRT FPS probing runs RtspCameraDriver.plan() per Fps entry), so
+    // memoizing on the enum inputs removes a steady stream of system-service round-trips.
+    // Keyed purely on the enums; the Context is the stable app/service context.
+    private data class FpsKey(val lens: Lens, val resolution: Resolution, val protocol: Protocol)
+    private class Box<T>(val value: T)
+    private val fpsCache = java.util.concurrent.ConcurrentHashMap<FpsKey, Set<Int>>()
+    private val resolutionCache = java.util.concurrent.ConcurrentHashMap<Lens, Set<Resolution>>()
+    private val manualSensorCache = java.util.concurrent.ConcurrentHashMap<Lens, Boolean>()
+    private val isoRangeCache = java.util.concurrent.ConcurrentHashMap<Lens, Box<Range<Int>?>>()
+    private val shutterRangeCache = java.util.concurrent.ConcurrentHashMap<Lens, Box<Range<Long>?>>()
+
     /**
      * The set of `Fps.value` integers that this device's [lens] can produce at
-     * [resolution] under [protocol]. Queries are cheap (read static metadata) so the
-     * caller doesn't need to memoize aggressively, but `remember(lens, resolution,
-     * protocol)` is fine.
+     * [resolution] under [protocol]. Result is memoized per (lens, resolution, protocol)
+     * — see the cache note above.
      */
     fun supportedFps(
         context: Context,
         lens: Lens,
         resolution: Resolution,
         protocol: Protocol,
-    ): Set<Int> {
+    ): Set<Int> = fpsCache.getOrPut(FpsKey(lens, resolution, protocol)) {
         val size = Size(resolution.width, resolution.height)
-        return Fps.entries
+        Fps.entries
             .filter { isFpsSupported(context, lens, size, it, protocol) }
             .map { it.value }
             .toSet()
@@ -100,12 +112,13 @@ object CameraCapabilities {
      * cap at 1080p. Mid-range devices may not even hit 1080p on the front. Querying at
      * runtime means the UI always reflects this specific sensor.
      */
-    fun supportedResolutions(context: Context, lens: Lens): Set<Resolution> {
-        val sizes = cameraOutputSizes(context, lens) ?: return Resolution.entries.toSet()
-        return Resolution.entries
-            .filter { res -> sizes.any { it.width == res.width && it.height == res.height } }
-            .toSet()
-    }
+    fun supportedResolutions(context: Context, lens: Lens): Set<Resolution> =
+        resolutionCache.getOrPut(lens) {
+            val sizes = cameraOutputSizes(context, lens) ?: return@getOrPut Resolution.entries.toSet()
+            Resolution.entries
+                .filter { res -> sizes.any { it.width == res.width && it.height == res.height } }
+                .toSet()
+        }
 
     /**
      * Replace [current] with the closest still-supported alternative when the user
@@ -149,11 +162,15 @@ object CameraCapabilities {
 
     /** ISO range the sensor advertises, or null if unsupported / camera missing. */
     fun isoRange(context: Context, lens: Lens): Range<Int>? =
-        characteristic(context, lens) { it.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE) }
+        isoRangeCache.getOrPut(lens) {
+            Box(characteristic(context, lens) { it.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE) })
+        }.value
 
     /** Exposure time range in nanoseconds, or null if unsupported. */
     fun exposureTimeRangeNs(context: Context, lens: Lens): Range<Long>? =
-        characteristic(context, lens) { it.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE) }
+        shutterRangeCache.getOrPut(lens) {
+            Box(characteristic(context, lens) { it.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE) })
+        }.value
 
     /**
      * True when this lens declares the MANUAL_SENSOR capability — that's the prerequisite
@@ -161,10 +178,12 @@ object CameraCapabilities {
      * Pixels and high-end Samsung / OnePlus phones do; budget devices often don't.
      */
     fun supportsManualSensor(context: Context, lens: Lens): Boolean =
-        characteristic(context, lens) { ch ->
-            val caps = ch.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: return@characteristic false
-            caps.any { it == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR }
-        } ?: false
+        manualSensorCache.getOrPut(lens) {
+            characteristic(context, lens) { ch ->
+                val caps = ch.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: return@characteristic false
+                caps.any { it == CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR }
+            } ?: false
+        }
 
     private inline fun <T> characteristic(context: Context, lens: Lens, read: (CameraCharacteristics) -> T?): T? {
         val cm = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager ?: return null

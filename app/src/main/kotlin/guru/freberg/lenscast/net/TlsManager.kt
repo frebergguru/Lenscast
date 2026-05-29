@@ -56,19 +56,37 @@ class TlsManager(private val context: Context) {
         null
     }
 
-    /** SHA-256 fingerprint of the current cert, colon-separated hex. Null on failure. */
-    fun fingerprintSha256(): String? = try {
-        val ks = loadOrCreateKeyStore()
-        val cert = ks.getCertificate(ALIAS) as? X509Certificate ?: return null
-        val digest = MessageDigest.getInstance("SHA-256").digest(cert.encoded)
-        digest.joinToString(":") { "%02X".format(it) }
-    } catch (t: Throwable) {
-        Log.w(TAG, "fingerprintSha256 failed: ${t.message}")
-        null
+    /**
+     * SHA-256 fingerprint of the current cert, colon-separated hex. Null on failure.
+     *
+     * The web panel's /status endpoint reads this at 1 Hz; recomputing means a PKCS12
+     * disk read + parse + cert digest every second. The fingerprint only changes when the
+     * cert is reissued, which happens on exactly two triggers: the device's IP set changes
+     * (see [loadOrCreateKeyStore]) or [regenerate] wipes the file. We memoize keyed on both
+     * the IP set and the keystore file's mtime so a cache hit is provably the same cert.
+     */
+    fun fingerprintSha256(): String? {
+        val ips = localIpv4Addresses()
+        val mtime = keystoreFile.lastModified()
+        fpCache?.let { if (it.mtime == mtime && it.ips == ips) return it.fingerprint }
+        return try {
+            val ks = loadOrCreateKeyStore()
+            val cert = ks.getCertificate(ALIAS) as? X509Certificate ?: return null
+            val digest = MessageDigest.getInstance("SHA-256").digest(cert.encoded)
+            val fp = digest.joinToString(":") { "%02X".format(it) }
+            // loadOrCreateKeyStore may have just rewritten the file (IP change / first run),
+            // so capture the post-load mtime — that's what the next call will compare against.
+            fpCache = FpCache(fp, ips, keystoreFile.lastModified())
+            fp
+        } catch (t: Throwable) {
+            Log.w(TAG, "fingerprintSha256 failed: ${t.message}")
+            null
+        }
     }
 
     /** Wipe the stored material so the next [sslContext] call regenerates fresh. */
     fun regenerate() {
+        fpCache = null
         try { keystoreFile.delete() } catch (_: Throwable) {}
     }
 
@@ -161,6 +179,12 @@ class TlsManager(private val context: Context) {
         // Password for the on-disk PKCS12. The file is in app-private storage so this
         // is a formality — KeyManagerFactory.init just requires *some* password.
         private val KS_PASSWORD = "lenscast".toCharArray()
+
+        // Memoized fingerprint (see fingerprintSha256). Process-level because forContext()
+        // hands out a fresh TlsManager per call, so an instance field wouldn't survive.
+        // A single @Volatile holder keeps the (fingerprint, ips, mtime) triple coherent.
+        private class FpCache(val fingerprint: String, val ips: List<String>, val mtime: Long)
+        @Volatile private var fpCache: FpCache? = null
 
         /**
          * Compatibility shim for callers that used the old object-based TlsManager
