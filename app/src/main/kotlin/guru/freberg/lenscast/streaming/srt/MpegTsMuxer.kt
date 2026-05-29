@@ -28,6 +28,7 @@ class MpegTsMuxer(
      * on the next access unit. Without this the receiver could join mid-stream and see
      * a P-frame as its first PES, with the previous IDR already drained off the queue.
      */
+    @Synchronized
     fun resetForNewClient() {
         sentFirstVideoKeyframe = false
         packetCountSincePsi = 0
@@ -51,7 +52,18 @@ class MpegTsMuxer(
     private var packetCountSincePsi: Int = 0
     private var sentFirstVideoKeyframe: Boolean = false
 
-    /** One H.264 access unit (1+ NAL units in Annex-B / length-prefix form). */
+    /**
+     * One H.264 access unit (1+ NAL units in Annex-B / length-prefix form).
+     *
+     * Synchronized because the MediaCodec video and audio callbacks live on different
+     * HandlerThreads, and both call into the muxer (here and [writeAudioAu]). The PSI
+     * gate (`packetCountSincePsi`), the PSI continuity counters (`patCc`, `pmtCc`),
+     * and the per-PID counters all need a single ordering — without the lock, two
+     * threads racing through [maybeWritePsi] could each build a PAT, push them to the
+     * SRT queue in arbitrary order, and the receiver sees "TS discontinuity (received
+     * N+1, expected N)" on PID 0.
+     */
+    @Synchronized
     fun writeVideoAu(nals: List<ByteArray>, ptsUs: Long, isKeyframe: Boolean) {
         if (!sentFirstVideoKeyframe) {
             // Wait for an IDR before letting receivers start — without it the decoder
@@ -81,7 +93,8 @@ class MpegTsMuxer(
         emitPes(VIDEO_PID, pes, withPcr = true, pcr27mHz = pts90k * 300L)
     }
 
-    /** One AAC access unit (raw frame body — we add the ADTS header). */
+    /** One AAC access unit (raw frame body — we add the ADTS header). See [writeVideoAu] for the locking rationale. */
+    @Synchronized
     fun writeAudioAu(aac: ByteArray, ptsUs: Long) {
         if (!sentFirstVideoKeyframe) return // align with video so receivers don't desync.
         val cfg = asc ?: return
