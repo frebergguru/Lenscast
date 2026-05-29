@@ -125,21 +125,17 @@ fun SettingsSheet(
                 },
                 onSelect = { onChange(settings.copy(protocol = it)) },
             )
-            if (settings.protocol == Protocol.RTSP) {
-                Text(
-                    text = stringResource(R.string.settings_rtsp_landscape_note),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            } else {
-                Text(
-                    text = stringResource(R.string.settings_mjpeg_rotation_note),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
+            val rotationNote = when (settings.protocol) {
+                Protocol.RTSP -> R.string.settings_rtsp_landscape_note
+                Protocol.SRT -> R.string.settings_srt_rotation_note
+                else -> R.string.settings_mjpeg_rotation_note
             }
+            Text(
+                text = stringResource(rotationNote),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
 
             if (settings.protocol == Protocol.SRT) {
                 Spacer(Modifier.height(16.dp))

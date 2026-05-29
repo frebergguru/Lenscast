@@ -64,7 +64,8 @@
     <string name="settings_rtsp_port">RTSP port</string>
     <string name="settings_port_section">Server port</string>
     <string name="settings_port_range_hint">Port must be 1024–65535</string>
-    <string name="settings_rtsp_landscape_note">RTSP only supports landscape orientation — rotate the phone before streaming.</string>
+    <string name="settings_rtsp_landscape_note">RTSP follows the phone\'s orientation at 30 fps and below. At 60 fps and above (high-speed mode) it streams landscape only.</string>
+    <string name="settings_srt_rotation_note">Rotation follows the phone live — turn the device while streaming and the picture rotates to match.</string>
     <string name="settings_mjpeg_rotation_note">Rotation locks at Start. To change orientation, Stop the stream, rotate the phone, then Start again.</string>
 
     <string name="settings_system_webcam_title">Use as USB webcam (system)</string>
