@@ -134,34 +134,33 @@ class MpegTsMuxer(
 
             val payloadStart: Int
             if (hasAf) {
-                // afLength byte at offset 4, then afLength bytes of AF data.
-                val afData = ByteArray(if (needPcr) 7 else 0)
-                if (needPcr) {
-                    afData[0] = 0x10  // PCR flag
-                    // PCR base = pcr27mHz / 300 (90 kHz), PCR extension = pcr27mHz % 300.
-                    val pcrBase = pcr27mHz / 300L
-                    val pcrExt = (pcr27mHz % 300L).toInt() and 0x1FF
-                    afData[1] = ((pcrBase ushr 25) and 0xFF).toByte()
-                    afData[2] = ((pcrBase ushr 17) and 0xFF).toByte()
-                    afData[3] = ((pcrBase ushr 9) and 0xFF).toByte()
-                    afData[4] = ((pcrBase ushr 1) and 0xFF).toByte()
-                    afData[5] = ((((pcrBase and 0x1L) shl 7) or 0x7E or ((pcrExt ushr 8) and 0x1).toLong()) and 0xFF).toByte()
-                    afData[6] = (pcrExt and 0xFF).toByte()
-                }
-                val afContentLen = afData.size
-                val payloadCapacity = 184 - 1 - afContentLen // 1 byte for afLength itself
+                // Per ISO 13818-1 §2.4.3.5, every non-empty AF starts with a 1-byte flags
+                // field. The previous version skipped this when there was no PCR, going
+                // straight to 0xFF stuffing — and the receiver would interpret byte 5
+                // (= 0xFF) as the flags byte saying "PCR present", then misread the next
+                // 6 stuffing bytes (0xFF 0xFF 0xFF 0xFF 0xFF 0xFF) as a PCR with all 33
+                // bits set: that's 95 443 717 ms = 26.5 hours, the bug source for the
+                // multi-second lag wireshark caught us in.
+                val afContentLen = 1 + (if (needPcr) 6 else 0)  // 1 flags + optional 6 PCR
+                val payloadCapacity = 184 - 1 - afContentLen
                 val payloadBytes = minOf(remaining, payloadCapacity)
                 val stuffingBytes = if (needStuffing) (payloadCapacity - payloadBytes) else 0
                 val afLength = afContentLen + stuffingBytes
                 pkt[4] = afLength.toByte()
-                if (afContentLen > 0) {
-                    // Flag byte at offset 5 is the same as afData[0]; copy the entire AF
-                    // content starting at 5. The rest of the AF (stuffing) is zeroed.
-                    System.arraycopy(afData, 0, pkt, 5, afContentLen)
+                pkt[5] = (if (needPcr) 0x10 else 0x00).toByte()  // flags: PCR present?
+                if (needPcr) {
+                    val pcrBase = pcr27mHz / 300L
+                    val pcrExt = (pcr27mHz % 300L).toInt() and 0x1FF
+                    pkt[6]  = ((pcrBase ushr 25) and 0xFF).toByte()
+                    pkt[7]  = ((pcrBase ushr 17) and 0xFF).toByte()
+                    pkt[8]  = ((pcrBase ushr 9) and 0xFF).toByte()
+                    pkt[9]  = ((pcrBase ushr 1) and 0xFF).toByte()
+                    pkt[10] = ((((pcrBase and 0x1L) shl 7) or 0x7EL or ((pcrExt ushr 8) and 0x1).toLong()) and 0xFFL).toByte()
+                    pkt[11] = (pcrExt and 0xFF).toByte()
                 }
                 if (stuffingBytes > 0) {
-                    // Stuffing bytes after the AF content area = 0xFF per spec.
-                    java.util.Arrays.fill(pkt, 5 + afContentLen, 5 + afContentLen + stuffingBytes, 0xFF.toByte())
+                    val stuffStart = 5 + afContentLen
+                    java.util.Arrays.fill(pkt, stuffStart, stuffStart + stuffingBytes, 0xFF.toByte())
                 }
                 payloadStart = 4 + 1 + afLength
             } else {
