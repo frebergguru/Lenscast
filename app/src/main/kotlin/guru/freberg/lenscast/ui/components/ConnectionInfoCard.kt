@@ -174,6 +174,29 @@ fun ConnectionInfoCard(
             }
             Spacer(Modifier.height(12.dp))
 
+            // SRT-specific: receivers default to several seconds of input buffering for
+            // live MPEG-TS unless told otherwise. The wire-level stream is real-time;
+            // showing the recommended player flags here saves users from chasing it as
+            // a stream bug. (ffplay copy-paste below mirrors what the docs recommend.)
+            if (protocol == Protocol.SRT) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            stringResource(R.string.card_connection_srt_low_latency_hint),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        CopyableInline(text = "ffplay -fflags nobuffer -flags low_delay -framedrop")
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
             Text(
                 stringResource(R.string.card_connection_obs_hint),
                 style = MaterialTheme.typography.bodySmall,

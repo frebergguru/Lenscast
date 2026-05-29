@@ -20,6 +20,7 @@
     <string name="card_connection_usb_hint">Kjør på PC-en først:</string>
     <string name="card_connection_no_wifi">Ikke koblet til Wi-Fi</string>
     <string name="card_connection_obs_hint">I OBS: Legg til → Mediekilde → fjern \"Lokal fil\" → lim inn URL over</string>
+    <string name="card_connection_srt_low_latency_hint">De fleste mottakere bufrer ~5 s med inndata som standard. For sanntidsavspilling: start ffplay med lavlatensflagg (eller slå på «Low Delay» i VLC / «Low Latency» i OBS).</string>
     <string name="card_connection_audio">Lyd (PCM-16LE WAV)</string>
     <string name="card_connection_web_control">Webkontrollpanel</string>
 
