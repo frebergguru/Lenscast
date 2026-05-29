@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""
+lenscast-rtsp-probe — a standalone RTSP conformance test client for Lenscast.
+
+Speaks RTSP 1.0 (RFC 2326) and 2.0 (RFC 7826) over the TCP-interleaved transport and
+checks the server's replies against the spec: the full session lifecycle
+(OPTIONS/DESCRIBE/SETUP/PLAY/PAUSE/TEARDOWN), the version-specific headers, that media
+actually flows on PLAY and stops on PAUSE, and the error / negotiation behaviours
+(454/457/406/551/505, feature-tag filtering, request-header echoes).
+
+Why this exists: no shipping RTSP *client* speaks RTSP 2.0 — VLC and OBS use live555,
+ffmpeg has its own 1.0 demuxer — so the server's 2.0 path can't be exercised by a real
+player. This client sends genuine RTSP/2.0 requests, which is the only way to verify it.
+
+No third-party dependencies; Python 3 standard library only. CI-friendly: exits 0 when
+every check passes, 1 otherwise.
+
+Usage:
+  lenscast-rtsp-probe [--host H] [--port P] [--version 1.0|2.0|both]
+                      [--media-secs N] [--no-color]
+
+The phone must be reachable and an RTSP stream must be running. Either point --host at the
+phone's LAN IP, or forward the port over USB first:
+
+  adb forward tcp:5540 tcp:5540
+  lenscast-rtsp-probe --host 127.0.0.1 --port 5540
+"""
+
+import argparse
+import socket
+import sys
+import time
+
+# ---- tiny PASS/FAIL harness -------------------------------------------------
+
+class Results:
+    def __init__(self, color):
+        self.passed = 0
+        self.failed = 0
+        g, r, d = ("\033[32m", "\033[31m", "\033[0m") if color else ("", "", "")
+        self._g, self._r, self._d = g, r, d
+
+    def check(self, ok, desc, detail=""):
+        if ok:
+            self.passed += 1
+            print(f"  {self._g}PASS{self._d}  {desc}")
+        else:
+            self.failed += 1
+            extra = f"  ({detail})" if detail else ""
+            print(f"  {self._r}FAIL{self._d}  {desc}{extra}")
+        return ok
+
+
+# ---- RTSP response container ------------------------------------------------
+
+class Resp:
+    def __init__(self, status_line, headers, body):
+        self.status_line = status_line or ""
+        self.headers = headers          # lower-cased keys
+        self.body = body
+        self.version = ""
+        self.code = 0
+        if status_line:
+            parts = status_line.split(" ", 2)
+            if len(parts) >= 2:
+                self.version = parts[0]
+                try:
+                    self.code = int(parts[1])
+                except ValueError:
+                    self.code = 0
+
+    def h(self, name):
+        return self.headers.get(name.lower(), "")
+
+
+# ---- one RTSP connection ----------------------------------------------------
+
+class Conn:
+    """One TCP connection to the RTSP server. Demuxes interleaved media frames from
+    control responses so PLAY/PAUSE can be driven on the same socket."""
+
+    def __init__(self, host, port, timeout=4.0):
+        self.host, self.port = host, port
+        self.base = f"rtsp://{host}:{port}/"
+        self.sock = socket.create_connection((host, port), timeout=timeout)
+        self.sock.settimeout(timeout)
+        self.buf = bytearray()
+        self.cseq = 0
+        self.session = None
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+    def _fill(self, timeout=None):
+        if timeout is not None:
+            self.sock.settimeout(timeout)
+        try:
+            d = self.sock.recv(65536)
+        except socket.timeout:
+            return 0
+        except OSError:
+            return 0
+        if not d:
+            return 0
+        self.buf.extend(d)
+        return len(d)
+
+    def request(self, method, extra="", uri=None, ver="2.0", with_session=False):
+        self.cseq += 1
+        uri = uri or self.base
+        head = f"{method} {uri} RTSP/{ver}\r\nCSeq: {self.cseq}\r\n"
+        if with_session and self.session:
+            head += f"Session: {self.session}\r\n"
+        head += extra + "\r\n"
+        self.sock.sendall(head.encode())
+        return self.read_response()
+
+    def read_response(self, deadline_s=6.0):
+        """Skip any leading interleaved ($) media frames, then parse one text response."""
+        deadline = time.time() + deadline_s
+        while time.time() < deadline:
+            if not self.buf:
+                if self._fill() == 0:
+                    continue
+            if self.buf[:1] == b"$":
+                # interleaved frame: '$' + 1-byte channel + 2-byte BE length + payload
+                while len(self.buf) < 4 and self._fill() > 0:
+                    pass
+                if len(self.buf) < 4:
+                    break
+                ln = (self.buf[2] << 8) | self.buf[3]
+                while len(self.buf) < 4 + ln and self._fill() > 0:
+                    pass
+                if len(self.buf) < 4 + ln:
+                    break
+                del self.buf[:4 + ln]
+                continue
+            while b"\r\n\r\n" not in self.buf and self._fill() > 0:
+                pass
+            if b"\r\n\r\n" not in self.buf:
+                break
+            cut = self.buf.index(b"\r\n\r\n") + 4
+            raw = bytes(self.buf[:cut])
+            del self.buf[:cut]
+            lines = raw.decode(errors="replace").split("\r\n")
+            headers = {}
+            for line in lines[1:]:
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    headers[k.strip().lower()] = v.strip()
+            cl = int(headers.get("content-length", "0") or "0")
+            while len(self.buf) < cl and self._fill() > 0:
+                pass
+            body = bytes(self.buf[:cl]).decode(errors="replace") if cl else ""
+            del self.buf[:cl]
+            return Resp(lines[0], headers, body)
+        return Resp(None, {}, "")
+
+    def measure_media(self, secs):
+        """Bytes of interleaved media received over the next `secs` seconds."""
+        total = len(self.buf)
+        self.buf.clear()
+        end = time.time() + secs
+        while time.time() < end:
+            n = self._fill(0.4)
+            total += n
+        return total
+
+
+def one_shot(host, port, method, ver="1.0", extra="", uri=None):
+    """Open a fresh connection, send one request, return the response, close."""
+    try:
+        with Conn(host, port) as c:
+            return c.request(method, extra=extra, uri=uri, ver=ver)
+    except OSError as e:
+        return Resp(None, {}, f"<connect error: {e}>")
+
+
+# ---- the actual tests -------------------------------------------------------
+
+def test_session(host, port, ver, media_secs, res):
+    """Full lifecycle for one protocol version, with version-specific assertions."""
+    tag = f"RTSP/{ver}"
+    print(f"\n== {tag} session ==")
+    is20 = ver == "2.0"
+    try:
+        c = Conn(host, port)
+    except OSError as e:
+        res.check(False, f"[{tag}] connect", str(e))
+        return
+    with c:
+        r = c.request("OPTIONS", ver=ver)
+        res.check(r.code == 200 and r.version == tag, f"[{tag}] OPTIONS 200 + version echo",
+                  f"{r.status_line}")
+        res.check("PLAY" in r.h("public"), f"[{tag}] OPTIONS advertises PLAY in Public", r.h("public"))
+
+        r = c.request("DESCRIBE", extra="Accept: application/sdp\r\n", ver=ver)
+        ok_sdp = r.code == 200 and r.body.startswith("v=0") and "m=video" in r.body
+        res.check(ok_sdp, f"[{tag}] DESCRIBE 200 + SDP body", r.status_line)
+        res.check("application/sdp" in r.h("content-type"), f"[{tag}] DESCRIBE Content-Type", r.h("content-type"))
+
+        r = c.request("SETUP", extra="Transport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n",
+                      uri=c.base + "trackID=0", ver=ver)
+        c.session = r.h("session").split(";")[0].strip() or None
+        res.check(r.code == 200 and "interleaved=0-1" in r.h("transport"),
+                  f"[{tag}] SETUP 200 + interleaved transport", r.h("transport"))
+        res.check(c.session is not None, f"[{tag}] SETUP returns a Session id", r.h("session"))
+        if is20:
+            res.check("time-progressing" in r.h("media-properties").lower(),
+                      f"[{tag}] SETUP Media-Properties (live)", r.h("media-properties"))
+
+        rng = "npt=now-" if is20 else "npt=0.000-"
+        r = c.request("PLAY", extra=f"Range: {rng}\r\n", ver=ver, with_session=True)
+        res.check(r.code == 200, f"[{tag}] PLAY 200", r.status_line)
+        res.check(r.h("rtp-info") != "", f"[{tag}] PLAY carries RTP-Info", r.h("rtp-info"))
+        if is20:
+            ri = r.h("rtp-info")
+            res.check('url="' in ri and "ssrc=" in ri,
+                      f"[{tag}] RTP-Info is 2.0 form (quoted url + ssrc)", ri)
+            res.check(r.h("range").startswith("npt=now"), f"[{tag}] Range: npt=now-", r.h("range"))
+            res.check(r.h("media-range") != "", f"[{tag}] PLAY Media-Range present", r.h("media-range"))
+            res.check("time-progressing" in r.h("media-properties").lower(),
+                      f"[{tag}] PLAY Media-Properties (live)", r.h("media-properties"))
+        else:
+            ri = r.h("rtp-info")
+            res.check('url="' not in ri and "url=" in ri,
+                      f"[{tag}] RTP-Info is 1.0 form (bare url)", ri)
+            res.check(r.h("range").startswith("npt=0"), f"[{tag}] Range: npt=0.000-", r.h("range"))
+            res.check(r.h("media-properties") == "" and r.h("media-range") == "",
+                      f"[{tag}] no 2.0-only headers leaked into 1.0",
+                      f"mp='{r.h('media-properties')}' mr='{r.h('media-range')}'")
+
+        played = c.measure_media(media_secs)
+        res.check(played > 50_000, f"[{tag}] media flows after PLAY ({played} bytes in {media_secs}s)",
+                  f"only {played} bytes")
+
+        r = c.request("PAUSE", ver=ver, with_session=True)
+        res.check(r.code == 200, f"[{tag}] PAUSE 200", r.status_line)
+        paused = c.measure_media(media_secs)
+        res.check(paused < 4_000, f"[{tag}] media stops after PAUSE ({paused} bytes in {media_secs}s)",
+                  f"{paused} bytes still arriving")
+
+        # Range unit we can't honour on a live, non-seekable source -> 457 (needs a session,
+        # so it rides on this one rather than standing up a second).
+        r = c.request("PLAY", extra="Range: clock=20260529T120000Z-\r\n", ver=ver, with_session=True)
+        res.check(r.code == 457, f"[{tag}] non-NPT Range -> 457 Invalid Range", r.status_line)
+
+        r = c.request("TEARDOWN", ver=ver, with_session=True)
+        res.check(r.code == 200, f"[{tag}] TEARDOWN 200", r.status_line)
+
+
+def test_conformance(host, port, res):
+    """Version negotiation, feature tags, error codes, and header echoes."""
+    print("\n== conformance (negotiation / errors / echoes) ==")
+
+    r = one_shot(host, port, "OPTIONS", extra="Require: play.basic\r\n")
+    res.check(r.code == 200 and r.h("unsupported") == "",
+              "Require: play.basic -> 200 (supported, not refused)", r.status_line)
+
+    r = one_shot(host, port, "OPTIONS", extra="Require: x.unsupported.feature\r\n")
+    res.check(r.code == 551 and "x.unsupported.feature" in r.h("unsupported"),
+              "Require unknown tag -> 551 + Unsupported", f"{r.status_line} / {r.h('unsupported')}")
+
+    r = one_shot(host, port, "OPTIONS", ver="2.0", extra="Supported: play.basic\r\n")
+    res.check("play.basic" in r.h("supported"),
+              "Supported probe -> Supported: play.basic", r.h("supported"))
+
+    r = one_shot(host, port, "GET_PARAMETER", extra="Session: 0000000000\r\n")
+    res.check(r.code == 454, "unknown Session -> 454 Session Not Found", r.status_line)
+
+    r = one_shot(host, port, "DESCRIBE", extra="Accept: application/xml\r\n")
+    res.check(r.code == 406, "Accept excludes SDP -> 406 Not Acceptable", r.status_line)
+
+    r = one_shot(host, port, "OPTIONS", ver="3.0")
+    res.check(r.code == 505, "RTSP/3.0 -> 505 RTSP Version Not Supported", r.status_line)
+
+    r = one_shot(host, port, "OPTIONS",
+                 extra="Timestamp: 1234.5\r\nPipelined-Requests: 9\r\nConnection: close\r\n")
+    res.check(r.h("timestamp") == "1234.5", "Timestamp echoed", r.h("timestamp"))
+    res.check(r.h("pipelined-requests") == "9", "Pipelined-Requests echoed", r.h("pipelined-requests"))
+    res.check("close" in r.h("connection").lower(), "Connection: close echoed", r.h("connection"))
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        description="RTSP 1.0/2.0 conformance probe for Lenscast.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    ap.add_argument("--host", default="127.0.0.1", help="RTSP server host")
+    ap.add_argument("--port", type=int, default=5540, help="RTSP server port")
+    ap.add_argument("--version", choices=["1.0", "2.0", "both"], default="both",
+                    help="which protocol version's session to drive")
+    ap.add_argument("--media-secs", type=float, default=1.2,
+                    help="seconds to measure media flow on PLAY/PAUSE")
+    ap.add_argument("--no-color", action="store_true", help="disable ANSI colour")
+    args = ap.parse_args()
+
+    res = Results(color=sys.stdout.isatty() and not args.no_color)
+    print(f"lenscast-rtsp-probe -> rtsp://{args.host}:{args.port}/  (version={args.version})")
+
+    # fail fast with a clear message if nothing is listening
+    try:
+        Conn(args.host, args.port).close()
+    except OSError as e:
+        print(f"\n  cannot reach rtsp://{args.host}:{args.port}/ — is a stream running?\n  {e}")
+        return 2
+
+    versions = ["1.0", "2.0"] if args.version == "both" else [args.version]
+    for v in versions:
+        test_session(args.host, args.port, v, args.media_secs, res)
+    test_conformance(args.host, args.port, res)
+
+    total = res.passed + res.failed
+    print(f"\n{res.passed}/{total} checks passed, {res.failed} failed")
+    return 0 if res.failed == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
