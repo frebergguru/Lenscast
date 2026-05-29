@@ -10,16 +10,24 @@ import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.util.Rational
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import guru.freberg.lenscast.streaming.StreamingService
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import guru.freberg.lenscast.ui.MainScreen
 import guru.freberg.lenscast.ui.theme.LenscastTheme
@@ -61,6 +69,27 @@ class MainActivity : ComponentActivity() {
                 val persistIntent = Intent(this@MainActivity, StreamingService::class.java)
                     .setAction(StreamingService.ACTION_PERSIST_WEB)
                 ContextCompat.startForegroundService(this@MainActivity, persistIntent)
+            }
+        }
+
+        // Keep the display awake while the app is in the foreground and streaming, when the
+        // user has "keep screen on" enabled. FLAG_KEEP_SCREEN_ON only affects a visible window,
+        // so backgrounded streaming still lets the screen sleep (the service's partial wake lock
+        // keeps the stream alive). repeatOnLifecycle(STARTED) scopes the flag to the foreground.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                snapshotFlow { serviceState.value }
+                    .flatMapLatest { svc -> svc?.status ?: flowOf(null) }
+                    .map { st ->
+                        st != null && st.settings.keepScreenOn &&
+                            (st.state == StreamingService.State.STREAMING ||
+                                st.state == StreamingService.State.STARTING)
+                    }
+                    .distinctUntilChanged()
+                    .collect { keepOn ->
+                        if (keepOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                    }
             }
         }
 
