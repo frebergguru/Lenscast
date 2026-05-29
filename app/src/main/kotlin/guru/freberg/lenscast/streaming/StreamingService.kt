@@ -1354,18 +1354,36 @@ class StreamingService : LifecycleService() {
         }
         if (prev == rotation) return
         // MJPEG already rolls with rotation changes mid-stream because each JPEG carries
-        // its own dimensions. SRT/RTSP encode H.264 with frame dimensions baked into the
-        // SPS, so a rotation change there means tearing the pipeline down and starting
-        // a new one. Debounce 500 ms so a quick tilt doesn't thrash the receiver.
+        // its own dimensions. Debounce 500 ms so a quick tilt doesn't thrash the receiver.
         val proto = _status.value.settings.protocol
-        if (proto != guru.freberg.lenscast.prefs.Protocol.SRT &&
-            proto != guru.freberg.lenscast.prefs.Protocol.RTSP) return
+        val rotationDegrees = when (rotation) {
+            android.view.Surface.ROTATION_90 -> 90
+            android.view.Surface.ROTATION_180 -> 180
+            android.view.Surface.ROTATION_270 -> 270
+            else -> 0
+        }
         rotationRestartJob?.cancel()
         rotationRestartJob = lifecycleScope.launch {
             kotlinx.coroutines.delay(500)
-            if (_status.value.state == State.STREAMING) {
-                Log.i(TAG, "Auto-restart $proto stream for rotation change")
-                restartStreaming(_status.value.settings)
+            if (_status.value.state != State.STREAMING) return@launch
+            when (proto) {
+                // SRT rebuilds only the camera/encoder/rotator in place — the SRT socket and
+                // the connected receiver stay up (the receiver re-inits on the new SPS). No
+                // disconnect, unlike a full restart.
+                guru.freberg.lenscast.prefs.Protocol.SRT -> {
+                    Log.i(TAG, "Seamless SRT rotation → $rotationDegrees")
+                    try { srtManager?.reconfigureVideo(rotationDegrees) } catch (t: Throwable) {
+                        Log.w(TAG, "Seamless rotation failed; falling back to restart", t)
+                        restartStreaming(_status.value.settings)
+                    }
+                }
+                // RTSP encodes H.264 with no GL rotation pass yet, so a rotation change there
+                // still means a full pipeline restart.
+                guru.freberg.lenscast.prefs.Protocol.RTSP -> {
+                    Log.i(TAG, "Auto-restart RTSP stream for rotation change")
+                    restartStreaming(_status.value.settings)
+                }
+                else -> { /* MJPEG / WEBRTC: no action */ }
             }
         }
     }
