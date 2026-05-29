@@ -4,8 +4,11 @@ Lenscast turns an Android phone into a network camera that OBS Studio (and any H
 client) can consume directly. Two streaming protocols are live today:
 
 - **MJPEG over HTTP** (default port 4747) — works in any orientation, up to 30 fps.
-- **RTSP** (H.264 + AAC, default port 5540) — locked to the sensor's native landscape
-  orientation, supports 60/120/240 fps via Camera2 high-speed sessions.
+- **RTSP** (H.264 + AAC, default port 5540) — orientation-correct (portrait/landscape) at
+  ≤30 fps via an EGL/GL rotation stage; high-speed 60/120/240 fps sessions still ship the
+  sensor's native landscape (constrained Camera2 can't take the GL SurfaceTexture).
+- **SRT** (H.264 + AAC over MPEG-TS, default port 9710) — orientation-correct via the same
+  GL rotation stage, and rotates seamlessly mid-stream without dropping the receiver.
 
 Both ports are user-editable in the Settings sheet (range 1024–65535). For
 "phone-as-regular-webcam" use cases (Zoom, Chrome, Discord) there's an optional Linux
@@ -74,13 +77,21 @@ Full breakdown: [Docs/Architecture.md](Docs/Architecture.md).
 - **`ImageProxy.close()` in a `finally`.** CameraX `ImageAnalysis` has a 1-image queue;
   leaking one stalls the entire pipeline.
 
-## RTSP path caveats
+## RTSP / SRT path caveats
 
-- **Landscape only.** The H.264 encoder consumes the camera Surface directly with no
-  per-frame rotation step, so output ships in the sensor's native landscape orientation
-  regardless of how the phone is held. The Settings sheet calls this out under the
-  Protocol picker. Lifting it needs an EGL/GL rotation pipeline — see
-  [Docs/Roadmap.md](Docs/Roadmap.md).
+- **Rotation via `streaming/GlRotator.kt`.** Both H.264 paths run the camera through an
+  EGL/GL stage that rotates frames into the held orientation before the encoder, so the
+  wire is upright (no receiver-side rotation needed). The rotation is
+  `glRotation = (360 - deviceRotation) % 360` — `sensorOrientation` cancels because the
+  SurfaceTexture transform already corrects the sensor mount, so it's device-independent.
+  The encoder gets `KEY_ROTATION = 0` on this path (it sees already-upright frames).
+- **High-speed RTSP (60/120/240 fps) is still landscape.** Constrained Camera2 high-speed
+  sessions only accept MediaCodec/preview Surfaces, not the GL SurfaceTexture, so those
+  fall back to sensor-native landscape + a `KEY_ROTATION` hint (`useGlRotation =
+  !plan.highSpeed` in `RtspManager`). SRT is ≤30 fps so it always rotates.
+- **Mid-stream rotation:** SRT reconfigures the video pipeline in place
+  (`SrtManager.reconfigureVideo`) keeping the socket/receiver connected; RTSP still does a
+  full restart on rotation. Both are driven by `StreamingService.setDeviceRotation`.
 - **Audio** is optional (off by default), gated behind `RECORD_AUDIO` and the
   `microphone` foreground-service type. Toggling Audio in Settings changes which
   permissions are requested.
