@@ -14,10 +14,11 @@ import android.util.Log
 import java.nio.ByteBuffer
 
 /**
- * Side-channel MediaMuxer that records the RTSP path's H.264 + AAC streams to MP4 in
- * `Movies/Lenscast/`. Hooked into [RtspManager] alongside the RTP packetizers — the
- * encoders produce the same Annex-B / raw-AAC samples already; this class just packages
- * them.
+ * Side-channel MediaMuxer that records an H.264 path's H.264 + AAC streams to MP4 in
+ * `Movies/Lenscast/`. Hooked into [RtspManager], [guru.freberg.lenscast.streaming.srt.SrtManager],
+ * and [guru.freberg.lenscast.streaming.rist.RistManager] alongside their packetizers/muxer —
+ * the encoders produce the same Annex-B / raw-AAC samples already; this class just packages
+ * them. (MJPEG and WebRTC don't expose an encoded H.264 stream, so they can't feed it.)
  *
  * Lifecycle:
  *  - construct with the expected track shape (audio optional).

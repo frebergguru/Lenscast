@@ -134,9 +134,11 @@ data class Settings(
     val noiseSuppress: Boolean = false,
     val echoCancel: Boolean = false,
     val presets: List<Preset> = emptyList(),
-    // RTSP-only. When enabled, the H.264 + AAC encoders also feed a MediaMuxer writing to
-    // Movies/Lenscast/Lenscast_<ts>.mp4. The recording runs for the lifetime of the
-    // stream; stopping the stream finalises the file.
+    // H.264 paths only (RTSP / SRT / RIST). When enabled, the H.264 + AAC encoders also feed
+    // a MediaMuxer writing to Movies/Lenscast/Lenscast_<ts>.mp4. The recording runs for the
+    // lifetime of the stream; stopping the stream finalises the file. While recording, those
+    // paths keep the start orientation (an MP4 track's geometry is locked once written).
+    // MJPEG and WebRTC don't expose an encoded H.264 stream, so recording is unavailable there.
     val recordLocally: Boolean = false,
     /** Web control panel — independent HTTP port, runs as long as the service is alive. */
     val webControlEnabled: Boolean = true,

@@ -245,8 +245,8 @@
     <string name="settings_mjpeg_sidecar">MJPEG sidecar (browser preview)</string>
     <string name="settings_mjpeg_sidecar_hint">Adds /video on the MJPEG port so a browser &lt;img&gt; works alongside the RTSP feed. Same camera; ≤15 fps for the sidecar to keep the encoder cool.</string>
     <string name="settings_mjpeg_sidecar_highspeed_note">Available at ≤30 fps only — high-speed Camera2 sessions reject extra outputs.</string>
-    <string name="settings_record_locally">Record to MP4 while streaming (RTSP only)</string>
-    <string name="settings_record_locally_hint">Saves to Movies/Lenscast/. Encoded once; no extra battery cost beyond the file write.</string>
+    <string name="settings_record_locally">Record to MP4 while streaming (RTSP/SRT/RIST)</string>
+    <string name="settings_record_locally_hint">Saves to Movies/Lenscast/. Encoded once; no extra battery cost beyond the file write. Not available on MJPEG or WebRTC.</string>
     <string name="recording_saved">Recording saved to Movies/Lenscast</string>
 
     <string name="settings_sftp_section">SFTP upload</string>
@@ -374,7 +374,7 @@
     <string name="web_lbl_mjpeg_sidecar">MJPEG sidecar</string>
     <string name="web_hint_mjpeg_sidecar">RTSP only · ≤30 fps · /video also served alongside RTSP</string>
     <string name="web_lbl_record_mp4">Record to MP4 while streaming</string>
-    <string name="web_hint_record_rtsp_only">RTSP only · saves to Movies/Lenscast/</string>
+    <string name="web_hint_record_rtsp_only">RTSP/SRT/RIST · saves to Movies/Lenscast/</string>
     <string name="web_lbl_sftp_auto_upload">SFTP auto-upload</string>
     <string name="web_hint_sftp_auto_upload">Recordings are queued after the stream stops.</string>
     <string name="web_lbl_sftp_host">SFTP host</string>

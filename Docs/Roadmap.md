@@ -87,12 +87,16 @@
   user presses Home while streaming; `MainScreen` collapses to just the camera box.
 - **USB transport docs** — [Docs/USB.md](USB.md) walks the user through
   `adb forward` for both ports.
-- **Local recording (RTSP)** — `RecordingMuxer` taps the existing H.264 + AAC
-  encoder callbacks and writes an MP4 to `Movies/Lenscast/` via MediaStore.
-  Track config is captured from `H264Encoder.parameterSets` and
+- **Local recording (RTSP / SRT / RIST)** — `RecordingMuxer` taps the existing
+  H.264 + AAC encoder callbacks and writes an MP4 to `Movies/Lenscast/` via
+  MediaStore. Track config is captured from `H264Encoder.parameterSets` and
   `AacEncoder.asc`; tracks added once both are known; PTS rebased to start at
-  zero. Finalised in `RtspManager.stop()`; UI surfaces a Toast on the
-  STREAMING → IDLE transition.
+  zero. Finalised in each manager's `stop()` (`RtspManager` / `SrtManager` /
+  `RistManager`); UI surfaces a Toast on the STREAMING → IDLE transition. The
+  SRT/RIST paths keep the start orientation while recording (skip the in-place
+  rotation/lens-switch) since an MP4 track's geometry is fixed once written.
+  MJPEG (JPEG only) and WebRTC (the library encodes H.264 internally, with no
+  exposed bitstream callback) can't feed the muxer.
 - **Audio over MJPEG** — direct PCM-16LE capture via `PcmCapture` (no codec,
   no codec lookahead). `MjpegServer` serves it as `audio/wav` on `/audio` with
   an open-ended WAV header (`0xFFFFFFFF` length sentinels), so receivers treat

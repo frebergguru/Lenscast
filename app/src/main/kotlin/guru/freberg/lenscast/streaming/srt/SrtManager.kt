@@ -7,6 +7,7 @@ import android.view.Surface
 import guru.freberg.lenscast.prefs.Lens
 import guru.freberg.lenscast.prefs.MicSource
 import guru.freberg.lenscast.streaming.AudioUtils
+import guru.freberg.lenscast.streaming.RecordingMuxer
 import guru.freberg.lenscast.streaming.rtsp.AacEncoder
 import guru.freberg.lenscast.streaming.rtsp.H264Encoder
 import guru.freberg.lenscast.streaming.rtsp.RtspCameraDriver
@@ -34,6 +35,7 @@ class SrtManager(private val context: Context) {
         val audioGainDb: Int = 0,
         val noiseSuppress: Boolean = false,
         val echoCancel: Boolean = false,
+        val recordLocally: Boolean = false,
         // SRT transport
         val srtMode: SrtPublisher.Mode,
         val srtHost: String,
@@ -49,6 +51,8 @@ class SrtManager(private val context: Context) {
     private var muxer: MpegTsMuxer? = null
     private var publisher: SrtPublisher? = null
     private var rotator: guru.freberg.lenscast.streaming.GlRotator? = null
+    private var recorder: RecordingMuxer? = null
+    @Volatile private var lastRecordedUri: android.net.Uri? = null
     @Volatile private var state: SrtPublisher.State = SrtPublisher.State.IDLE
 
     // Retained so the video pipeline can be rebuilt in place for a mid-stream rotation
@@ -119,6 +123,16 @@ class SrtManager(private val context: Context) {
         videoPtsOffsetUs.set(Long.MIN_VALUE)
         audioPtsOffsetUs.set(Long.MIN_VALUE)
 
+        // Set up local recording before the encoders start so we don't miss SPS/PPS arrival.
+        // The MP4 muxer rebases each track's PTS to its own first sample (see RecordingMuxer),
+        // so it takes the raw encoder PTS — NOT the MPEG-TS wall-clock-anchored values.
+        if (config.recordLocally) {
+            recorder = RecordingMuxer.create(context, expectAudio = config.audioEnabled)
+            if (recorder == null) {
+                Log.w(TAG, "Local recording requested but MediaStore insert failed; stream continues without recording")
+            }
+        }
+
         if (config.audioEnabled) {
             val ae = AacEncoder(
                 audioSource = AudioUtils.audioSourceFor(config.micSource),
@@ -131,6 +145,10 @@ class SrtManager(private val context: Context) {
                     tsMuxer.asc = asc
                     tsMuxer.audioSampleRate = ae.sampleRate
                     tsMuxer.audioChannels = ae.channelCount
+                }
+                recorder?.let { rec ->
+                    ae.asc?.let { asc -> rec.addAudioTrack(ae.sampleRate, ae.channelCount, asc) }
+                    rec.writeAudio(au, ptsUs)
                 }
                 audioPtsOffsetUs.compareAndSet(
                     Long.MIN_VALUE,
@@ -219,6 +237,10 @@ class SrtManager(private val context: Context) {
             // SPS/PPS NALs themselves don't need to be in PES — we prepend them in the
             // muxer on each keyframe — so skip them here. Everything else is a VCL NAL.
             if (nalType in 1..5) {
+                recorder?.let { rec ->
+                    if (ps != null) rec.addVideoTrack(encoderW, encoderH, ps.sps, ps.pps)
+                    rec.writeVideo(nal, ptsUs, isKey)
+                }
                 videoPtsOffsetUs.compareAndSet(
                     Long.MIN_VALUE,
                     (System.nanoTime() - streamStartNs) / 1000L - ptsUs,
@@ -252,6 +274,13 @@ class SrtManager(private val context: Context) {
         val config = currentConfig ?: return
         if (camera == null || muxer == null) return
         if (config.deviceRotationDegrees == deviceRotationDegrees) return
+        // A portrait↔landscape turn swaps the encoded dimensions, but an MP4 track's geometry
+        // is fixed once written. While recording we keep the start orientation (the SRT stream
+        // stays upright via the locked encoder) rather than corrupt the file mid-GOP.
+        if (recorder != null) {
+            Log.i(TAG, "Ignoring mid-stream rotation while recording (MP4 dimensions are locked)")
+            return
+        }
         Log.i(TAG, "Seamless rotation → device=$deviceRotationDegrees")
         // Tear down video only. Camera first so it stops feeding the rotator's SurfaceTexture
         // before we release the GL context.
@@ -283,6 +312,9 @@ class SrtManager(private val context: Context) {
         val config = currentConfig ?: return false
         val cam = camera ?: return false
         if (muxer == null) return false
+        // A lens swap can change the encoded resolution, which an open MP4 track can't absorb.
+        // Bail so the caller does a full restart (finalising this file, starting a fresh one).
+        if (recorder != null) return false
         val newPlan = cam.plan(newLens, newResolution, newFps) ?: return false
         Log.i(TAG, "Seamless SRT lens switch → $newLens ${newPlan.size}")
         try { cam.stop() } catch (_: Throwable) {}
@@ -322,11 +354,17 @@ class SrtManager(private val context: Context) {
         try { publisher?.stop() } catch (_: Throwable) {}
         publisher = null
         muxer = null
+        // Finalise the MP4 only after the encoders have stopped feeding samples.
+        lastRecordedUri = try { recorder?.stop() } catch (_: Throwable) { null }
+        recorder = null
         currentConfig = null
         currentPlan = null
         heldPreviewSurface = null
         state = SrtPublisher.State.IDLE
     }
+
+    /** Uri of the last completed MP4 (after the most recent stop), or null if none. */
+    fun lastRecordingUri(): android.net.Uri? = lastRecordedUri
 
     companion object {
         private const val TAG = "SrtManager"

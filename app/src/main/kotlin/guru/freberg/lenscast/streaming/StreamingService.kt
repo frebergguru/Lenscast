@@ -1294,6 +1294,7 @@ class StreamingService : LifecycleService() {
                 audioGainDb = settings.audioGainDb,
                 noiseSuppress = settings.noiseSuppress,
                 echoCancel = settings.echoCancel,
+                recordLocally = settings.recordLocally,
                 srtMode = srtMode,
                 srtHost = settings.srtHost,
                 srtPort = settings.srtPort,
@@ -1356,6 +1357,7 @@ class StreamingService : LifecycleService() {
                 audioGainDb = settings.audioGainDb,
                 noiseSuppress = settings.noiseSuppress,
                 echoCancel = settings.echoCancel,
+                recordLocally = settings.recordLocally,
                 ristMode = ristMode,
                 ristHost = settings.ristHost,
                 ristPort = settings.ristPort,
@@ -1807,14 +1809,21 @@ class StreamingService : LifecycleService() {
         try { mjpegAudioCapture?.stop() } catch (_: Throwable) {}
         mjpegAudioCapture = null
         mjpegAudioBroadcaster = null
-        // Grab the recording URI before nulling the manager so the activity can surface
-        // a Toast linking to it after stopStreaming returns.
-        _lastRecordingUri = rtspManager?.lastRecordingUri()
+        // Recording lives on whichever H.264 path is active (RTSP / SRT / RIST). Each
+        // manager finalises its MP4 in stop() and only then exposes the URI, so read it
+        // back after stopping. Only one protocol streams at a time, so at most one yields
+        // a non-null URI — the activity surfaces it as a Toast after stopStreaming returns.
         try { rtspManager?.stop() } catch (_: Throwable) {}
-        // rtspManager.stop() finalises the muxer; re-read so we surface the saved URI
-        // (lastRecordingUri is only set after stop()).
-        _lastRecordingUri = rtspManager?.lastRecordingUri() ?: _lastRecordingUri
+        _lastRecordingUri = rtspManager?.lastRecordingUri()
         rtspManager = null
+        try { webRtcManager?.stop() } catch (_: Throwable) {}
+        webRtcManager = null
+        try { srtManager?.stop() } catch (_: Throwable) {}
+        _lastRecordingUri = srtManager?.lastRecordingUri() ?: _lastRecordingUri
+        srtManager = null
+        try { ristManager?.stop() } catch (_: Throwable) {}
+        _lastRecordingUri = ristManager?.lastRecordingUri() ?: _lastRecordingUri
+        ristManager = null
         // If the user has SFTP upload enabled, hand the freshly-finalised MP4 off to the
         // background queue. The queue is in-memory; if the user kills the app before the
         // upload completes, the recording stays in MediaStore and they can re-trigger it
@@ -1823,12 +1832,6 @@ class StreamingService : LifecycleService() {
             val name = displayNameForUri(uri) ?: "lenscast.mp4"
             sftpUploader.enqueue(uri, name)
         }
-        try { webRtcManager?.stop() } catch (_: Throwable) {}
-        webRtcManager = null
-        try { srtManager?.stop() } catch (_: Throwable) {}
-        srtManager = null
-        try { ristManager?.stop() } catch (_: Throwable) {}
-        ristManager = null
         stopNsd()
         _lastRtspPlan = null
         streamingCamera = false
