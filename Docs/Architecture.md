@@ -5,9 +5,9 @@
 Lenscast streams the phone's camera over the network in one of four protocols: an
 **MJPEG-over-HTTP** server (CameraX captures YUV frames, encodes each to JPEG, and a
 hand-rolled HTTP server replies to GET requests with a `multipart/x-mixed-replace` body),
-plus three H.264 paths — **RTSP**, **SRT**, and **WebRTC/WHEP** — that own Camera2
+plus four H.264 paths — **RTSP**, **SRT**, **RIST**, and **WebRTC/WHEP** — that own Camera2
 directly and run frames through an EGL/GL rotation stage before a `MediaCodec` encoder.
-OBS (or any HTTP/RTSP/SRT/WebRTC client) consumes the stream. A separate **web control
+OBS (or any HTTP/RTSP/SRT/RIST/WebRTC client) consumes the stream. A separate **web control
 panel** server lets a browser start/stop streaming and edit all settings.
 
 A long-running foreground service owns the camera so the stream keeps running when the
@@ -32,7 +32,7 @@ app/src/main/kotlin/guru/freberg/lenscast/
 │   ├── AudioBroadcaster.kt   # Per-client Channel fan-out for the PCM audio sidecar
 │   ├── AudioUtils.kt         # Shared PCM/AAC helpers across the audio paths
 │   ├── PcmCapture.kt         # AudioRecord → PCM-16LE producer with mute/gain
-│   ├── GlRotator.kt          # Shared EGL/GL rotation stage for the H.264 (RTSP/SRT) paths
+│   ├── GlRotator.kt          # Shared EGL/GL rotation stage for the H.264 (RTSP/SRT/RIST) paths
 │   ├── HttpAcceptLoop.kt     # Shared ServerSocket accept-loop used by the HTTP servers
 │   ├── RtspManager.kt        # Lifecycle wrapper over the RTSP server
 │   ├── RecordingMuxer.kt     # Optional MP4 sink fed by the H.264/AAC encoders
@@ -41,6 +41,9 @@ app/src/main/kotlin/guru/freberg/lenscast/
 │   │                         # H.264 + AAC encoders, RTP packetizers, SDP
 │   ├── srt/                  # SRT: SrtManager (in-place reconfigure on rotation),
 │   │                         # SrtPublisher, MpegTsMuxer
+│   ├── rist/                 # RIST Simple + Main profiles (pure Kotlin): RistManager
+│   │                         # (SrtManager twin), RistPublisher (RTP/MP2T + RTCP-NACK,
+│   │                         # GRE v2 single-port for Main), RistCrypto (PSK AES-CTR)
 │   └── webrtc/               # WebRtcManager — WebRTC playback + WHEP egress
 ├── net/
 │   ├── NetworkUtils.kt       # Wi-Fi IPv4 lookup, port-free check

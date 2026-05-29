@@ -284,7 +284,8 @@ fun MainScreen(
         val proto = settings.protocol
         val nonCameraXActive = streaming && (proto == guru.freberg.lenscast.prefs.Protocol.RTSP
             || proto == guru.freberg.lenscast.prefs.Protocol.WEBRTC
-            || proto == guru.freberg.lenscast.prefs.Protocol.SRT)
+            || proto == guru.freberg.lenscast.prefs.Protocol.SRT
+            || proto == guru.freberg.lenscast.prefs.Protocol.RIST)
         if (nonCameraXActive) return@LaunchedEffect
         try {
             svc.bindCameraIfNeeded(
@@ -336,7 +337,8 @@ fun MainScreen(
             // RTSP + SRT both go through RtspCameraDriver, so the planned-size lookup is
             // the same for both.
             if (settings.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP
-                || settings.protocol == guru.freberg.lenscast.prefs.Protocol.SRT) {
+                || settings.protocol == guru.freberg.lenscast.prefs.Protocol.SRT
+                || settings.protocol == guru.freberg.lenscast.prefs.Protocol.RIST) {
                 RtspCameraDriver.plan(
                     ctx, settings.lens,
                     android.util.Size(settings.resolution.width, settings.resolution.height),
@@ -393,6 +395,7 @@ fun MainScreen(
                         // only when the swap can't be served in place.
                         if (streaming &&
                             (cur.protocol == guru.freberg.lenscast.prefs.Protocol.SRT ||
+                                cur.protocol == guru.freberg.lenscast.prefs.Protocol.RIST ||
                                 cur.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP ||
                                 cur.protocol == guru.freberg.lenscast.prefs.Protocol.WEBRTC)) {
                             val refreshed = repo.flow.first()
@@ -573,6 +576,9 @@ fun MainScreen(
                 srtMode = settings.srtMode,
                 srtHost = settings.srtHost,
                 srtPort = settings.srtPort,
+                ristMode = settings.ristMode,
+                ristHost = settings.ristHost,
+                ristPort = settings.ristPort,
             )
         }
 

@@ -53,6 +53,29 @@
     <string name="settings_srt_latency_hint">SRT ARQ window. Lower = lower glass-to-glass delay; higher = better packet-loss tolerance. 120–300 ms typical.</string>
     <string name="settings_srt_streamid">Stream ID (optional)</string>
     <string name="settings_srt_streamid_hint">Sent on connect (CALLER). Receivers use it to route the connection. Leave blank for most setups.</string>
+    <string name="settings_protocol_rist">RIST (H.264 + AAC over MPEG-TS)</string>
+    <string name="settings_rist_section">RIST transport</string>
+    <string name="settings_rist_mode">Mode</string>
+    <string name="settings_rist_mode_caller">Caller (dial out)</string>
+    <string name="settings_rist_mode_listener">Listener (receivers pull)</string>
+    <string name="settings_rist_mode_caller_hint">Phone dials out to a remote RIST receiver. Easiest path through NAT, and the only mode that can target a multicast group address.</string>
+    <string name="settings_rist_mode_listener_hint">Phone binds the port and waits for the receiver to dial in. Note: librist-based receivers (OBS, VLC, ffmpeg) send their handshake to a dynamic high port a listener can\'t predict, so they won\'t connect in this mode — use Caller for those. Listener is for receivers that send to the standard RTCP port.</string>
+    <string name="settings_rist_host">Remote host</string>
+    <string name="settings_rist_port">Port (data)</string>
+    <string name="settings_rist_port_hint">RTP/MPEG-TS data port. RTCP feedback runs on this port + 1, so the receiver must reach both.</string>
+    <string name="settings_rist_profile">Profile</string>
+    <string name="settings_rist_profile_simple">Simple (RTP + retransmit)</string>
+    <string name="settings_rist_profile_main">Main (GRE tunnel + AES)</string>
+    <string name="settings_rist_profile_simple_hint">Simple Profile: RTP/MPEG-TS with RTCP-NACK retransmit. Interoperable with virtually every RIST receiver. No encryption (that\'s a Main-profile feature).</string>
+    <string name="settings_rist_profile_main_hint">Main Profile: GRE-encapsulated over a single UDP port with AES encryption (set a passphrase below). NULL-packet suppression and DTLS are not implemented; everything else is per VSF TR-06-2.</string>
+    <string name="settings_rist_passphrase">Encryption passphrase</string>
+    <string name="settings_rist_passphrase_hint">AES passphrase (Main Profile). Blank = GRE without encryption. Receivers must use the same passphrase. Ignored under Simple Profile.</string>
+    <string name="settings_rist_aes">AES key length</string>
+    <string name="settings_rist_aes_128">AES-128</string>
+    <string name="settings_rist_aes_256">AES-256</string>
+    <string name="settings_rist_buffer">Buffer window (ms)</string>
+    <string name="settings_rist_buffer_hint">Retransmit / receiver jitter window. Lower = lower glass-to-glass delay; higher = better packet-loss tolerance. 120–300 ms typical.</string>
+    <string name="settings_rist_rotation_note">Rotation follows the phone live — turn the device while streaming and the picture rotates to match.</string>
     <string name="settings_resolution">Resolution</string>
     <string name="settings_fps">Target FPS</string>
     <string name="settings_quality">JPEG quality</string>
@@ -408,6 +431,30 @@
     <string name="web_hint_srt_latency">SRT ARQ window. 120–300 ms typical.</string>
     <string name="web_lbl_srt_streamid">Stream ID (optional)</string>
     <string name="web_hint_srt_streamid">Sent on connect (CALLER). Leave blank for most setups.</string>
+    <string name="web_proto_rist_desc">H.264 + AAC over RIST (Simple Profile). Low-latency, loss-tolerant, vendor-neutral. OBS / ffmpeg.</string>
+    <string name="web_rist_live_title">RIST is live</string>
+    <string name="web_rist_live_note">Pull with a RIST-capable receiver (ffmpeg rist://, OBS, Wowza) — browsers can\'t render RIST natively.</string>
+    <string name="web_rist_section_h">RIST transport</string>
+    <string name="web_lbl_rist_mode">Mode</string>
+    <string name="web_rist_mode_caller">Caller (dial out)</string>
+    <string name="web_rist_mode_listener">Listener (receivers pull)</string>
+    <string name="web_lbl_rist_host">Remote host</string>
+    <string name="web_lbl_rist_port">RIST port (data)</string>
+    <string name="web_hint_rist_port">RTCP runs on port + 1.</string>
+    <string name="web_lbl_rist_profile">Profile</string>
+    <string name="web_rist_profile_simple">Simple</string>
+    <string name="web_rist_profile_main">Main (GRE + AES)</string>
+    <string name="web_lbl_rist_passphrase">Encryption passphrase</string>
+    <string name="web_hint_rist_passphrase">Main Profile only; ignored under Simple.</string>
+    <string name="web_lbl_rist_buffer">Buffer window</string>
+    <string name="web_hint_rist_buffer">Retransmit / jitter window. 120–300 ms typical.</string>
+    <string name="web_lbl_rist_aes">AES key length</string>
+    <string name="web_help_rist_mode">Listener = receivers pull from the phone (rist://phone-ip:port). Caller = the phone dials out to a remote RIST receiver; easiest through NAT.</string>
+    <string name="web_help_rist_host">Hostname/IP of the remote RIST receiver to dial out to. Only used in Caller mode.</string>
+    <string name="web_help_rist_port">UDP data port for the RIST stream. RTCP feedback runs on this port + 1; the receiver must reach both. Listener mode binds them on the phone; Caller connects to them on the remote host.</string>
+    <string name="web_help_rist_profile">Simple Profile = RTP + RTCP-NACK retransmit (interoperable everywhere, no encryption). Main Profile = GRE over a single UDP port with optional AES; set a passphrase to encrypt.</string>
+    <string name="web_help_rist_passphrase">AES passphrase for RIST Main Profile. Blank = GRE without encryption. Ignored under Simple Profile.</string>
+    <string name="web_help_rist_buffer">How far back the receiver can request retransmits, in milliseconds. Lower = less delay; higher = better packet-loss tolerance.</string>
     <string name="web_lbl_language">App language</string>
     <string name="web_lang_system">Follow system</string>
     <string name="web_lang_en">English</string>

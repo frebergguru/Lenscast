@@ -62,6 +62,9 @@ fun ConnectionInfoCard(
     srtMode: guru.freberg.lenscast.prefs.SrtMode = guru.freberg.lenscast.prefs.SrtMode.CALLER,
     srtHost: String = "",
     srtPort: Int = 9710,
+    ristMode: guru.freberg.lenscast.prefs.RistMode = guru.freberg.lenscast.prefs.RistMode.CALLER,
+    ristHost: String = "",
+    ristPort: Int = 5004,
     modifier: Modifier = Modifier,
 ) {
     Surface(
@@ -84,11 +87,13 @@ fun ConnectionInfoCard(
                 Protocol.RTSP   -> rtspPort
                 Protocol.WEBRTC -> webControlPort
                 Protocol.SRT    -> srtPort
+                Protocol.RIST   -> ristPort
             }
             // HTTPS toggle now wraps both MJPEG (https://) and RTSP (rtsps://). WebRTC
             // reuses the web control HTTP(S) port for signalling.
             val scheme = when {
                 protocol == Protocol.SRT                   -> "srt"
+                protocol == Protocol.RIST                  -> "rist"
                 protocol == Protocol.WEBRTC && httpsEnabled -> "https"
                 protocol == Protocol.WEBRTC               -> "http"
                 protocol == Protocol.MJPEG && httpsEnabled -> "https"
@@ -101,6 +106,7 @@ fun ConnectionInfoCard(
                 Protocol.WEBRTC -> "/webrtc/view"
                 Protocol.RTSP   -> ""
                 Protocol.SRT    -> ""
+                Protocol.RIST   -> ""
             }
             // Embed user:pass@ when the password is set — both servers ([Mjpeg|Rtsp]Server)
             // honour Basic auth with the same credentials.
@@ -111,6 +117,9 @@ fun ConnectionInfoCard(
             val wifiUrl = when {
                 protocol == Protocol.SRT && srtMode == guru.freberg.lenscast.prefs.SrtMode.CALLER ->
                     if (srtHost.isNotBlank()) "srt://$srtHost:$srtPort" else null
+                // RIST caller dials out to the receiver; listener gets the phone's own URL.
+                protocol == Protocol.RIST && ristMode == guru.freberg.lenscast.prefs.RistMode.CALLER ->
+                    if (ristHost.isNotBlank()) "rist://$ristHost:$ristPort" else null
                 else -> wifiIp?.let { "$scheme://$auth$it:$port$path" }
             }
             UrlRow(
@@ -180,7 +189,7 @@ fun ConnectionInfoCard(
             // live MPEG-TS unless told otherwise. The wire-level stream is real-time;
             // showing the recommended player flags here saves users from chasing it as
             // a stream bug. (ffplay copy-paste below mirrors what the docs recommend.)
-            if (protocol == Protocol.SRT) {
+            if (protocol == Protocol.SRT || protocol == Protocol.RIST) {
                 Surface(
                     color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
                     shape = RoundedCornerShape(12.dp),

@@ -3,11 +3,12 @@
 Turn an Android phone into a network camera for OBS Studio (and any other HTTP client).
 Free, no watermark.
 
-The phone runs a tiny **MJPEG-over-HTTP** server (default port 4747) and three H.264
+The phone runs a tiny **MJPEG-over-HTTP** server (default port 4747) and four H.264
 options: **RTSP** (H.264 + AAC, default port 5540), **SRT** (H.264 + AAC over MPEG-TS,
-default port 9710), and **WebRTC** for browser playback (served off the web-control port,
-with a WHEP endpoint for WHEP-aware players). RTSP and SRT are orientation-correct
-(portrait/landscape) at ≤30 fps; SRT also rotates seamlessly mid-stream. OBS connects
+default port 9710), **RIST** (Simple Profile, H.264 + AAC over MPEG-TS, default data port
+5004), and **WebRTC** for browser playback (served off the web-control port, with a WHEP
+endpoint for WHEP-aware players). RTSP, SRT and RIST are orientation-correct
+(portrait/landscape) at ≤30 fps; SRT and RIST also rotate seamlessly mid-stream. OBS connects
 directly via its built-in **Media Source** — no plugin, no helper app. Wi-Fi and USB (via
 `adb forward`) are both supported.
 
@@ -41,6 +42,11 @@ Full setup, USB tethering, and troubleshooting are in
   ≤30 fps, sensor-native landscape for high-speed)
 - **SRT** (H.264 + AAC over MPEG-TS, default 9710) — listener or caller mode, optional AES
   passphrase, tunable latency; orientation-correct and rotates seamlessly mid-stream
+- **RIST** (H.264 + AAC over MPEG-TS, default data port 5004) — vendor-neutral, pure-Kotlin
+  (no librist). **Simple Profile**: RTP/MP2T + RTCP-NACK retransmit (RTCP on port +1).
+  **Main Profile**: GRE over a single UDP port with optional PSK **AES-128/256** encryption.
+  Listener or caller mode, tunable buffer window; shares the SRT pipeline so it
+  rotates/switches lens mid-stream. (NULL-packet suppression and DTLS aren't implemented.)
 - **WebRTC** browser playback at `/webrtc/view`, plus a **WHEP** endpoint
   (`POST`/`DELETE /whep/<id>`) for WHEP-aware players — both served off the web-control port
 - **Audio sidecar** on the network transports — RTSP and SRT carry audio in-session; MJPEG
@@ -63,7 +69,7 @@ Full setup, USB tethering, and troubleshooting are in
 **Web control panel** (`http://<phone-ip>:8080/`)
 
 - Independent HTTP server, configurable port, runs whenever the app is alive
-- Pick the protocol (MJPEG / RTSP / SRT / WebRTC) and **Start streaming** straight from a
+- Pick the protocol (MJPEG / RTSP / SRT / RIST / WebRTC) and **Start streaming** straight from a
   browser
 - Full Settings parity with the app — camera / image / audio / stream / UX / automation
   / server ports / security

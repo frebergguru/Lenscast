@@ -348,19 +348,92 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
       ARQ latency window (20–8000 ms), optional stream-id. Same camera
       pipeline as RTSP, so the FPS / resolution / lens picker behave
       identically.
-- [ ] **RIST (Reliable Internet Stream Transport) — `Protocol.RIST`.**
-      VSF's vendor-neutral alternative to SRT, also UDP + ARQ + optional
-      AES. Two profiles: **Simple** (just RTP + retransmits — receiver
-      compatibility everywhere) and **Main** (adds GRE tunnelling, NULL
-      packet suppression, tunnel encryption). For broadcast-grade
-      contribution feeds where the receiver (Wowza / Open Broadcaster /
-      Zixi) prefers RIST or where the SRT licence terms (MPL-2) are a
-      blocker. `librist` is BSD-licensed — much friendlier for inclusion
-      than libsrt's MPL-2. Implementation reuses the MPEG-TS muxer from
-      the SRT path; the only new bits are JNI bindings to librist and
-      a Settings block (host, port, profile, encryption, multicast).
-      Once SRT lands the rest is mechanical — ~2 days, mostly the NDK
-      build + JNI surface since no published Android Maven artifact exists.
+- [x] **RIST (Reliable Internet Stream Transport) — `Protocol.RIST`.**
+      VSF's vendor-neutral alternative to SRT. Shipped the **Simple
+      Profile** (VSF TR-06-1) as a **pure-Kotlin** sender — no librist /
+      JNI / NDK build at all. The wire format is plain RTP carrying
+      MPEG-TS (`PT=33`, 7×188 per packet) plus RTCP-driven
+      retransmission, which is exactly what Simple Profile prescribes and
+      gives it the "receiver compatibility everywhere" property
+      (ffmpeg `rist://`, OBS, Wowza, …). `streaming/rist/RistPublisher`
+      owns two `DatagramSocket`s (data on the even port, RTCP on
+      port + 1): it bundles TS into RTP, keeps every sent packet in a
+      ring buffer, and resends on an incoming RTCP **Generic NACK**
+      (RFC 4585 RTPFB `PT=205 FMT=1`); it also emits a periodic Sender
+      Report (reusing `rtsp/Rtcp.buildSenderReport`). `RistManager` is a
+      structural copy of `SrtManager` — same `RtspCameraDriver`, GL
+      rotation stage, H.264/AAC encoders and `srt/MpegTsMuxer` — so
+      seamless mid-stream rotation and lens switching work identically.
+      Two modes (Caller / Listener) mirror SRT. Settings block: mode,
+      host, data port, profile, encryption passphrase, AES key length,
+      buffer window; full phone Settings-sheet + web-control parity,
+      export/import, and `/status` JSON.
+      **Main Profile** (TR-06-2) now ships too, also pure-Kotlin: GRE v2
+      encapsulation over a single UDP port (`streaming/rist/RistPublisher`
+      branches on profile), the VSF ethertype (`0xCCE0`) + reduced-overhead
+      header (virt ports 1971→1968), a 32-bit GRE sequence, and **PSK
+      AES-CTR encryption** (`streaming/rist/RistCrypto`) with
+      PBKDF2-HMAC-SHA256(1024, salt=4-byte nonce) key derivation and
+      IV = `BE32(greSeq)‖0` — implemented byte-for-byte from the librist
+      source (`src/proto/gre.c`, `src/crypto/psk.c`) and pinned with
+      known-answer unit tests (RFC PBKDF2 vectors + AES round-trip).
+      Retransmit handles both RIST NACK shapes (range PT 204, bitmask
+      PT 205). AES-128/256 selectable; the GRE header signals the size so
+      receivers adapt. **Not implemented:** NULL-packet suppression and
+      DTLS (certificate) encryption — PSK only. NOTE: builds + unit-tests
+      clean and the crypto matches the spec vectors, but end-to-end interop
+      against a live RIST receiver (ffmpeg `rist://…?secret=`, VLC, Wowza)
+      has **not** been exercised here and should be confirmed on hardware.
+
+      **Interop status (tested 2026-05-29 vs librist 0.2.14 `ristreceiver` on the LAN):**
+        - **Simple Profile, Caller mode -> librist: VERIFIED end-to-end.** Phone dials the
+          receiver, librist completes its handshake, authenticates the flow, and decodes our
+          H.264 (`quality:100`, `lost:0`). Three interop bugs were found + fixed:
+            1. Simple-Profile RTP goes to the data port, RTCP to **data+1** (librist pairs the
+               data/RTCP peers by source IP only) — the SR must be on the odd port.
+            2. librist refuses data until it sees an RTCP **SDES (CNAME)**; we now send a
+               compound **SR+SDES** (`RistPublisher.buildSdes`), bursted on connect + every
+               100 ms to beat its ~270 ms handshake-window race.
+            3. RIST **echo** req/resp reuse `PT 204` + name "RIST", differing from the range
+               NACK only in the first flag byte (0x82/0x83 vs 0x80). Keying NACK detection off
+               PT alone decoded echo NTP stamps as huge seq ranges -> resend storm. Now matched
+               on the full flag byte + "RIST" name, with a run-length cap.
+        - **Retransmit (re-enabled): VERIFIED.** With the echo/NACK fix, a clean LAN run shows
+          `dropped_late:0 duplicates:0 quality:100` at the encoder's ~2.5 Mbps (no storm).
+        - **Main Profile, Caller mode → librist (`-p 1`): VERIFIED, AES-128 and AES-256.**
+          Recorded + decoded clean H.264 720x1280 (~27 fps) for both key sizes; a deliberately
+          wrong passphrase yields **zero** decodable output, confirming the PSK AES-CTR is real.
+        - **Listener mode** (phone binds; receiver dials in): tested and found **not
+          interoperable with librist receivers** — librist's caller-receiver sends its RTCP
+          handshake to a dynamic `32768+` port (e.g. 32769), not `data+1`, so a fixed-port
+          listener never sees it (confirmed: even librist-sender-listener ↔ librist-receiver-
+          caller fails the same way). It's a librist asymmetry, not fixable on our sender side.
+          The Settings hint now says so and points librist users to Caller (the verified path).
+        - Cosmetic `/status` negative-`fps` glitch on (re)start: **fixed** — the rolling FPS
+          re-baselines when the encoder's frame counter restarts, and clamps to >= 0.
+      Working receiver setup: **phone = Caller -> PC**, receiver listening (`rist://@:5004`).
+      VLC's RIST input binds locally and can't dial the phone, so phone-as-Listener won't work
+      with VLC.
+
+      **Spec audit (vs VSF TR-06-1 / TR-06-2 PDFs, 2026-05-29):**
+        - Caller mode is exactly the TR-06-1 §5.1.1 unicast model (sender -> receiver RTP on
+          port P, compound RTCP on P+1; receiver replies to the sender's RTCP source port).
+          **Simple Profile has no caller/listener concept** — that's a librist NAT-traversal
+          extension. So "Caller" = the spec's normal sender; our **Listener mode is a
+          librist-ism**, hence its fragility (librist's caller-receiver puts RTCP on a dynamic
+          32768+ port a fixed listener can't predict). UI hint updated to say so.
+        - Compound **SR+SDES(CNAME)** at <=100 ms matches §5.2.1/§5.2.5; SDES byte layout matches.
+        - NACK formats match: bitmask = Generic NACK PT205/FMT1 (§5.3.2.1); range = APP PT204
+          subtype 0 name "RIST" (§5.3.2.2); echo APP PT204 uses other subtypes (§5.2.6) — the
+          dispatcher now distinguishes them by the full first byte.
+        - **Fixed:** TR-06-1 §5.3.3 SSRC original/retransmit flag — originals now force SSRC
+          LSB=0 (even if the user picks an odd port) and retransmits set LSB=1 in **both**
+          profiles (previously Simple resends were unmarked).
+        - Main Profile crypto matches TR-06-2 §7.2/§7.3 byte-for-byte: AES-128/256-CTR over the
+          GRE payload, IV = 32-bit seq as the MSBs + 12 zero bytes (the secure RV>=1 arrangement),
+          PBKDF2-HMAC-SHA256 1024 iters with the GRE nonce as salt. The **Annex B official key
+          vector** is now pinned as a unit test (`pbkdf2_matchesRistSpecAnnexBVector`) and passes.
+          The H bit (key length) is flags2 bit6 per §6.3.
 
 ### Engineering robustness
 

@@ -1,6 +1,6 @@
 package guru.freberg.lenscast.prefs
 
-enum class Protocol { MJPEG, RTSP, WEBRTC, SRT }
+enum class Protocol { MJPEG, RTSP, WEBRTC, SRT, RIST }
 
 enum class Lens { BACK, FRONT }
 
@@ -234,6 +234,46 @@ data class Settings(
      * sends it on connect; LISTENER-side filtering is the receiver's job.
      */
     val srtStreamId: String = "",
+    /**
+     * Where to send the RIST stream (`Protocol.RIST`):
+     *  - **LISTENER** (default): the phone binds [ristPort]; the receiver reaches it and the
+     *    phone learns the peer from the receiver's first RTCP packet.
+     *  - **CALLER**: the phone dials a remote receiver at [ristHost]:[ristPort]. Best
+     *    through NAT, and the only mode that works with a multicast group address.
+     */
+    val ristMode: RistMode = RistMode.LISTENER,
+    val ristHost: String = "",
+    /**
+     * RIST data (RTP) port. Conventionally even — RTCP feedback runs on [ristPort] + 1, so
+     * the receiver must have both reachable. 5004 is the classic RTP/MP2T default.
+     */
+    val ristPort: Int = 5004,
+    /**
+     * RIST profile. **SIMPLE** (the only implemented path) is RTP/MP2T + RTCP-NACK
+     * retransmit — interoperable with virtually every RIST receiver. **MAIN** (GRE tunnel,
+     * NULL-packet suppression, AES) is not yet implemented and is rejected at stream start.
+     */
+    val ristProfile: RistProfile = RistProfile.SIMPLE,
+    /**
+     * AES passphrase for RIST encryption. Only meaningful under [RistProfile.MAIN]; ignored
+     * (and surfaced as such in the UI) under SIMPLE, which carries no encryption by spec.
+     */
+    val ristEncryptionPassphrase: String = "",
+    /**
+     * AES key length (bits) for RIST Main Profile PSK encryption: 128 or 256. The GRE header
+     * signals the size to the receiver, so it adapts automatically. 128 is the widely
+     * interoperable default.
+     */
+    val ristAesKeyBits: Int = 128,
+    /**
+     * RIST retransmit-buffer / receiver jitter window in milliseconds — the RIST analogue of
+     * the SRT latency window. Larger absorbs more loss at the cost of glass-to-glass delay.
+     */
+    val ristBufferMs: Int = 200,
 )
 
 enum class SrtMode { CALLER, LISTENER }
+
+enum class RistMode { CALLER, LISTENER }
+
+enum class RistProfile { SIMPLE, MAIN }

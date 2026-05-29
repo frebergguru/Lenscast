@@ -132,6 +132,13 @@ class WebControlServer(
         val srtModeListener: String, val lblSrtHost: String, val lblSrtPort: String,
         val lblSrtPassphrase: String, val hintSrtPassphrase: String, val lblSrtLatency: String,
         val hintSrtLatency: String, val lblSrtStreamId: String, val hintSrtStreamId: String,
+        // RIST transport
+        val protoRistDesc: String, val ristLiveTitle: String, val ristLiveNote: String,
+        val ristSectionH: String, val lblRistMode: String, val ristModeCaller: String,
+        val ristModeListener: String, val lblRistHost: String, val lblRistPort: String,
+        val hintRistPort: String, val lblRistProfile: String, val ristProfileSimple: String,
+        val ristProfileMain: String, val lblRistPassphrase: String, val hintRistPassphrase: String,
+        val lblRistBuffer: String, val hintRistBuffer: String, val lblRistAes: String,
         // Language
         val lblLanguage: String, val langSystem: String, val langEn: String, val langNb: String,
         // Web control port
@@ -293,6 +300,24 @@ class WebControlServer(
             hintSrtLatency = s(R.string.web_hint_srt_latency),
             lblSrtStreamId = s(R.string.web_lbl_srt_streamid),
             hintSrtStreamId = s(R.string.web_hint_srt_streamid),
+            protoRistDesc = s(R.string.web_proto_rist_desc),
+            ristLiveTitle = s(R.string.web_rist_live_title),
+            ristLiveNote = s(R.string.web_rist_live_note),
+            ristSectionH = s(R.string.web_rist_section_h),
+            lblRistMode = s(R.string.web_lbl_rist_mode),
+            ristModeCaller = s(R.string.web_rist_mode_caller),
+            ristModeListener = s(R.string.web_rist_mode_listener),
+            lblRistHost = s(R.string.web_lbl_rist_host),
+            lblRistPort = s(R.string.web_lbl_rist_port),
+            hintRistPort = s(R.string.web_hint_rist_port),
+            lblRistProfile = s(R.string.web_lbl_rist_profile),
+            ristProfileSimple = s(R.string.web_rist_profile_simple),
+            ristProfileMain = s(R.string.web_rist_profile_main),
+            lblRistPassphrase = s(R.string.web_lbl_rist_passphrase),
+            hintRistPassphrase = s(R.string.web_hint_rist_passphrase),
+            lblRistBuffer = s(R.string.web_lbl_rist_buffer),
+            hintRistBuffer = s(R.string.web_hint_rist_buffer),
+            lblRistAes = s(R.string.web_lbl_rist_aes),
             lblLanguage = s(R.string.web_lbl_language),
             langSystem = s(R.string.web_lang_system),
             langEn = s(R.string.web_lang_en),
@@ -854,6 +879,12 @@ class WebControlServer(
             "srt_passphrase" to R.string.web_help_srt_passphrase,
             "srt_latency" to R.string.web_help_srt_latency,
             "srt_streamid" to R.string.web_help_srt_streamid,
+            "rist_mode" to R.string.web_help_rist_mode,
+            "rist_host" to R.string.web_help_rist_host,
+            "rist_port" to R.string.web_help_rist_port,
+            "rist_profile" to R.string.web_help_rist_profile,
+            "rist_passphrase" to R.string.web_help_rist_passphrase,
+            "rist_buffer" to R.string.web_help_rist_buffer,
             "language" to R.string.web_help_language,
             "web_control_port" to R.string.web_help_web_control_port,
         )
@@ -1117,6 +1148,13 @@ class WebControlServer(
                           <div class="proto-desc">${i.protoSrtDesc}</div>
                         </div>
                       </label>
+                      <label class="proto">
+                        <input type="radio" name="proto" value="rist">
+                        <div class="proto-inner">
+                          <div class="proto-name">RIST</div>
+                          <div class="proto-desc">${i.protoRistDesc}</div>
+                        </div>
+                      </label>
                     </div>
                     <button data-act="start" class="btn primary big">${i.start}</button>
                   </div>
@@ -1168,6 +1206,19 @@ class WebControlServer(
                       </div>
                     </div>
                     <div class="links"><code id="srt-url"></code></div>
+                  </div>
+
+                  <!-- Live RIST hero -->
+                  <div id="rist-block" class="hidden">
+                    <div class="preview-frame">
+                      <div class="overlay">
+                        <div>
+                          <div class="big">${i.ristLiveTitle}</div>
+                          <div class="small">${i.ristLiveNote}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="links"><code id="rist-url"></code></div>
                   </div>
                 </section>
 
@@ -1455,6 +1506,58 @@ class WebControlServer(
                       <div class="field stream-locked" data-help="srt_streamid">
                         <div class="l">${i.lblSrtStreamId}<small>${i.hintSrtStreamId}</small></div>
                         <div class="c"><input type="text" data-setting="srtStreamId"></div>
+                      </div>
+                      <div class="divider"></div>
+                    </div>
+                    <!-- RIST transport — hidden unless protocol = RIST (JS-gated via
+                         #rist-settings) and stream-locked while live. -->
+                    <div id="rist-settings" class="hidden">
+                      <div class="l" style="color:var(--text-dim);font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;margin-bottom:var(--gap-2)">${i.ristSectionH}</div>
+                      <div class="field stream-locked" data-help="rist_mode">
+                        <div class="l">${i.lblRistMode}</div>
+                        <div class="c">
+                          <select data-setting="ristMode">
+                            <option value="listener">${i.ristModeListener}</option>
+                            <option value="caller">${i.ristModeCaller}</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="field stream-locked" id="rist-host-row" data-help="rist_host">
+                        <div class="l">${i.lblRistHost}</div>
+                        <div class="c"><input type="text" data-setting="ristHost" placeholder="rist.example.org"></div>
+                      </div>
+                      <div class="field stream-locked" data-help="rist_port">
+                        <div class="l">${i.lblRistPort}<small>${i.hintRistPort}</small></div>
+                        <div class="c"><input type="number" min="1024" max="65534" data-setting-int="ristPort"></div>
+                      </div>
+                      <div class="field stream-locked" data-help="rist_profile">
+                        <div class="l">${i.lblRistProfile}</div>
+                        <div class="c">
+                          <select data-setting="ristProfile">
+                            <option value="simple">${i.ristProfileSimple}</option>
+                            <option value="main">${i.ristProfileMain}</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="field stream-locked" data-help="rist_passphrase">
+                        <div class="l">${i.lblRistPassphrase}<small>${i.hintRistPassphrase}</small></div>
+                        <div class="c"><input type="password" data-setting="ristEncryptionPassphrase"></div>
+                      </div>
+                      <div class="field stream-locked" id="rist-aes-row">
+                        <div class="l">${i.lblRistAes}</div>
+                        <div class="c">
+                          <select data-setting="ristAesKeyBits">
+                            <option value="128">AES-128</option>
+                            <option value="256">AES-256</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="field stream-locked" data-help="rist_buffer">
+                        <div class="l">${i.lblRistBuffer}<small>${i.hintRistBuffer}</small></div>
+                        <div class="c">
+                          <input type="range" min="20" max="8000" step="20" data-setting-range="ristBufferMs">
+                          <span class="val" data-rangeval="ristBufferMs">200</span><span class="val">ms</span>
+                        </div>
                       </div>
                       <div class="divider"></div>
                     </div>
@@ -2010,6 +2113,7 @@ class WebControlServer(
                   show('rtsp-block',  live && s.protocol === 'rtsp');
                   show('webrtc-block', live && s.protocol === 'webrtc');
                   show('srt-block',   live && s.protocol === 'srt');
+                  show('rist-block',  live && s.protocol === 'rist');
 
                   // SRT pull URL — only meaningful in LISTENER mode (receivers pull from the
                   // phone). In CALLER mode the phone dials out, so there's no local URL.
@@ -2019,12 +2123,26 @@ class WebControlServer(
                       ? 'caller → ' + (s.srtHost || '?') + ':' + s.srtPort
                       : 'srt://' + host + ':' + s.srtPort;
                   }
+                  // RIST pull URL — same caller/listener split as SRT.
+                  if (s.protocol === 'rist' && s.ristPort) {
+                    const ristEl = document.getElementById('rist-url');
+                    ristEl.textContent = (s.ristMode === 'caller')
+                      ? 'caller → ' + (s.ristHost || '?') + ':' + s.ristPort
+                      : 'rist://' + host + ':' + s.ristPort;
+                  }
 
                   // SRT settings block — only shown when SRT is the selected protocol;
                   // the host row only matters in CALLER mode.
                   show('srt-settings', s.protocol === 'srt');
                   const srtHostRow = document.getElementById('srt-host-row');
                   if (srtHostRow) srtHostRow.style.display = (s.srtMode === 'caller') ? '' : 'none';
+                  // RIST settings block — mirrors the SRT gating.
+                  show('rist-settings', s.protocol === 'rist');
+                  const ristHostRow = document.getElementById('rist-host-row');
+                  if (ristHostRow) ristHostRow.style.display = (s.ristMode === 'caller') ? '' : 'none';
+                  // AES key length only matters under the Main profile.
+                  const ristAesRow = document.getElementById('rist-aes-row');
+                  if (ristAesRow) ristAesRow.style.display = (s.ristProfile === 'main') ? '' : 'none';
                   // Lazy-attach the in-panel WebRTC preview on the live→live transition.
                   if (live && s.protocol === 'webrtc') ensureWebRtcPreview();
                   else tearDownWebRtcPreview();

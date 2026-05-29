@@ -121,6 +121,7 @@ fun SettingsSheet(
                         Protocol.RTSP   -> stringResource(R.string.settings_protocol_rtsp)
                         Protocol.WEBRTC -> stringResource(R.string.settings_protocol_webrtc)
                         Protocol.SRT    -> stringResource(R.string.settings_protocol_srt)
+                        Protocol.RIST   -> stringResource(R.string.settings_protocol_rist)
                     }
                 },
                 onSelect = { onChange(settings.copy(protocol = it)) },
@@ -128,6 +129,7 @@ fun SettingsSheet(
             val rotationNote = when (settings.protocol) {
                 Protocol.RTSP -> R.string.settings_rtsp_landscape_note
                 Protocol.SRT -> R.string.settings_srt_rotation_note
+                Protocol.RIST -> R.string.settings_rist_rotation_note
                 else -> R.string.settings_mjpeg_rotation_note
             }
             Text(
@@ -140,6 +142,11 @@ fun SettingsSheet(
             if (settings.protocol == Protocol.SRT) {
                 Spacer(Modifier.height(16.dp))
                 SrtSection(settings = settings, onChange = onChange, streaming = streaming)
+            }
+
+            if (settings.protocol == Protocol.RIST) {
+                Spacer(Modifier.height(16.dp))
+                RistSection(settings = settings, onChange = onChange, streaming = streaming)
             }
 
             Spacer(Modifier.height(16.dp))
@@ -1309,6 +1316,112 @@ private fun SrtSection(settings: Settings, onChange: (Settings) -> Unit, streami
         enabled = !streaming,
         supportingText = { Text(stringResource(R.string.settings_srt_streamid_hint)) },
         modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun RistSection(settings: Settings, onChange: (Settings) -> Unit, streaming: Boolean) {
+    SectionLabel(stringResource(R.string.settings_rist_section))
+    EnumDropdown(
+        label = stringResource(R.string.settings_rist_mode),
+        options = guru.freberg.lenscast.prefs.RistMode.entries.toList(),
+        selected = settings.ristMode,
+        labelOf = {
+            when (it) {
+                guru.freberg.lenscast.prefs.RistMode.CALLER   -> stringResource(R.string.settings_rist_mode_caller)
+                guru.freberg.lenscast.prefs.RistMode.LISTENER -> stringResource(R.string.settings_rist_mode_listener)
+            }
+        },
+        onSelect = { onChange(settings.copy(ristMode = it)) },
+    )
+    Text(
+        text = stringResource(
+            if (settings.ristMode == guru.freberg.lenscast.prefs.RistMode.CALLER)
+                R.string.settings_rist_mode_caller_hint
+            else R.string.settings_rist_mode_listener_hint
+        ),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+    )
+    if (settings.ristMode == guru.freberg.lenscast.prefs.RistMode.CALLER) {
+        OutlinedTextField(
+            value = settings.ristHost,
+            onValueChange = { onChange(settings.copy(ristHost = it)) },
+            label = { Text(stringResource(R.string.settings_rist_host)) },
+            singleLine = true,
+            enabled = !streaming,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+    }
+    ValidatedIntField(
+        label = stringResource(R.string.settings_rist_port),
+        value = settings.ristPort,
+        // RTCP runs on port+1, so the data port can't be the very last usable port.
+        range = 1024..65534,
+        enabled = !streaming,
+        onValueChange = { onChange(settings.copy(ristPort = it)) },
+        normalHint = stringResource(R.string.settings_rist_port_hint),
+        errorHint = stringResource(R.string.settings_port_range_hint),
+    )
+    Spacer(Modifier.height(8.dp))
+    EnumDropdown(
+        label = stringResource(R.string.settings_rist_profile),
+        options = guru.freberg.lenscast.prefs.RistProfile.entries.toList(),
+        selected = settings.ristProfile,
+        labelOf = {
+            when (it) {
+                guru.freberg.lenscast.prefs.RistProfile.SIMPLE -> stringResource(R.string.settings_rist_profile_simple)
+                guru.freberg.lenscast.prefs.RistProfile.MAIN   -> stringResource(R.string.settings_rist_profile_main)
+            }
+        },
+        onSelect = { onChange(settings.copy(ristProfile = it)) },
+    )
+    Text(
+        text = stringResource(
+            if (settings.ristProfile == guru.freberg.lenscast.prefs.RistProfile.MAIN)
+                R.string.settings_rist_profile_main_hint
+            else R.string.settings_rist_profile_simple_hint
+        ),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+    )
+    OutlinedTextField(
+        value = settings.ristEncryptionPassphrase,
+        onValueChange = { onChange(settings.copy(ristEncryptionPassphrase = it)) },
+        label = { Text(stringResource(R.string.settings_rist_passphrase)) },
+        singleLine = true,
+        // Encryption is a Main-profile feature; disable the field under Simple so the user
+        // isn't misled into thinking the Simple wire is encrypted.
+        enabled = !streaming && settings.ristProfile == guru.freberg.lenscast.prefs.RistProfile.MAIN,
+        supportingText = { Text(stringResource(R.string.settings_rist_passphrase_hint)) },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    if (settings.ristProfile == guru.freberg.lenscast.prefs.RistProfile.MAIN) {
+        Spacer(Modifier.height(8.dp))
+        EnumDropdown(
+            label = stringResource(R.string.settings_rist_aes),
+            options = listOf(128, 256),
+            selected = if (settings.ristAesKeyBits == 256) 256 else 128,
+            labelOf = {
+                when (it) {
+                    256 -> stringResource(R.string.settings_rist_aes_256)
+                    else -> stringResource(R.string.settings_rist_aes_128)
+                }
+            },
+            onSelect = { onChange(settings.copy(ristAesKeyBits = it)) },
+        )
+    }
+    Spacer(Modifier.height(8.dp))
+    ValidatedIntField(
+        label = stringResource(R.string.settings_rist_buffer),
+        value = settings.ristBufferMs,
+        range = 20..8000,
+        enabled = !streaming,
+        onValueChange = { onChange(settings.copy(ristBufferMs = it)) },
+        normalHint = stringResource(R.string.settings_rist_buffer_hint),
     )
 }
 

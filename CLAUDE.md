@@ -1,7 +1,7 @@
 # Lenscast — Claude orientation
 
 Lenscast turns an Android phone into a network camera that OBS Studio (and any HTTP
-client) can consume directly. Four streaming protocols are live today:
+client) can consume directly. Five streaming protocols are live today:
 
 - **MJPEG over HTTP** (default port 4747) — works in any orientation, up to 30 fps.
 - **RTSP** (H.264 + AAC, default port 5540) — orientation-correct (portrait/landscape) at
@@ -9,11 +9,17 @@ client) can consume directly. Four streaming protocols are live today:
   sensor's native landscape (constrained Camera2 can't take the GL SurfaceTexture).
 - **SRT** (H.264 + AAC over MPEG-TS, default port 9710) — orientation-correct via the same
   GL rotation stage, and rotates seamlessly mid-stream without dropping the receiver.
+- **RIST** (H.264 + AAC over MPEG-TS, default data port 5004) — VSF **Simple and Main**
+  profiles, implemented in **pure Kotlin** (no librist/JNI). Simple: RTP/MP2T + RTCP-NACK
+  retransmit (data port + RTCP on +1). Main: GRE v2 over a single UDP port with PSK
+  **AES-CTR** encryption (`RistCrypto`, PBKDF2-HMAC-SHA256 / IV from the GRE seq, matching
+  librist). Shares the SRT camera pipeline + `MpegTsMuxer`, so it rotates and switches lens
+  mid-stream the same way. NULL-packet suppression and DTLS are not implemented.
 - **WebRTC** — browser playback at `/webrtc/view` plus a WHEP endpoint
   (`POST`/`DELETE /whep/<id>`), both served off the **web-control port** (default 8080),
   not a port of its own. Owns Camera2 directly like RTSP (via `Camera2Capturer`).
 
-The MJPEG, RTSP, and SRT ports are user-editable in the Settings sheet (range
+The MJPEG, RTSP, SRT, and RIST ports are user-editable in the Settings sheet (range
 1024–65535). Beyond streaming, the app also runs a **web control panel**
 (`WebControlServer`, default port 8080) with full settings parity and start/stop, plus
 optional **local MP4 recording**, **SFTP upload**, a **text watermark**, and
@@ -68,6 +74,11 @@ Build environment quirks (full detail in [Docs/Build.md](Docs/Build.md)):
 - **`streaming/srt/`** is the SRT path: `SrtManager` (lifecycle + in-place
   `reconfigureVideo` on rotation), `SrtPublisher`, `MpegTsMuxer`. Shares the `GlRotator`
   EGL stage and the H.264/AAC encoders.
+- **`streaming/rist/`** is the RIST path: `RistManager` (a structural copy of `SrtManager`),
+  `RistPublisher` (pure-Kotlin RIST Simple **and** Main profiles over `DatagramSocket` —
+  RTP/MP2T + RTCP-NACK retransmit, with Main adding GRE v2 framing on a single port), and
+  `RistCrypto` (Main-profile PSK AES-CTR). Reuses `srt/MpegTsMuxer` and `rtsp/Rtcp`; no
+  native library.
 - **`streaming/webrtc/WebRtcManager`** drives the WebRTC/WHEP egress (also Camera2-owning).
 - **`WebControlServer`** is an independent HTTP control panel on its own port (default
   8080) — start/stop and full settings parity from a browser; runs whenever the app is up.

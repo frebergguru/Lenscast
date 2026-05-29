@@ -79,6 +79,9 @@ object CameraCapabilities {
 
         // SRT reuses the RTSP camera driver and H.264 encoder; same capability constraints.
         Protocol.SRT -> RtspCameraDriver.plan(context, lens, size, fps.value) != null
+
+        // RIST reuses the same RTSP camera driver and H.264 encoder as SRT.
+        Protocol.RIST -> RtspCameraDriver.plan(context, lens, size, fps.value) != null
     }
 
     /**

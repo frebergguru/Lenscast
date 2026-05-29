@@ -346,6 +346,7 @@ class StreamingService : LifecycleService() {
                     Protocol.RTSP   -> startRtsp(settings)
                     Protocol.WEBRTC -> startWebRtc(settings)
                     Protocol.SRT    -> startSrt(settings)
+                    Protocol.RIST   -> startRist(settings)
                 }
                 _status.value = _status.value.copy(state = State.STREAMING, errorMessage = null)
                 _restarting.value = false
@@ -587,6 +588,7 @@ class StreamingService : LifecycleService() {
                 "rtsp"   -> Protocol.RTSP
                 "webrtc" -> Protocol.WEBRTC
                 "srt"    -> Protocol.SRT
+                "rist"   -> Protocol.RIST
                 else     -> return false
             }
             // Can't swap protocols mid-stream — the encoders and server differ.
@@ -818,6 +820,41 @@ class StreamingService : LifecycleService() {
                     if (streaming) return null
                     Pair({ it.copy(srtStreamId = value.trim().take(255)) }, false)
                 }
+                // RIST transport — all locked while streaming, mirroring the SRT block.
+                "ristMode" -> {
+                    if (streaming) return null
+                    val m = enumValueOrNull<guru.freberg.lenscast.prefs.RistMode>(v) ?: return null
+                    Pair({ it.copy(ristMode = m) }, false)
+                }
+                "ristHost" -> {
+                    if (streaming) return null
+                    Pair({ it.copy(ristHost = value.trim().take(255)) }, false)
+                }
+                "ristPort" -> {
+                    if (streaming) return null
+                    // Data port; RTCP runs on port+1, so cap at 65534 to keep the pair in range.
+                    val p = value.toIntOrNull()?.takeIf { it in 1024..65534 } ?: return null
+                    Pair({ it.copy(ristPort = p) }, false)
+                }
+                "ristProfile" -> {
+                    if (streaming) return null
+                    val pr = enumValueOrNull<guru.freberg.lenscast.prefs.RistProfile>(v) ?: return null
+                    Pair({ it.copy(ristProfile = pr) }, false)
+                }
+                "ristEncryptionPassphrase" -> {
+                    if (streaming) return null
+                    Pair({ it.copy(ristEncryptionPassphrase = value.take(79)) }, false)
+                }
+                "ristBufferMs" -> {
+                    if (streaming) return null
+                    val n = value.toIntOrNull()?.coerceIn(20, 8000) ?: return null
+                    Pair({ it.copy(ristBufferMs = n) }, false)
+                }
+                "ristAesKeyBits" -> {
+                    if (streaming) return null
+                    val n = if (value.trim() == "256") 256 else 128
+                    Pair({ it.copy(ristAesKeyBits = n) }, false)
+                }
                 else -> null
             }
         }
@@ -981,6 +1018,14 @@ class StreamingService : LifecycleService() {
                 """"srtPassphrase":"${jsonEscape(s.srtPassphrase)}",""" +
                 """"srtLatencyMs":${s.srtLatencyMs},""" +
                 """"srtStreamId":"${jsonEscape(s.srtStreamId)}",""" +
+                // RIST transport
+                """"ristMode":"${lower(s.ristMode)}",""" +
+                """"ristHost":"${jsonEscape(s.ristHost)}",""" +
+                """"ristPort":${s.ristPort},""" +
+                """"ristProfile":"${lower(s.ristProfile)}",""" +
+                """"ristEncryptionPassphrase":"${jsonEscape(s.ristEncryptionPassphrase)}",""" +
+                """"ristBufferMs":${s.ristBufferMs},""" +
+                """"ristAesKeyBits":${s.ristAesKeyBits},""" +
                 // presets — name + the streaming-shape fields the app preset carries
                 """"presets":[${s.presets.joinToString(",") { p ->
                     "{" +
@@ -1002,9 +1047,10 @@ class StreamingService : LifecycleService() {
      * mid-RTSP-stream tears down the encoder Surface.
      */
     private suspend fun rebindCameraFor(s: Settings) {
-        // Both RTSP and SRT lock the camera at stream-start via the Camera2 driver.
+        // RTSP, SRT and RIST all lock the camera at stream-start via the Camera2 driver.
         val p = _status.value.activeProtocol
-        if (_status.value.state == State.STREAMING && (p == Protocol.RTSP || p == Protocol.SRT)) return
+        if (_status.value.state == State.STREAMING &&
+            (p == Protocol.RTSP || p == Protocol.SRT || p == Protocol.RIST)) return
         bindCameraIfNeeded(
             s.lens, s.resolution, s.fps.value, s.jpegQuality,
             mirror = s.mirror,
@@ -1056,7 +1102,15 @@ class StreamingService : LifecycleService() {
         val dt = (now - lastFpsT)
         if (dt < 500) return 0
         val count = framesProducedNow()
-        val fps = ((count - lastFpsCount) * 1000.0 / dt).toInt()
+        // A stream (re)start swaps in a fresh encoder whose frame counter restarts at 0, so
+        // `count` can drop below the previous sample. Re-baseline instead of reporting a
+        // bogus negative rate, and clamp defensively.
+        if (count < lastFpsCount) {
+            lastFpsCount = count
+            lastFpsT = now
+            return 0
+        }
+        val fps = ((count - lastFpsCount) * 1000.0 / dt).toInt().coerceAtLeast(0)
         lastFpsCount = count
         lastFpsT = now
         return fps
@@ -1257,6 +1311,69 @@ class StreamingService : LifecycleService() {
         _lastRtspPlan = plan
     }
     @Volatile private var srtManager: guru.freberg.lenscast.streaming.srt.SrtManager? = null
+
+    private suspend fun startRist(settings: Settings) {
+        // RIST shares the SRT/RTSP camera path (Camera2 via RtspCameraDriver), so unwind any
+        // CameraX session before starting.
+        try { cameraController?.unbind() } catch (_: Throwable) {}
+        previewBoundKey = null
+        streamingCamera = true
+        val ristProfile = when (settings.ristProfile) {
+            guru.freberg.lenscast.prefs.RistProfile.SIMPLE -> guru.freberg.lenscast.streaming.rist.RistPublisher.Profile.SIMPLE
+            guru.freberg.lenscast.prefs.RistProfile.MAIN   -> guru.freberg.lenscast.streaming.rist.RistPublisher.Profile.MAIN
+        }
+        val bitrate = if (settings.rtspBitrateKbps > 0) {
+            settings.rtspBitrateKbps * 1000
+        } else {
+            recommendedVideoBitrate(settings.resolution.width, settings.resolution.height, settings.fps.value)
+        }
+        val rotationDegrees = when (currentRotation) {
+            android.view.Surface.ROTATION_90 -> 90
+            android.view.Surface.ROTATION_180 -> 180
+            android.view.Surface.ROTATION_270 -> 270
+            else -> 0
+        }
+        val ristAudioPermitted = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.RECORD_AUDIO,
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        val ristMode = when (settings.ristMode) {
+            guru.freberg.lenscast.prefs.RistMode.CALLER   -> guru.freberg.lenscast.streaming.rist.RistPublisher.Mode.CALLER
+            guru.freberg.lenscast.prefs.RistMode.LISTENER -> guru.freberg.lenscast.streaming.rist.RistPublisher.Mode.LISTENER
+        }
+        if (ristMode == guru.freberg.lenscast.streaming.rist.RistPublisher.Mode.CALLER && settings.ristHost.isBlank()) {
+            throw IllegalStateException("RIST caller mode needs a remote host. Set Settings → RIST host, or switch to Listener.")
+        }
+        val mgr = guru.freberg.lenscast.streaming.rist.RistManager(this).also { ristManager = it }
+        val plan = mgr.start(
+            guru.freberg.lenscast.streaming.rist.RistManager.Config(
+                lens = settings.lens,
+                resolution = Size(settings.resolution.width, settings.resolution.height),
+                fps = settings.fps.value,
+                videoBitrateBps = bitrate,
+                audioEnabled = settings.audioEnabled && ristAudioPermitted,
+                deviceRotationDegrees = rotationDegrees,
+                micSource = settings.micSource,
+                audioGainDb = settings.audioGainDb,
+                noiseSuppress = settings.noiseSuppress,
+                echoCancel = settings.echoCancel,
+                ristMode = ristMode,
+                ristHost = settings.ristHost,
+                ristPort = settings.ristPort,
+                ristBufferMs = settings.ristBufferMs,
+                ristProfile = ristProfile,
+                ristPassphrase = settings.ristEncryptionPassphrase,
+                ristKeyBits = settings.ristAesKeyBits,
+            ),
+            previewSurface = null,
+        )
+        if (plan == null) {
+            throw IllegalStateException(
+                "No camera plan matched ${settings.resolution.label} @ ${settings.fps.value} fps on ${settings.lens}",
+            )
+        }
+        _lastRtspPlan = plan
+    }
+    @Volatile private var ristManager: guru.freberg.lenscast.streaming.rist.RistManager? = null
 
     private fun startWebRtc(settings: Settings) {
         // WebRTC's Camera2Capturer owns Camera2 exclusively — tear down whatever else
@@ -1481,6 +1598,20 @@ class StreamingService : LifecycleService() {
                     }
                 }
             }
+            // RIST shares the SRT path's in-place video rebuild; the RTP/RTCP socket and the
+            // receiver stay connected across the turn (the new SPS ships in-band on the keyframe).
+            guru.freberg.lenscast.prefs.Protocol.RIST -> {
+                rotationRestartJob?.cancel()
+                rotationRestartJob = lifecycleScope.launch {
+                    kotlinx.coroutines.delay(500)
+                    if (_status.value.state != State.STREAMING) return@launch
+                    Log.i(TAG, "Seamless RIST rotation → $rotationDegrees")
+                    try { ristManager?.reconfigureVideo(rotationDegrees) } catch (t: Throwable) {
+                        Log.w(TAG, "Seamless rotation failed; falling back to restart", t)
+                        restartStreaming(_status.value.settings)
+                    }
+                }
+            }
             // RTSP locks orientation at Start. Unlike SRT, RTSP clients fix their decoder
             // dimensions from the SDP at connect time and never re-read them, so a portrait↔
             // landscape turn can't be applied mid-session without forcing every client to
@@ -1508,11 +1639,12 @@ class StreamingService : LifecycleService() {
      */
     fun framesProducedNow(): Long = rtspManager?.framesProduced()?.takeIf { it > 0 }
         ?: srtManager?.framesProduced()?.takeIf { it > 0 }
+        ?: ristManager?.framesProduced()?.takeIf { it > 0 }
         ?: broadcaster.framesProduced()
 
     /** Connected clients across both protocols (for the stats chip). */
     fun connectedClientCount(): Int = (rtspManager?.clientCount() ?: 0) +
-        broadcaster.clientCount() + (webRtcManager?.clientCount() ?: 0) + srtClientCount()
+        broadcaster.clientCount() + (webRtcManager?.clientCount() ?: 0) + srtClientCount() + ristClientCount()
 
     /** Per-peer SDP answer for a browser's WebRTC offer; null if WebRTC isn't running. */
     fun webRtcAnswer(offerSdp: String, remoteHostPort: String): String? =
@@ -1520,7 +1652,7 @@ class StreamingService : LifecycleService() {
 
     /** Cumulative bytes shipped over the wire since the active server started. */
     fun bytesSentNow(): Long = (rtspManager?.bytesSent() ?: 0L) + (mjpegServer?.bytesSent() ?: 0L) +
-        (srtManager?.bytesSent() ?: 0L)
+        (srtManager?.bytesSent() ?: 0L) + (ristManager?.bytesSent() ?: 0L)
 
     /** `host:port` addresses of every currently streaming client across both protocols. */
     fun clientAddresses(): List<String> =
@@ -1559,6 +1691,7 @@ class StreamingService : LifecycleService() {
         cameraController?.torchOn = on
         rtspManager?.setTorch(on)
         srtManager?.setTorch(on)
+        ristManager?.setTorch(on)
     }
 
     fun setZoomRatio(ratio: Float) { cameraController?.setZoomRatio(ratio) }
@@ -1577,9 +1710,16 @@ class StreamingService : LifecycleService() {
         else -> 0
     }
 
+    /** "Clients" for RIST = 1 when a receiver is connected, 0 otherwise (single-receiver). */
+    private fun ristClientCount(): Int = when (ristManager?.connectionState()) {
+        guru.freberg.lenscast.streaming.rist.RistPublisher.State.CONNECTED -> 1
+        else -> 0
+    }
+
     fun audioPeakDbfs(): Float = mjpegAudioCapture?.lastPeakDbfs()
         ?: rtspManager?.audioPeakDbfs()
         ?: srtManager?.audioPeakDbfs()
+        ?: ristManager?.audioPeakDbfs()
         ?: -90f
     /** URI of the most recently finalised MP4 recording, or null if none. */
     fun lastRecordingUri(): android.net.Uri? = _lastRecordingUri
@@ -1639,6 +1779,7 @@ class StreamingService : LifecycleService() {
         val size = Size(newSettings.resolution.width, newSettings.resolution.height)
         val handled = when (newSettings.protocol) {
             Protocol.SRT -> srtManager?.switchLens(newSettings.lens, size, newSettings.fps.value) ?: false
+            Protocol.RIST -> ristManager?.switchLens(newSettings.lens, size, newSettings.fps.value) ?: false
             Protocol.RTSP -> rtspManager?.switchLens(newSettings.lens, size, newSettings.fps.value) ?: false
             // WebRTC's capturer swaps the camera in place (no resolution lock — receivers
             // absorb the change), so any front↔back switch is seamless.
@@ -1686,6 +1827,8 @@ class StreamingService : LifecycleService() {
         webRtcManager = null
         try { srtManager?.stop() } catch (_: Throwable) {}
         srtManager = null
+        try { ristManager?.stop() } catch (_: Throwable) {}
+        ristManager = null
         stopNsd()
         _lastRtspPlan = null
         streamingCamera = false
@@ -1747,12 +1890,14 @@ class StreamingService : LifecycleService() {
             Protocol.RTSP   -> settings.rtspPort
             Protocol.WEBRTC -> settings.webControlPort
             Protocol.SRT    -> settings.srtPort
+            Protocol.RIST   -> settings.ristPort
         }
         val protoLabel = when (settings.protocol) {
             Protocol.MJPEG  -> "MJPEG"
             Protocol.RTSP   -> "RTSP"
             Protocol.WEBRTC -> "WebRTC"
             Protocol.SRT    -> "SRT"
+            Protocol.RIST   -> "RIST"
         }
         val notif: Notification = NotificationCompat.Builder(this, LenscastApp.CHANNEL_STREAMING)
             .setSmallIcon(R.drawable.ic_notification)

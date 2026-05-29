@@ -13,9 +13,9 @@ import org.json.JSONObject
  * older exports. Reads tolerate missing fields (uses the [Settings] defaults).
  */
 object SettingsCodec {
-    // v2 added the watermark / SFTP / SRT / language / sidecar fields. Reads remain
-    // backward-compatible: missing keys fall back to [Settings] defaults.
-    private const val VERSION = 2
+    // v2 added the watermark / SFTP / SRT / language / sidecar fields; v3 added the RIST
+    // block. Reads remain backward-compatible: missing keys fall back to [Settings] defaults.
+    private const val VERSION = 3
 
     fun toJson(s: Settings): String {
         val o = JSONObject().apply {
@@ -85,6 +85,13 @@ object SettingsCodec {
             put("srtPassphrase", s.srtPassphrase)
             put("srtLatencyMs", s.srtLatencyMs)
             put("srtStreamId", s.srtStreamId)
+            put("ristMode", s.ristMode.name)
+            put("ristHost", s.ristHost)
+            put("ristPort", s.ristPort)
+            put("ristProfile", s.ristProfile.name)
+            put("ristEncryptionPassphrase", s.ristEncryptionPassphrase)
+            put("ristBufferMs", s.ristBufferMs)
+            put("ristAesKeyBits", s.ristAesKeyBits)
         }
         return o.toString(2)
     }
@@ -153,6 +160,13 @@ object SettingsCodec {
             srtPassphrase = o.optString("srtPassphrase", d.srtPassphrase).take(79),
             srtLatencyMs = o.optInt("srtLatencyMs", d.srtLatencyMs).coerceIn(20, 8000),
             srtStreamId = o.optString("srtStreamId", d.srtStreamId).trim().take(512),
+            ristMode = enumByName(o, "ristMode", d.ristMode),
+            ristHost = o.optString("ristHost", d.ristHost).trim().take(255),
+            ristPort = o.optInt("ristPort", d.ristPort).coerceIn(1, 65534),
+            ristProfile = enumByName(o, "ristProfile", d.ristProfile),
+            ristEncryptionPassphrase = o.optString("ristEncryptionPassphrase", d.ristEncryptionPassphrase).take(79),
+            ristBufferMs = o.optInt("ristBufferMs", d.ristBufferMs).coerceIn(20, 8000),
+            ristAesKeyBits = if (o.optInt("ristAesKeyBits", d.ristAesKeyBits) == 256) 256 else 128,
         )
     }
 

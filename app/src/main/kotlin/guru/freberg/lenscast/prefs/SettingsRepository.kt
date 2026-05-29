@@ -81,6 +81,13 @@ class SettingsRepository(private val context: Context) {
             prefs[K_SRT_PASS] = next.srtPassphrase.take(79)
             prefs[K_SRT_LATENCY] = next.srtLatencyMs.coerceIn(20, 8000)
             prefs[K_SRT_STREAMID] = next.srtStreamId.trim().take(512)
+            prefs[K_RIST_MODE] = next.ristMode.ordinal
+            prefs[K_RIST_HOST] = next.ristHost.trim().take(255)
+            prefs[K_RIST_PORT] = next.ristPort.coerceIn(1, 65534)
+            prefs[K_RIST_PROFILE] = next.ristProfile.ordinal
+            prefs[K_RIST_PASS] = next.ristEncryptionPassphrase.take(79)
+            prefs[K_RIST_BUFFER] = next.ristBufferMs.coerceIn(20, 8000)
+            prefs[K_RIST_AES_BITS] = if (next.ristAesKeyBits == 256) 256 else 128
         }
     }
 
@@ -141,6 +148,13 @@ class SettingsRepository(private val context: Context) {
         srtPassphrase = p[K_SRT_PASS] ?: "",
         srtLatencyMs = (p[K_SRT_LATENCY] ?: 200).coerceIn(20, 8000),
         srtStreamId = (p[K_SRT_STREAMID] ?: "").trim(),
+        ristMode = RistMode.entries.getOrNull(p[K_RIST_MODE] ?: RistMode.LISTENER.ordinal) ?: RistMode.LISTENER,
+        ristHost = (p[K_RIST_HOST] ?: "").trim(),
+        ristPort = (p[K_RIST_PORT] ?: 5004).coerceIn(1, 65534),
+        ristProfile = RistProfile.entries.getOrNull(p[K_RIST_PROFILE] ?: 0) ?: RistProfile.SIMPLE,
+        ristEncryptionPassphrase = p[K_RIST_PASS] ?: "",
+        ristBufferMs = (p[K_RIST_BUFFER] ?: 200).coerceIn(20, 8000),
+        ristAesKeyBits = if ((p[K_RIST_AES_BITS] ?: 128) == 256) 256 else 128,
     )
 
     /**
@@ -225,5 +239,12 @@ class SettingsRepository(private val context: Context) {
         val K_SRT_PASS = stringPreferencesKey("srt_passphrase")
         val K_SRT_LATENCY = intPreferencesKey("srt_latency_ms")
         val K_SRT_STREAMID = stringPreferencesKey("srt_streamid")
+        val K_RIST_MODE = intPreferencesKey("rist_mode")
+        val K_RIST_HOST = stringPreferencesKey("rist_host")
+        val K_RIST_PORT = intPreferencesKey("rist_port")
+        val K_RIST_PROFILE = intPreferencesKey("rist_profile")
+        val K_RIST_PASS = stringPreferencesKey("rist_passphrase")
+        val K_RIST_BUFFER = intPreferencesKey("rist_buffer_ms")
+        val K_RIST_AES_BITS = intPreferencesKey("rist_aes_bits")
     }
 }

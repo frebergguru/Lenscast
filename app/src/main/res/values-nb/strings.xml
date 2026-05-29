@@ -53,6 +53,29 @@
     <string name="settings_srt_latency_hint">SRT ARQ-vindu. Lavere = mindre forsinkelse; høyere = bedre toleranse for pakketap. 120–300 ms vanlig.</string>
     <string name="settings_srt_streamid">Stream-ID (valgfritt)</string>
     <string name="settings_srt_streamid_hint">Sendes ved tilkobling (CALLER). Mottakere bruker det til å rute tilkoblingen. La det stå tomt for de fleste oppsett.</string>
+    <string name="settings_protocol_rist">RIST (H.264 + AAC over MPEG-TS)</string>
+    <string name="settings_rist_section">RIST-transport</string>
+    <string name="settings_rist_mode">Modus</string>
+    <string name="settings_rist_mode_caller">Oppringer (ring ut)</string>
+    <string name="settings_rist_mode_listener">Lytter (mottakere henter)</string>
+    <string name="settings_rist_mode_caller_hint">Telefonen ringer ut til en ekstern RIST-mottaker. Enklest gjennom NAT, og den eneste modusen som kan rette seg mot en multicast-gruppeadresse.</string>
+    <string name="settings_rist_mode_listener_hint">Telefonen binder porten og venter på at mottakeren ringer inn. Merk: librist-baserte mottakere (OBS, VLC, ffmpeg) sender håndtrykket til en dynamisk høy port som en lytter ikke kan forutsi, så de kobler ikke til i denne modusen – bruk Oppringer for dem. Lytter er for mottakere som sender til standard RTCP-port.</string>
+    <string name="settings_rist_host">Ekstern vert</string>
+    <string name="settings_rist_port">Port (data)</string>
+    <string name="settings_rist_port_hint">RTP/MPEG-TS-dataport. RTCP-tilbakemelding kjører på denne porten + 1, så mottakeren må nå begge.</string>
+    <string name="settings_rist_profile">Profil</string>
+    <string name="settings_rist_profile_simple">Enkel (RTP + retransmisjon)</string>
+    <string name="settings_rist_profile_main">Hoved (GRE-tunnel + AES)</string>
+    <string name="settings_rist_profile_simple_hint">Enkel profil: RTP/MPEG-TS med RTCP-NACK-retransmisjon. Kompatibel med tilnærmet alle RIST-mottakere. Ingen kryptering (det er en funksjon i hovedprofilen).</string>
+    <string name="settings_rist_profile_main_hint">Hovedprofil: GRE-innkapslet over én enkelt UDP-port med AES-kryptering (sett et passord nedenfor). Undertrykking av NULL-pakker og DTLS er ikke implementert; alt annet følger VSF TR-06-2.</string>
+    <string name="settings_rist_passphrase">Krypteringspassord</string>
+    <string name="settings_rist_passphrase_hint">AES-passord (hovedprofil). Tomt = GRE uten kryptering. Mottakere må bruke samme passord. Ignoreres under enkel profil.</string>
+    <string name="settings_rist_aes">AES-nøkkellengde</string>
+    <string name="settings_rist_aes_128">AES-128</string>
+    <string name="settings_rist_aes_256">AES-256</string>
+    <string name="settings_rist_buffer">Buffervindu (ms)</string>
+    <string name="settings_rist_buffer_hint">Retransmisjons-/jittervindu hos mottakeren. Lavere = lavere ende-til-ende-forsinkelse; høyere = bedre toleranse for pakketap. 120–300 ms vanlig.</string>
+    <string name="settings_rist_rotation_note">Rotasjon følger telefonen direkte – snu enheten mens du strømmer, og bildet roterer tilsvarende.</string>
     <string name="settings_resolution">Oppløsning</string>
     <string name="settings_fps">FPS-mål</string>
     <string name="settings_quality">JPEG-kvalitet</string>
@@ -406,6 +429,24 @@
     <string name="web_hint_srt_latency">SRT ARQ-vindu. 120–300 ms er vanlig.</string>
     <string name="web_lbl_srt_streamid">Strøm-ID (valgfritt)</string>
     <string name="web_hint_srt_streamid">Sendes ved tilkobling (oppringer). La stå tomt i de fleste oppsett.</string>
+    <string name="web_proto_rist_desc">H.264 + AAC over RIST (enkel profil). Lav forsinkelse, taptolerant, leverandørnøytral. OBS / ffmpeg.</string>
+    <string name="web_rist_live_title">RIST er aktiv</string>
+    <string name="web_rist_live_note">Hent med en RIST-kompatibel mottaker (ffmpeg rist://, OBS, Wowza) — nettlesere kan ikke vise RIST direkte.</string>
+    <string name="web_rist_section_h">RIST-transport</string>
+    <string name="web_lbl_rist_mode">Modus</string>
+    <string name="web_rist_mode_caller">Oppringer (ring ut)</string>
+    <string name="web_rist_mode_listener">Lytter (mottakere henter)</string>
+    <string name="web_lbl_rist_host">Ekstern vert</string>
+    <string name="web_lbl_rist_port">RIST-port (data)</string>
+    <string name="web_hint_rist_port">RTCP kjører på port + 1.</string>
+    <string name="web_lbl_rist_profile">Profil</string>
+    <string name="web_rist_profile_simple">Enkel</string>
+    <string name="web_rist_profile_main">Hoved (GRE + AES)</string>
+    <string name="web_lbl_rist_passphrase">Krypteringspassord</string>
+    <string name="web_hint_rist_passphrase">Kun hovedprofil; ignoreres under enkel.</string>
+    <string name="web_lbl_rist_buffer">Buffervindu</string>
+    <string name="web_hint_rist_buffer">Retransmisjons-/jittervindu. 120–300 ms vanlig.</string>
+    <string name="web_lbl_rist_aes">AES-nøkkellengde</string>
     <string name="web_lbl_language">Appspråk</string>
     <string name="web_lang_system">Følg systemet</string>
     <string name="web_lang_en">English</string>
@@ -495,6 +536,12 @@
     <string name="web_help_srt_passphrase">AES-passord for SRT-kryptering. 10–79 tegn. Tomt = ingen kryptering. Mottakere må bruke samme.</string>
     <string name="web_help_srt_latency">Hvor langt tilbake mottakeren kan be om retransmisjoner, i millisekunder. Lavere = mindre forsinkelse; høyere = bedre toleranse for pakketap på mobilnett.</string>
     <string name="web_help_srt_streamid">Valgfri strøm-ID som sendes ved tilkobling i oppringermodus, brukt av mottakeren til å rute tilkoblingen.</string>
+    <string name="web_help_rist_mode">Lytter = mottakere henter fra telefonen (rist://telefon-ip:port). Oppringer = telefonen ringer ut til en ekstern RIST-mottaker; enklest gjennom NAT.</string>
+    <string name="web_help_rist_host">Vertsnavn/IP til den eksterne RIST-mottakeren som skal ringes opp. Brukes kun i oppringermodus.</string>
+    <string name="web_help_rist_port">UDP-dataport for RIST-strømmen. RTCP-tilbakemelding kjører på denne porten + 1; mottakeren må nå begge. Lyttermodus binder dem på telefonen; oppringer kobler til dem på den eksterne verten.</string>
+    <string name="web_help_rist_profile">Enkel profil = RTP + RTCP-NACK-retransmisjon (kompatibel overalt, ingen kryptering). Hovedprofil = GRE over én UDP-port med valgfri AES; sett et passord for å kryptere.</string>
+    <string name="web_help_rist_passphrase">AES-passord for RIST hovedprofil. Tomt = GRE uten kryptering. Ignoreres under enkel profil.</string>
+    <string name="web_help_rist_buffer">Hvor langt tilbake mottakeren kan be om retransmisjoner, i millisekunder. Lavere = mindre forsinkelse; høyere = bedre toleranse for pakketap.</string>
     <string name="web_help_language">Språk for dette kontrollpanelet og appen. Følg systemet bruker telefonens språk.</string>
     <string name="web_help_web_control_port">TCP-porten dette kontrollpanelet lytter på. Endring laster panelet på nytt på den nye porten.</string>
 
