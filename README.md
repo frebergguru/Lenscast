@@ -5,8 +5,8 @@ Free, no watermark.
 
 The phone runs a tiny **MJPEG-over-HTTP** server (default port 4747) and four H.264
 options: **RTSP** (H.264 + AAC, default port 5540), **SRT** (H.264 + AAC over MPEG-TS,
-default port 9710), **RIST** (Simple Profile, H.264 + AAC over MPEG-TS, default data port
-5004), and **WebRTC** for browser playback (served off the web-control port, with a WHEP
+default port 9710), **RIST** (Simple + Main profiles, H.264 + AAC over MPEG-TS, default
+data port 5004), and **WebRTC** for browser playback (served off the web-control port, with a WHEP
 endpoint for WHEP-aware players). RTSP, SRT and RIST are orientation-correct
 (portrait/landscape) at ≤30 fps; SRT and RIST also rotate seamlessly mid-stream. OBS connects
 directly via its built-in **Media Source** — no plugin, no helper app. Wi-Fi and USB (via

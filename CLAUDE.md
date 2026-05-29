@@ -6,7 +6,9 @@ client) can consume directly. Five streaming protocols are live today:
 - **MJPEG over HTTP** (default port 4747) — works in any orientation, up to 30 fps.
 - **RTSP** (H.264 + AAC, default port 5540) — orientation-correct (portrait/landscape) at
   ≤30 fps via an EGL/GL rotation stage; high-speed 60/120/240 fps sessions still ship the
-  sensor's native landscape (constrained Camera2 can't take the GL SurfaceTexture).
+  sensor's native landscape (constrained Camera2 can't take the GL SurfaceTexture). The
+  server negotiates version per request: **RTSP 1.0** (RFC 2326) for OBS/VLC/ffmpeg and
+  **RTSP 2.0** (RFC 7826) for 2.0 clients, with 1.0 wire output kept byte-identical.
 - **SRT** (H.264 + AAC over MPEG-TS, default port 9710) — orientation-correct via the same
   GL rotation stage, and rotates seamlessly mid-stream without dropping the receiver.
 - **RIST** (H.264 + AAC over MPEG-TS, default data port 5004) — VSF **Simple and Main**
@@ -67,10 +69,12 @@ Build environment quirks (full detail in [Docs/Build.md](Docs/Build.md)):
 - **`MjpegServer`** is a hand-rolled `ServerSocket` + coroutine-per-client. Serves
   `/video`, `/shot.jpg`, `/` (landing page), the `/audio` PCM-WAV sidecar, and the
   WebRTC/WHEP handshake routes (`webRtcAnswer`, `webRtcWhepCreate`, `webRtcWhepDelete`).
-- **`streaming/rtsp/`** is the parallel RTSP path: `RtspServer` (sockets + RTSP verbs),
-  `RtspCameraDriver` (Camera2 high-speed session), `H264Encoder` + `AacEncoder`, RTP
-  packetizers, SDP builder. Owns Camera2 directly while streaming, so CameraX is bypassed
-  and the screen falls back to a `SurfaceView` for preview.
+- **`streaming/rtsp/`** is the parallel RTSP path: `RtspServer` (sockets + RTSP verbs,
+  version-negotiated 1.0/2.0, multi-client fan-out, TCP-interleaved + UDP transports,
+  reads RTCP RR back for the adaptive-bitrate loop), `RtspCameraDriver` (Camera2 high-speed
+  session), `H264Encoder` + `AacEncoder`, RTP packetizers, SDP builder. Owns Camera2
+  directly while streaming, so CameraX is bypassed and the screen falls back to a
+  `SurfaceView` for preview.
 - **`streaming/srt/`** is the SRT path: `SrtManager` (lifecycle + in-place
   `reconfigureVideo` on rotation), `SrtPublisher`, `MpegTsMuxer`. Shares the `GlRotator`
   EGL stage and the H.264/AAC encoders.

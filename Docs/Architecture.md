@@ -170,5 +170,6 @@ settings at Start time and during mid-stream lens changes.
 - **Per-client frame queues** for MJPEG. The latest-frame broadcaster is enough; slow
   clients drop frames naturally.
 - **libyuv / native acceleration.** Not needed at current resolutions.
-- **Multi-client RTSP.** Single client at a time; a new connect closes the old session.
-- **UDP RTCP receiver reports** (the server sends SR but doesn't read RR back).
+- **RTSP seeking / trick-play (`Scale`, `Speed`) and `RECORD`/`ANNOUNCE`.** The source is
+  a live, non-seekable, one-way feed, so the RTSP 2.0 server advertises
+  `No-Seeking, Time-Progressing` and only the `play.basic` feature tag.

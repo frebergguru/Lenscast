@@ -53,11 +53,14 @@ You can expect:
 
 ## What is **not** in scope (these are known design tradeoffs)
 
-- **The MJPEG and RTSP streams are unauthenticated and unencrypted.** Anyone on
-  the same Wi-Fi network can reach `http://<phone-ip>:4747/video` or the RTSP
-  port and view the feed. This is the *intended* behaviour for the OBS-on-the-LAN
-  use case Lenscast is designed for. If you need authentication, run Lenscast on
-  a VLAN or behind a reverse proxy that adds it.
+- **The MJPEG and RTSP streams are open by default — unauthenticated and
+  unencrypted.** Anyone on the same Wi-Fi network can reach `http://<phone-ip>:4747/video`
+  or the RTSP port and view the feed. This is the *intended* default for the OBS-on-the-LAN
+  use case Lenscast is designed for. If you need to lock it down, both servers support
+  built-in **HTTP Basic auth** (set a stream password in Settings; empty = open) and
+  **HTTPS / RTSPS** (self-signed TLS toggle) — or run Lenscast on a VLAN / behind a reverse
+  proxy. Basic auth over plain HTTP/RTSP only obscures credentials on the wire when TLS is
+  also on.
 - **Anyone on the LAN can hit `/shot.jpg`.** Same reason.
 - **The MJPEG `/` landing page returns a simple HTML preview.** Not a vuln; it's
   there on purpose so users can sanity-check the feed in a browser.
