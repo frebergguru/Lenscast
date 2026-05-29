@@ -243,10 +243,17 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
       phone or laptop can scan instead of typing `https://192.168.x.y:8080/`.
       Long-press the card or tap the new QR icon. ZXing.
 - [x] **Stats overlay in the app.** Bitrate chip alongside FPS / clients in the
-      stat row; rolling 1 s window of bytes shipped across MJPEG + RTSP. Dropped
-      frames and RTT remain open — drops aren't a single-source counter (CameraX
-      ImageAnalysis vs encoder vs network all drop differently) and RTT needs
-      RTCP RR parsing that ties into the adaptive-bitrate work below.
+      stat row; rolling 1 s window of bytes shipped across MJPEG + RTSP. **Dropped
+      + RTT now shipped** as a second chip row (and on the web panel's stats grid +
+      `/status` JSON as `dropped` / `rttMs`). RTT comes from parsing the LSR/DLSR
+      fields of incoming RTCP Receiver Reports (`Rtcp.roundTripMs`, RFC 3550
+      §6.4.1) in `RtspManager.onReceiverReport` — RTSP-only, `-1`/"—" on the other
+      paths. Drops are deliberately best-effort and per-path, since they aren't a
+      single source: RTSP reports the receiver's cumulative wire loss (RR
+      `cumulativeLost`); SRT/RIST count the TS packets shed locally when the link
+      can't keep up with the encoder; MJPEG reports 0 (CameraX drops upstream of
+      the analyzer, invisible to us). `RtcpTest` now pins LSR/DLSR parsing + the
+      RTT math.
 - [x] **Watermark / logo overlay.** Settings field; `%t` expands to a wall-clock
       `HH:mm:ss`. Drawn via `Canvas.drawText` on a re-decoded Bitmap after the
       `YuvImage.compressToJpeg` step (cheaper than an NV21-domain glyph cache
@@ -410,12 +417,32 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
         - **Main Profile, Caller mode → librist (`-p 1`): VERIFIED, AES-128 and AES-256.**
           Recorded + decoded clean H.264 720x1280 (~27 fps) for both key sizes; a deliberately
           wrong passphrase yields **zero** decodable output, confirming the PSK AES-CTR is real.
-        - **Listener mode** (phone binds; receiver dials in): tested and found **not
-          interoperable with librist receivers** — librist's caller-receiver sends its RTCP
-          handshake to a dynamic `32768+` port (e.g. 32769), not `data+1`, so a fixed-port
-          listener never sees it (confirmed: even librist-sender-listener ↔ librist-receiver-
-          caller fails the same way). It's a librist asymmetry, not fixable on our sender side.
-          The Settings hint now says so and points librist users to Caller (the verified path).
+        - **Listener mode** (phone binds; receiver dials in): peer learning **reworked to be
+          symmetric** (`RistPublisher.learnPeer` + a Simple-Listener `dataListenLoop`) — each
+          direction is pinned to the exact source address:port a packet arrived from, never the
+          old hardcoded `data+1`. **Full matrix re-tested live (2026-05-30) vs ristreceiver
+          (librist 0.2.14):**
+
+          | mode | Simple (-p 0) | Main (-p 1) |
+          |------|---------------|-------------|
+          | **Caller** (phone→receiver-listening)   | ✅ quality 100, lost 0, ~2.3 Mbps | ✅ quality 100, lost 0, ~2.3 Mbps |
+          | **Listener** (receiver dials phone)     | ❌ librist limitation             | ✅ **quality 100, lost 0, ~2.1 Mbps** |
+
+          **RIST Listener now works — via the Main profile.** Main muxes data+RTCP on one
+          GRE port with a real keepalive handshake, so ristreceiver's caller knocks the correct
+          port, the phone learns its source (symmetric `learnPeer`), and librist parents the
+          flow. **Simple + Listener still won't talk to librist**, for two librist-side reasons
+          proven by capture: (1) librist's simple caller-receiver sends its RTCP to a **fixed
+          port 32769** regardless of the URL port; (2) even after aligning ports so full
+          bidirectional RTCP + data flows, librist logs `FLOW … cannot be created … this peer
+          has no parent` and times out — it can't parent a flow on its simple caller-receiver
+          side (matches the earlier librist↔librist failure). The symmetric fix is still proven
+          correct for Simple via a direct UDP probe (phone learns each source port, streams
+          back). **Listener is now gated to Main in the UI:** under Simple the mode picker
+          offers Caller only (web panel disables the Listener option) with a short "Listener
+          needs the Main profile" message, and switching the profile to Simple coerces a
+          selected Listener back to Caller — enforced in both UIs and defensively in
+          `StreamingService.updaterFor`, so API/import can't persist the invalid pair.
         - Cosmetic `/status` negative-`fps` glitch on (re)start: **fixed** — the rolling FPS
           re-baselines when the encoder's frame counter restarts, and clamps to >= 0.
       Working receiver setup: **phone = Caller -> PC**, receiver listening (`rist://@:5004`).

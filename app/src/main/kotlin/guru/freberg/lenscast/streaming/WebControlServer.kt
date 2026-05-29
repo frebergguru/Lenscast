@@ -135,7 +135,7 @@ class WebControlServer(
         // RIST transport
         val protoRistDesc: String, val ristLiveTitle: String, val ristLiveNote: String,
         val ristSectionH: String, val lblRistMode: String, val ristModeCaller: String,
-        val ristModeListener: String, val lblRistHost: String, val lblRistPort: String,
+        val ristModeListener: String, val ristListenerNeedsMain: String, val lblRistHost: String, val lblRistPort: String,
         val hintRistPort: String, val lblRistProfile: String, val ristProfileSimple: String,
         val ristProfileMain: String, val lblRistPassphrase: String, val hintRistPassphrase: String,
         val lblRistBuffer: String, val hintRistBuffer: String, val lblRistAes: String,
@@ -307,6 +307,7 @@ class WebControlServer(
             lblRistMode = s(R.string.web_lbl_rist_mode),
             ristModeCaller = s(R.string.web_rist_mode_caller),
             ristModeListener = s(R.string.web_rist_mode_listener),
+            ristListenerNeedsMain = s(R.string.web_rist_listener_needs_main),
             lblRistHost = s(R.string.web_lbl_rist_host),
             lblRistPort = s(R.string.web_lbl_rist_port),
             hintRistPort = s(R.string.web_hint_rist_port),
@@ -1278,6 +1279,8 @@ class WebControlServer(
                       <div class="stat"><div class="label">${i.lblResolution}</div><div class="value" id="s-res">—</div></div>
                       <div class="stat"><div class="label">Zoom · EV</div><div class="value" id="s-zoomev">—</div></div>
                       <div class="stat"><div class="label">Bitrate</div><div class="value" id="s-bitrate">—</div></div>
+                      <div class="stat"><div class="label">Dropped</div><div class="value" id="s-dropped">0</div></div>
+                      <div class="stat"><div class="label">RTT</div><div class="value" id="s-rtt">—</div></div>
                       <div class="stat full" id="audio-stat">
                         <div class="label">${i.statAudioPeak} <span id="s-peak" style="float:right;color:var(--text-mute)">—</span></div>
                         <div class="vu"><div class="fill" id="vu-fill" style="width:0%"></div></div>
@@ -1566,6 +1569,7 @@ class WebControlServer(
                           </select>
                         </div>
                       </div>
+                      <div id="rist-listener-note" class="hidden" style="color:var(--accent);font-size:12px;margin:-4px 0 var(--gap-2)">${i.ristListenerNeedsMain}</div>
                       <div class="field stream-locked" id="rist-host-row" data-help="rist_host">
                         <div class="l">${i.lblRistHost}</div>
                         <div class="c"><input type="text" data-setting="ristHost" placeholder="rist.example.org"></div>
@@ -2187,6 +2191,13 @@ class WebControlServer(
                   // AES key length only matters under the Main profile.
                   const ristAesRow = document.getElementById('rist-aes-row');
                   if (ristAesRow) ristAesRow.style.display = (s.ristProfile === 'main') ? '' : 'none';
+                  // Listener is Main-only — disable the option + show a note under Simple.
+                  // (The backend also coerces Simple+Listener back to Caller.)
+                  const ristSimple = (s.ristProfile === 'simple');
+                  const ristModeSel = document.querySelector('select[data-setting="ristMode"]');
+                  const ristListenerOpt = ristModeSel && ristModeSel.querySelector('option[value="listener"]');
+                  if (ristListenerOpt) ristListenerOpt.disabled = ristSimple;
+                  show('rist-listener-note', ristSimple);
                   // Lazy-attach the in-panel WebRTC preview on the live→live transition.
                   if (live && s.protocol === 'webrtc') ensureWebRtcPreview();
                   else tearDownWebRtcPreview();
@@ -2261,6 +2272,9 @@ class WebControlServer(
                   const kbps = s.txKbps || 0;
                   document.getElementById('s-bitrate').textContent =
                     kbps <= 0 ? '—' : (kbps < 1000 ? kbps + ' kbps' : (kbps / 1000).toFixed(1) + ' Mbps');
+                  document.getElementById('s-dropped').textContent = (s.dropped || 0);
+                  document.getElementById('s-rtt').textContent =
+                    (s.rttMs != null && s.rttMs >= 0) ? (s.rttMs + ' ms') : '—';
 
                   // Health banner — colours track HealthMonitor.Severity (ok/warn/critical).
                   const h = s.health || {severity: 'ok', message: null};

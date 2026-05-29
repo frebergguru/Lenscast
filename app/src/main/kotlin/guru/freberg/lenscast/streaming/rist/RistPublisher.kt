@@ -90,11 +90,23 @@ class RistPublisher(
     @Volatile private var rtcpSocket: DatagramSocket? = null
     @Volatile private var peerDataAddr: InetSocketAddress? = null
     @Volatile private var peerRtcpAddr: InetSocketAddress? = null
+    // LISTENER peer learning is symmetric: each endpoint is pinned to the exact source
+    // address:port a packet arrived from, on the socket it arrived on — never a guessed
+    // data+1. A dialing receiver (e.g. librist's caller-receiver) uses an ephemeral source
+    // port, not the classic odd RTCP port, so the old fixed-port reply never reached it.
+    // These flags mark an endpoint as learned-from-the-wire so a later real packet can
+    // replace the provisional fallback we seed from the first contact.
+    @Volatile private var peerDataLearned = false
+    @Volatile private var peerRtcpLearned = false
+    @Volatile private var connectedAnnounced = false
+    private val peerLock = Any()
+    private var dataListenJob: Job? = null
 
     @Volatile private var bytesSent: Long = 0L
     @Volatile private var packetCount: Long = 0L
     @Volatile private var octetCount: Long = 0L
     @Volatile private var retransmits: Long = 0L
+    @Volatile private var droppedPackets: Long = 0L
     // 16-bit RTP sequence space (carried in the RTP header; NACKs reference this).
     private var sequence: Int = 0
     // 32-bit GRE sequence (Main Profile only): monotonic across every GRE packet, and the
@@ -114,6 +126,8 @@ class RistPublisher(
     fun state(): State = currentState
     fun bytesSent(): Long = bytesSent
     fun retransmitCount(): Long = retransmits
+    /** MPEG-TS packets dropped because the link couldn't keep up with the encode rate. */
+    fun droppedPackets(): Long = droppedPackets
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
@@ -123,6 +137,13 @@ class RistPublisher(
             try {
                 openSockets()
                 rtcpJob = scope.launch { feedbackLoop() }
+                // Simple + LISTENER: a dialing receiver punches the data port too, and that's
+                // where it expects our RTP — read it so we learn the exact data endpoint
+                // instead of guessing. (Main muxes everything on the data socket already;
+                // Caller's peers are fixed from openSockets, so neither needs this.)
+                if (!mainProfile && config.mode == Mode.LISTENER) {
+                    dataListenJob = scope.launch { dataListenLoop() }
+                }
                 when (config.mode) {
                     Mode.CALLER -> startCaller()
                     Mode.LISTENER -> startListener()
@@ -155,6 +176,9 @@ class RistPublisher(
         // The feedback loop reads this socket with a short timeout so it returns to check
         // `running` and re-runs the RTCP cadence; close() also unblocks a parked receive().
         feedbackSocket()?.soTimeout = RTCP_POLL_MS
+        // Simple + LISTENER also polls the data socket (see [dataListenLoop]); same timeout
+        // so it can notice `running` going false and exit.
+        if (!mainProfile && config.mode == Mode.LISTENER) dataSocket?.soTimeout = RTCP_POLL_MS
     }
 
     /** Socket the receiver's feedback (NACK/RR) arrives on: the single socket in Main, the odd RTCP port in Simple. */
@@ -179,21 +203,38 @@ class RistPublisher(
 
     private fun profileTag() = if (mainProfile) (if (crypto != null) "main+aes${config.keyBits}" else "main") else "simple"
 
-    private fun markPeerConnected(from: InetSocketAddress) {
-        if (peerDataAddr != null) return
-        if (mainProfile) {
-            peerDataAddr = from
-        } else {
-            // Learned on the RTCP socket; assume the receiver's data port is the canonical one.
-            peerDataAddr = InetSocketAddress(from.address, config.port)
-            peerRtcpAddr = InetSocketAddress(from.address, config.port + 1)
+    /**
+     * LISTENER peer learning. [viaRtcp] = the packet arrived on the RTCP socket (Simple's odd
+     * port); else it arrived on the data socket. We pin each direction to the actual source
+     * address:port it came from — librist's caller-receiver uses an ephemeral source port, not
+     * data+1, so replying to a guessed odd port never reached it. Until the partner direction is
+     * seen on the wire, we seed a provisional fallback (same host, canonical port) so streaming
+     * can start immediately; the real partner packet then overrides it.
+     */
+    private fun learnPeer(from: InetSocketAddress, viaRtcp: Boolean) {
+        synchronized(peerLock) {
+            if (mainProfile) {
+                if (peerDataAddr == null) peerDataAddr = from
+            } else if (viaRtcp) {
+                if (peerRtcpLearned) return
+                peerRtcpAddr = from
+                peerRtcpLearned = true
+                if (!peerDataLearned) peerDataAddr = InetSocketAddress(from.address, config.port)
+            } else {
+                if (peerDataLearned) return
+                peerDataAddr = from
+                peerDataLearned = true
+                if (!peerRtcpLearned) peerRtcpAddr = InetSocketAddress(from.address, config.port + 1)
+            }
+            if (connectedAnnounced) return
+            connectedAnnounced = true
+            clockStartNs = System.nanoTime()
+            currentState = State.CONNECTED
+            queue.clear()
+            Log.i(TAG, "RIST listener learned peer ${from.address.hostAddress}")
+            onState(State.CONNECTED)
+            repeat(HANDSHAKE_BURST) { sendSenderReport() }
         }
-        clockStartNs = System.nanoTime()
-        currentState = State.CONNECTED
-        queue.clear()
-        Log.i(TAG, "RIST listener learned peer ${from.address.hostAddress}")
-        onState(State.CONNECTED)
-        repeat(HANDSHAKE_BURST) { sendSenderReport() }
     }
 
     private fun startPump() {
@@ -337,7 +378,8 @@ class RistPublisher(
             try {
                 sock.receive(dp)
                 val from = dp.socketAddress as? InetSocketAddress
-                if (from != null && peerDataAddr == null) markPeerConnected(from)
+                // Main reads its single GRE-muxed socket here; Simple reads the odd RTCP port.
+                if (from != null && config.mode == Mode.LISTENER) learnPeer(from, viaRtcp = !mainProfile)
                 // Only act on feedback from the connected peer. Without this, a single spoofed
                 // UDP datagram could trigger retransmit floods (NACK amplification) or — before
                 // a peer is learned — redirect the stream. Compare by address only: the receiver
@@ -356,6 +398,29 @@ class RistPublisher(
             if (currentState == State.CONNECTED && now - lastSrNs >= SR_INTERVAL_NS) {
                 sendSenderReport()
                 lastSrNs = now
+            }
+        }
+    }
+
+    /**
+     * Simple + LISTENER only: pure peer-learning on the data socket. A receiver dialing in
+     * sends to our data port from the source it expects our RTP back on, so pinning
+     * [peerDataAddr] to that exact source (rather than guessing the configured port) is what
+     * makes ephemeral-port receivers like librist's caller-receiver work. NACKs/RTCP still
+     * arrive on the odd RTCP port and are handled by [feedbackLoop].
+     */
+    private fun dataListenLoop() {
+        val buf = ByteArray(2048)
+        while (running.get()) {
+            val sock = dataSocket ?: break
+            val dp = DatagramPacket(buf, buf.size)
+            try {
+                sock.receive(dp)
+                (dp.socketAddress as? InetSocketAddress)?.let { learnPeer(it, viaRtcp = false) }
+            } catch (_: SocketTimeoutException) {
+                // loop back to re-check `running`
+            } catch (t: Throwable) {
+                if (running.get()) Log.w(TAG, "RIST data recv: ${t.message}")
             }
         }
     }
@@ -535,6 +600,7 @@ class RistPublisher(
         if (queue.offer(tsPacket)) return
         try {
             if (!queue.offer(tsPacket, 500, TimeUnit.MILLISECONDS)) {
+                droppedPackets++
                 Log.w(TAG, "RIST queue full for 500ms — link slower than encode rate, dropping packet")
             }
         } catch (_: InterruptedException) { /* closing */ }
@@ -555,6 +621,7 @@ class RistPublisher(
         connectJob?.cancel(); connectJob = null
         pumpJob?.cancel(); pumpJob = null
         rtcpJob?.cancel(); rtcpJob = null
+        dataListenJob?.cancel(); dataListenJob = null
         queue.clear()
         scope.cancel()
     }

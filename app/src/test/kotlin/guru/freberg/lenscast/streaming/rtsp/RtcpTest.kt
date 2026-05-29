@@ -63,7 +63,8 @@ class RtcpTest {
         b.put(0); b.put(0); b.put(123.toByte()) // cumulativeLost = 123
         b.putInt(0)                     // extended seq
         b.putInt(7777)                  // jitter
-        b.putInt(0); b.putInt(0)        // LSR, DLSR (ignored)
+        b.putInt(0x0A0B0C0D)            // LSR
+        b.putInt(0x00010000)           // DLSR = 1.0 s in 1/65536 units
 
         val reports = Rtcp.parseReceiverReports(pkt)
         assertEquals(1, reports.size)
@@ -74,6 +75,23 @@ class RtcpTest {
         assertEquals(0.25, r.fractionLostFraction, 0.001)
         assertEquals(123, r.cumulativeLost)
         assertEquals(7777, r.jitter)
+        assertEquals(0x0A0B0C0D, r.lsr)
+        assertEquals(0x00010000, r.dlsr)
+    }
+
+    @Test fun `roundTripMs subtracts LSR and DLSR`() {
+        // Receiver echoes the LSR from an SR we sent at `sentMs`, having held the RR for ~250 ms
+        // (DLSR), and we receive it ~600 ms after that SR — RTT should be ~350 ms.
+        val sentMs = 1_700_000_000_000L
+        val lsr = Rtcp.ntpMiddle32(sentMs).toInt()
+        val dlsr = (0.25 * 65536).toInt()
+        val report = Rtcp.ReceiverReport(0, 0, 0, 0, 0, lsr = lsr, dlsr = dlsr)
+        val rtt = Rtcp.roundTripMs(report, sentMs + 600)
+        assertEquals(350.0, rtt.toDouble(), 5.0)
+    }
+
+    @Test fun `roundTripMs returns -1 when the receiver has no SR yet`() {
+        assertEquals(-1, Rtcp.roundTripMs(Rtcp.ReceiverReport(0, 0, 0, 0, 0, lsr = 0, dlsr = 0), 1_700_000_000_000L))
     }
 
     @Test fun `rejects unknown packet type without throwing`() {

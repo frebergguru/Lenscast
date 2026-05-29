@@ -45,8 +45,10 @@ Full setup, USB tethering, and troubleshooting are in
 - **RIST** (H.264 + AAC over MPEG-TS, default data port 5004) — vendor-neutral, pure-Kotlin
   (no librist). **Simple Profile**: RTP/MP2T + RTCP-NACK retransmit (RTCP on port +1).
   **Main Profile**: GRE over a single UDP port with optional PSK **AES-128/256** encryption.
-  Listener or caller mode, tunable buffer window; shares the SRT pipeline so it
-  rotates/switches lens mid-stream. (NULL-packet suppression and DTLS aren't implemented.)
+  Caller mode on either profile (verified against librist); **Listener mode is Main-only**
+  (librist receivers dial a fixed port and can't parent a Simple-profile flow). Tunable
+  buffer window; shares the SRT pipeline so it rotates/switches lens mid-stream.
+  (NULL-packet suppression and DTLS aren't implemented.)
 - **WebRTC** browser playback at `/webrtc/view`, plus a **WHEP** endpoint
   (`POST`/`DELETE /whep/<id>`) for WHEP-aware players — both served off the web-control port
 - **Audio sidecar** on the network transports — RTSP and SRT carry audio in-session; MJPEG
@@ -110,8 +112,9 @@ Full setup, USB tethering, and troubleshooting are in
 **UI**
 
 - Material 3 Compose UI with dynamic colour on Android 12+
-- Live preview before streaming, on-camera overlay for the common controls, a stats
-  row with FPS / clients / audio peak while streaming
+- Live preview before streaming, on-camera overlay for the common controls, and stats
+  rows with resolution / FPS / clients / bitrate plus dropped packets and RTT (RTSP, from
+  RTCP receiver reports) and an audio-peak VU while streaming
 - Tap-to-copy stream URLs, USB-tethering URL, `adb forward` command, and the audio /
   web-control / RTSP URLs as they apply
 

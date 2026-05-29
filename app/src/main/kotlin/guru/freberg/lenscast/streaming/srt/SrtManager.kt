@@ -355,6 +355,7 @@ class SrtManager(private val context: Context) {
     fun audioPeakDbfs(): Float = audioEncoder?.lastPeakDbfs() ?: -90f
     fun framesProduced(): Long = videoEncoder?.framesProduced() ?: 0L
     fun bytesSent(): Long = publisher?.bytesSent() ?: 0L
+    fun droppedPackets(): Long = publisher?.droppedPackets() ?: 0L
     fun connectionState(): SrtPublisher.State = state
 
     fun stop() {

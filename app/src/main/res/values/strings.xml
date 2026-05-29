@@ -31,6 +31,8 @@
     <string name="action_drop_client">Drop</string>
     <string name="stat_protocol">Protocol</string>
     <string name="stat_bitrate">Bitrate</string>
+    <string name="stat_dropped">Dropped</string>
+    <string name="stat_rtt">RTT</string>
 
     <string name="settings_title">Settings</string>
     <string name="settings_protocol">Streaming protocol</string>
@@ -59,7 +61,8 @@
     <string name="settings_rist_mode_caller">Caller (dial out)</string>
     <string name="settings_rist_mode_listener">Listener (receivers pull)</string>
     <string name="settings_rist_mode_caller_hint">Phone dials out to a remote RIST receiver. Easiest path through NAT, and the only mode that can target a multicast group address.</string>
-    <string name="settings_rist_mode_listener_hint">Phone binds the port and waits for the receiver to dial in. Note: librist-based receivers (OBS, VLC, ffmpeg) send their handshake to a dynamic high port a listener can\'t predict, so they won\'t connect in this mode — use Caller for those. Listener is for receivers that send to the standard RTCP port.</string>
+    <string name="settings_rist_mode_listener_hint">Phone binds the port and waits for the receiver to dial in, learning the caller\'s source port from its first packet and replying there. Verified to work with librist receivers (OBS, VLC, ffmpeg, ristreceiver) on the Main profile.</string>
+    <string name="settings_rist_listener_needs_main">Listener needs the Main profile — Simple profile is Caller-only (librist receivers can\'t dial a Simple-profile listener).</string>
     <string name="settings_rist_host">Remote host</string>
     <string name="settings_rist_port">Port (data)</string>
     <string name="settings_rist_port_hint">RTP/MPEG-TS data port. RTCP feedback runs on this port + 1, so the receiver must reach both.</string>
@@ -438,6 +441,7 @@
     <string name="web_lbl_rist_mode">Mode</string>
     <string name="web_rist_mode_caller">Caller (dial out)</string>
     <string name="web_rist_mode_listener">Listener (receivers pull)</string>
+    <string name="web_rist_listener_needs_main">Listener needs the Main profile — Simple is Caller-only.</string>
     <string name="web_lbl_rist_host">Remote host</string>
     <string name="web_lbl_rist_port">RIST port (data)</string>
     <string name="web_hint_rist_port">RTCP runs on port + 1.</string>

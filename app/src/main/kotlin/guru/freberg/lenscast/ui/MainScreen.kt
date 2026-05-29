@@ -204,6 +204,8 @@ fun MainScreen(
     var clientList by remember { mutableStateOf<List<String>>(emptyList()) }
     var audioPeak by remember { mutableStateOf(-90f) }
     var txKbps by remember { mutableStateOf(0) }
+    var droppedObserved by remember { mutableStateOf(0L) }
+    var rttObserved by remember { mutableStateOf(-1) }
     LaunchedEffect(streaming, service) {
         if (!streaming || service == null) {
             fpsObserved = 0
@@ -211,6 +213,8 @@ fun MainScreen(
             clientList = emptyList()
             audioPeak = -90f
             txKbps = 0
+            droppedObserved = 0L
+            rttObserved = -1
             return@LaunchedEffect
         }
         var lastCount = service.framesProducedNow()
@@ -229,6 +233,8 @@ fun MainScreen(
             clientsObserved = service.connectedClientCount()
             clientList = service.clientAddresses()
             audioPeak = service.audioPeakDbfs()
+            droppedObserved = service.droppedNow()
+            rttObserved = service.rttMsNow()
             lastCount = count
             lastBytes = bytes
             lastT = now
@@ -573,6 +579,21 @@ fun MainScreen(
                     StatChip(
                         label = stringResource(R.string.stat_bitrate),
                         value = formatBitrate(txKbps),
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    StatChip(
+                        label = stringResource(R.string.stat_dropped),
+                        value = droppedObserved.toString(),
+                        modifier = Modifier.weight(1f),
+                    )
+                    StatChip(
+                        label = stringResource(R.string.stat_rtt),
+                        value = if (rttObserved >= 0) "$rttObserved ms" else "—",
                         modifier = Modifier.weight(1f),
                     )
                 }

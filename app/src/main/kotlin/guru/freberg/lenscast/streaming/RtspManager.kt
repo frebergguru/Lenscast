@@ -86,6 +86,10 @@ class RtspManager(
     @Volatile private var currentBitrate: Int = 0
     @Volatile private var worstRecentLoss: Double = 0.0
     @Volatile private var lastLossReportAtMs: Long = 0
+    // Stats surfaced by the overlay: latest RTT (ms, -1 = no usable sample yet) and the
+    // receiver's cumulative packets-lost-on-the-wire from its most recent video RR.
+    @Volatile private var lastRttMs: Int = -1
+    @Volatile private var lastCumulativeLost: Int = 0
     private var adaptiveThread: Thread? = null
     private val adaptiveStop = java.util.concurrent.atomic.AtomicBoolean(false)
     private val abrFloorBps = 250_000
@@ -386,6 +390,12 @@ class RtspManager(
     /** Number of RTSP clients currently in PLAY state. */
     fun clientCount(): Int = activeSinks.size
 
+    /** Latest network round-trip time in ms from RTCP RR, or -1 before a usable sample. */
+    fun rttMs(): Int = lastRttMs
+
+    /** Packets the receiver reports never arrived (cumulative wire loss from its RR). */
+    fun droppedPackets(): Long = lastCumulativeLost.toLong()
+
     fun stop() {
         adaptiveStop.set(true)
         adaptiveThread?.interrupt()
@@ -456,7 +466,11 @@ class RtspManager(
             // Track the worst loss across all reporting clients in the current window;
             // the loop resets this every tick.
             if (loss > worstRecentLoss) worstRecentLoss = loss
-            lastLossReportAtMs = System.currentTimeMillis()
+            val now = System.currentTimeMillis()
+            lastLossReportAtMs = now
+            val rtt = Rtcp.roundTripMs(report, now)
+            if (rtt >= 0) lastRttMs = rtt
+            if (report.cumulativeLost > lastCumulativeLost) lastCumulativeLost = report.cumulativeLost
         }
     }
 

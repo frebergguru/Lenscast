@@ -40,6 +40,12 @@ object Rtcp {
         val cumulativeLost: Int,
         /** Interarrival jitter in RTP timestamp units. */
         val jitter: Int,
+        /** Last SR timestamp: middle 32 bits of the NTP stamp from the SR this receiver last
+         *  saw. 0 means it hasn't received an SR yet, so RTT can't be computed. */
+        val lsr: Int = 0,
+        /** Delay since last SR, in units of 1/65536 s — the time the receiver held the RR after
+         *  receiving our SR. Subtracted out so RTT measures network round-trip only. */
+        val dlsr: Int = 0,
     ) {
         /** Fraction lost as a 0.0..1.0 number for control-loop math. */
         val fractionLostFraction: Double get() = fractionLost / 256.0
@@ -81,7 +87,9 @@ object Rtcp {
             )
             // Bytes 8..11 = extended highest seq received; we don't surface it.
             val jitter = readInt(pkt, o + 12)
-            reports += ReceiverReport(reporterSsrc, sourceSsrc, fractionLost, cumulativeLost, jitter)
+            val lsr = readInt(pkt, o + 16)
+            val dlsr = readInt(pkt, o + 20)
+            reports += ReceiverReport(reporterSsrc, sourceSsrc, fractionLost, cumulativeLost, jitter, lsr, dlsr)
         }
         return reports
     }
@@ -116,5 +124,31 @@ object Rtcp {
         b.putInt(packetCount.toInt())
         b.putInt(octetCount.toInt())
         return pkt
+    }
+
+    /**
+     * The middle 32 bits of an NTP timestamp (low 16 bits of seconds ‖ high 16 bits of the
+     * fraction) for `ntpMillis` — the exact form a receiver echoes back in an RR's [LSR][ReceiverReport.lsr]
+     * field. Round-trip time is then `ntpMiddle32(now) - report.lsr - report.dlsr`, in 1/65536 s.
+     */
+    fun ntpMiddle32(ntpMillis: Long): Long {
+        val secs = (ntpMillis / 1000L) + NTP_EPOCH_OFFSET_SECONDS
+        val frac = ((ntpMillis % 1000L) shl 32) / 1000L
+        return ((secs and 0xFFFF) shl 16) or ((frac ushr 16) and 0xFFFF)
+    }
+
+    /**
+     * Network round-trip time in milliseconds from an RR's LSR/DLSR (RFC 3550 §6.4.1), or `-1`
+     * when it can't be computed: the receiver hasn't seen an SR yet ([lsr][ReceiverReport.lsr] = 0)
+     * or the arithmetic underflows (clock skew / a stale echoed LSR).
+     */
+    fun roundTripMs(report: ReceiverReport, nowMillis: Long): Int {
+        if (report.lsr == 0) return -1
+        val now32 = ntpMiddle32(nowMillis)
+        val lsr = report.lsr.toLong() and 0xFFFFFFFFL
+        val dlsr = report.dlsr.toLong() and 0xFFFFFFFFL
+        val delta = now32 - lsr - dlsr
+        if (delta < 0L || delta > 0xFFFFFFFFL) return -1 // underflow → unusable sample
+        return (delta * 1000L / 65536L).toInt()
     }
 }

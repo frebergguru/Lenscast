@@ -31,6 +31,8 @@
     <string name="action_drop_client">Koble fra</string>
     <string name="stat_protocol">Protokoll</string>
     <string name="stat_bitrate">Bitrate</string>
+    <string name="stat_dropped">Mistet</string>
+    <string name="stat_rtt">RTT</string>
 
     <string name="settings_title">Innstillinger</string>
     <string name="settings_protocol">Strømmeprotokoll</string>
@@ -59,7 +61,8 @@
     <string name="settings_rist_mode_caller">Oppringer (ring ut)</string>
     <string name="settings_rist_mode_listener">Lytter (mottakere henter)</string>
     <string name="settings_rist_mode_caller_hint">Telefonen ringer ut til en ekstern RIST-mottaker. Enklest gjennom NAT, og den eneste modusen som kan rette seg mot en multicast-gruppeadresse.</string>
-    <string name="settings_rist_mode_listener_hint">Telefonen binder porten og venter på at mottakeren ringer inn. Merk: librist-baserte mottakere (OBS, VLC, ffmpeg) sender håndtrykket til en dynamisk høy port som en lytter ikke kan forutsi, så de kobler ikke til i denne modusen – bruk Oppringer for dem. Lytter er for mottakere som sender til standard RTCP-port.</string>
+    <string name="settings_rist_mode_listener_hint">Telefonen binder porten og venter på at mottakeren ringer inn, og lærer ringerens kildeport fra den første pakken og svarer dit. Verifisert å fungere med librist-mottakere (OBS, VLC, ffmpeg, ristreceiver) på Main-profilen.</string>
+    <string name="settings_rist_listener_needs_main">Lytter krever Main-profilen – Simple-profilen er kun Oppringer (librist-mottakere kan ikke ringe en Simple-profil-lytter).</string>
     <string name="settings_rist_host">Ekstern vert</string>
     <string name="settings_rist_port">Port (data)</string>
     <string name="settings_rist_port_hint">RTP/MPEG-TS-dataport. RTCP-tilbakemelding kjører på denne porten + 1, så mottakeren må nå begge.</string>
@@ -436,6 +439,7 @@
     <string name="web_lbl_rist_mode">Modus</string>
     <string name="web_rist_mode_caller">Oppringer (ring ut)</string>
     <string name="web_rist_mode_listener">Lytter (mottakere henter)</string>
+    <string name="web_rist_listener_needs_main">Lytter krever Main-profilen – Simple er kun Oppringer.</string>
     <string name="web_lbl_rist_host">Ekstern vert</string>
     <string name="web_lbl_rist_port">RIST-port (data)</string>
     <string name="web_hint_rist_port">RTCP kjører på port + 1.</string>

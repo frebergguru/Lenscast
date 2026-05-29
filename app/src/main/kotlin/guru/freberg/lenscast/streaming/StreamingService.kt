@@ -821,7 +821,15 @@ class StreamingService : LifecycleService() {
                 "ristMode" -> {
                     if (streaming) return null
                     val m = enumValueOrNull<guru.freberg.lenscast.prefs.RistMode>(v) ?: return null
-                    Pair({ it.copy(ristMode = m) }, false)
+                    // Listener is Main-only: librist's caller-receiver dials a fixed RTCP port and
+                    // can't parent a Simple-profile flow, so a Simple listener never connects.
+                    // Keep the persisted pair valid no matter the entry point (UI/API/import).
+                    Pair({
+                        val mode = if (m == guru.freberg.lenscast.prefs.RistMode.LISTENER &&
+                            it.ristProfile == guru.freberg.lenscast.prefs.RistProfile.SIMPLE)
+                            guru.freberg.lenscast.prefs.RistMode.CALLER else m
+                        it.copy(ristMode = mode)
+                    }, false)
                 }
                 "ristHost" -> {
                     if (streaming) return null
@@ -836,7 +844,14 @@ class StreamingService : LifecycleService() {
                 "ristProfile" -> {
                     if (streaming) return null
                     val pr = enumValueOrNull<guru.freberg.lenscast.prefs.RistProfile>(v) ?: return null
-                    Pair({ it.copy(ristProfile = pr) }, false)
+                    // Switching to Simple drops Listener back to Caller — Listener is Main-only
+                    // (see the ristMode note above).
+                    Pair({
+                        val mode = if (pr == guru.freberg.lenscast.prefs.RistProfile.SIMPLE &&
+                            it.ristMode == guru.freberg.lenscast.prefs.RistMode.LISTENER)
+                            guru.freberg.lenscast.prefs.RistMode.CALLER else it.ristMode
+                        it.copy(ristProfile = pr, ristMode = mode)
+                    }, false)
                 }
                 "ristEncryptionPassphrase" -> {
                     if (streaming) return null
@@ -963,7 +978,7 @@ class StreamingService : LifecycleService() {
                 """"fps":${framesPerSecondNow()},"targetFps":${s.fps.value},""" +
                 """"clients":${connectedClientCount()},"audioPeakDbfs":${audioPeakDbfs()},""" +
                 """"clientList":[${clientAddresses().joinToString(",") { "\"${jsonEscape(it)}\"" }}],""" +
-                """"txKbps":${txKbpsNow()},""" +
+                """"txKbps":${txKbpsNow()},"dropped":${droppedNow()},"rttMs":${rttMsNow()},""" +
                 """"health":${healthJson()},""" +
                 // image controls
                 """"mirror":${s.mirror},"continuousAf":${s.continuousAf},""" +
@@ -1738,6 +1753,20 @@ class StreamingService : LifecycleService() {
     /** Cumulative bytes shipped over the wire since the active server started. */
     fun bytesSentNow(): Long = (rtspManager?.bytesSent() ?: 0L) + (mjpegServer?.bytesSent() ?: 0L) +
         (srtManager?.bytesSent() ?: 0L) + (ristManager?.bytesSent() ?: 0L)
+
+    /**
+     * Best-effort dropped-packet count for the active path. Drops aren't a single source —
+     * RTSP reports the receiver's cumulative wire loss (RTCP RR); SRT/RIST count the TS packets
+     * shed locally when the link can't keep up with the encoder. MJPEG has no comparable counter
+     * (CameraX silently drops upstream of the analyzer), so it reports 0.
+     */
+    fun droppedNow(): Long = rtspManager?.droppedPackets()
+        ?: srtManager?.droppedPackets()
+        ?: ristManager?.droppedPackets()
+        ?: 0L
+
+    /** Latest network round-trip time in ms (RTSP/RTCP only), or -1 when unavailable. */
+    fun rttMsNow(): Int = rtspManager?.rttMs() ?: -1
 
     /** `host:port` addresses of every currently streaming client across both protocols. */
     fun clientAddresses(): List<String> =

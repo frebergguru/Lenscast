@@ -1325,9 +1325,13 @@ private fun SrtSection(settings: Settings, onChange: (Settings) -> Unit, streami
 @Composable
 private fun RistSection(settings: Settings, onChange: (Settings) -> Unit, streaming: Boolean) {
     SectionLabel(stringResource(R.string.settings_rist_section))
+    // Listener only interoperates under Main profile (librist's caller-receiver can't parent
+    // a Simple-profile flow), so under Simple the picker offers Caller only.
+    val ristSimple = settings.ristProfile == guru.freberg.lenscast.prefs.RistProfile.SIMPLE
     EnumDropdown(
         label = stringResource(R.string.settings_rist_mode),
-        options = guru.freberg.lenscast.prefs.RistMode.entries.toList(),
+        options = if (ristSimple) listOf(guru.freberg.lenscast.prefs.RistMode.CALLER)
+                  else guru.freberg.lenscast.prefs.RistMode.entries.toList(),
         selected = settings.ristMode,
         labelOf = {
             when (it) {
@@ -1345,8 +1349,16 @@ private fun RistSection(settings: Settings, onChange: (Settings) -> Unit, stream
         ),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+        modifier = Modifier.padding(top = 4.dp, bottom = if (ristSimple) 4.dp else 8.dp),
     )
+    if (ristSimple) {
+        Text(
+            text = stringResource(R.string.settings_rist_listener_needs_main),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+    }
     if (settings.ristMode == guru.freberg.lenscast.prefs.RistMode.CALLER) {
         OutlinedTextField(
             value = settings.ristHost,
@@ -1379,7 +1391,13 @@ private fun RistSection(settings: Settings, onChange: (Settings) -> Unit, stream
                 guru.freberg.lenscast.prefs.RistProfile.MAIN   -> stringResource(R.string.settings_rist_profile_main)
             }
         },
-        onSelect = { onChange(settings.copy(ristProfile = it)) },
+        // Simple can't run Listener — drop back to Caller when switching to it.
+        onSelect = { profile ->
+            val mode = if (profile == guru.freberg.lenscast.prefs.RistProfile.SIMPLE &&
+                settings.ristMode == guru.freberg.lenscast.prefs.RistMode.LISTENER)
+                guru.freberg.lenscast.prefs.RistMode.CALLER else settings.ristMode
+            onChange(settings.copy(ristProfile = profile, ristMode = mode))
+        },
     )
     Text(
         text = stringResource(

@@ -63,10 +63,14 @@ class SrtPublisher(
     @Volatile private var clientSocket: SrtSocket? = null
     @Volatile private var acceptEpoll: Epoll? = null
     @Volatile private var bytesSent: Long = 0L
+    @Volatile private var droppedPackets: Long = 0L
 
     fun state(): State = currentState
 
     fun bytesSent(): Long = bytesSent
+
+    /** MPEG-TS packets dropped because the link couldn't keep up with the encode rate. */
+    fun droppedPackets(): Long = droppedPackets
 
     fun start() {
         if (!running.compareAndSet(false, true)) return
@@ -269,6 +273,7 @@ class SrtPublisher(
         // actually-broken link doesn't hang the encoder thread.
         try {
             if (!queue.offer(tsPacket, 500, TimeUnit.MILLISECONDS)) {
+                droppedPackets++
                 Log.w(TAG, "SRT queue full for 500ms — link slower than encode rate, dropping packet")
             }
         } catch (_: InterruptedException) { /* closing */ }
