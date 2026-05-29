@@ -1377,11 +1377,22 @@ class StreamingService : LifecycleService() {
                         restartStreaming(_status.value.settings)
                     }
                 }
-                // RTSP encodes H.264 with no GL rotation pass yet, so a rotation change there
-                // still means a full pipeline restart.
+                // RTSP rebuilds the camera/encoder/rotator in place too, keeping the RTSP
+                // server and the client's session up (new SPS ships in-band). Falls back to a
+                // full restart only when the in-place swap can't serve it cleanly — high-speed
+                // sessions (no-op, handled=true) or active local recording (handled=false,
+                // needs a fresh MP4).
                 guru.freberg.lenscast.prefs.Protocol.RTSP -> {
-                    Log.i(TAG, "Auto-restart RTSP stream for rotation change")
-                    restartStreaming(_status.value.settings)
+                    val handled = try {
+                        rtspManager?.reconfigureVideo(rotationDegrees) ?: false
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "Seamless RTSP rotation failed; falling back to restart", t)
+                        false
+                    }
+                    if (!handled) {
+                        Log.i(TAG, "Full RTSP restart for rotation change")
+                        restartStreaming(_status.value.settings)
+                    }
                 }
                 else -> { /* MJPEG / WEBRTC: no action */ }
             }

@@ -55,6 +55,13 @@ class RtspManager(
     private var server: RtspServer? = null
     private var recorder: RecordingMuxer? = null
     private var rotator: guru.freberg.lenscast.streaming.GlRotator? = null
+
+    // Retained so the video pipeline can be rebuilt in place for a mid-stream rotation
+    // (see [reconfigureVideo]) without tearing down the RTSP server / RTP state / audio.
+    @Volatile private var currentConfig: Config? = null
+    @Volatile private var currentPlan: RtspCameraDriver.Plan? = null
+    @Volatile private var heldPreviewSurface: Surface? = null
+    @Volatile private var heldSidecarSurface: Surface? = null
     @Volatile private var lastRecordedUri: android.net.Uri? = null
 
     private val videoStream = RtpStream(payloadType = 96, ssrc = Random.nextInt(), clockHz = 90_000)
@@ -89,54 +96,12 @@ class RtspManager(
         }
         Log.i(TAG, "Plan: size=${plan.size}, fps=${plan.fpsRange}, high-speed=${plan.highSpeed}, bitrate=${config.videoBitrateBps} bps")
 
-        // Rotation: for standard (≤30 fps) sessions we insert a real EGL/GL rotation stage
-        // (GlRotator) between the camera and the encoder, exactly like the SRT path — so the
-        // RTSP stream is upright in whatever orientation the phone is held, with the correct
-        // dimensions advertised in the SDP (they come from the SPS, which reflects the
-        // encoder's rotated size). glRotation = (360 - deviceRotation) % 360 because the
-        // SurfaceTexture transform already corrects the sensor mount (see SrtManager for the
-        // full derivation — sensorOrientation cancels).
-        //
-        // High-speed sessions (60/120/240 fps) use a constrained Camera2 path that only
-        // accepts MediaCodec/preview Surfaces, NOT a SurfaceTexture-backed one, so GL
-        // rotation can't be inserted there. Those fall back to the previous behaviour:
-        // encode sensor-native landscape and emit KEY_ROTATION as a hint for decoders that
-        // honour it, otherwise rotate at the receiver.
-        val useGlRotation = !plan.highSpeed
-        val glRotation = (360 - config.deviceRotationDegrees) % 360
-        val portraitOutput = useGlRotation &&
-            (config.deviceRotationDegrees == 0 || config.deviceRotationDegrees == 180)
-        val encoderW = if (portraitOutput) plan.size.height else plan.size.width
-        val encoderH = if (portraitOutput) plan.size.width else plan.size.height
-        // KEY_ROTATION hint only when NOT doing a real GL rotation (high-speed path).
-        val encoderRotation = if (useGlRotation) 0
-            else ((plan.sensorOrientation - config.deviceRotationDegrees) + 360) % 360
-        Log.i(TAG, "Rotation: sensor=${plan.sensorOrientation}° device=${config.deviceRotationDegrees}° " +
-            "highSpeed=${plan.highSpeed} → ${if (useGlRotation) "GL rotate $glRotation° to ${encoderW}x$encoderH" else "KEY_ROTATION $encoderRotation° (receiver-side)"}")
-
-        val ve = H264Encoder(
-            width = encoderW,
-            height = encoderH,
-            frameRate = plan.fpsRange.upper,
-            bitrateBps = config.videoBitrateBps,
-            rotationDegrees = encoderRotation,
-        ).also { videoEncoder = it }
-        val encoderInputSurface = ve.prepare()
-
-        // Standard session → camera feeds the rotator, rotator draws into the encoder. High-
-        // speed → camera feeds the encoder directly (no GL stage).
-        val cameraTargetSurface = if (useGlRotation) {
-            guru.freberg.lenscast.streaming.GlRotator(
-                encoderSurface = encoderInputSurface,
-                encoderWidth = encoderW,
-                encoderHeight = encoderH,
-                cameraBufferWidth = plan.size.width,
-                cameraBufferHeight = plan.size.height,
-                rotationDegrees = glRotation,
-            ).also { rotator = it }.cameraSurface
-        } else {
-            encoderInputSurface
-        }
+        currentConfig = config
+        currentPlan = plan
+        heldPreviewSurface = previewSurface
+        heldSidecarSurface = sidecarSurface
+        configuredBitrate = config.videoBitrateBps
+        currentBitrate = config.videoBitrateBps
 
         // Set up local recording before encoders start so we don't miss SPS/PPS arrival.
         if (config.recordLocally) {
@@ -144,28 +109,6 @@ class RtspManager(
             if (recorder == null) {
                 Log.w(TAG, "Local recording requested but MediaStore insert failed; stream continues without recording")
             }
-        }
-
-        ve.start { nal, ptsUs, isKey ->
-            // Capture SPS/PPS for the muxer the moment they're available — the encoder
-            // exposes them via parameterSets after the first config callback, which is
-            // delivered before any VCL NAL.
-            val rec = recorder
-            if (rec != null) {
-                val ps = ve.parameterSets
-                if (ps != null) rec.addVideoTrack(encoderW, encoderH, ps.sps, ps.pps)
-                val nalType = nal[0].toInt() and 0x1F
-                if (nalType in 1..5) rec.writeVideo(nal, ptsUs, isKey)
-            }
-
-            val ts = videoStream.timestampFromUs(ptsUs)
-            val nalType = nal[0].toInt() and 0x1F
-            // SPS/PPS NALs do not advance frames; mark non-VCL with no marker, VCL last NAL gets marker.
-            val markerOnLast = nalType in 1..5
-            val packets = H264RtpPacketizer.packetize(videoStream, nal, ts, markerOnLast = markerOnLast)
-            if (activeSinks.isEmpty()) return@start
-            for (sink in activeSinks) for (p in packets) sink.sendVideo(p)
-            if (isKey) Log.v(TAG, "Sent IDR (${packets.size} pkts, ${nal.size}B NAL) to ${activeSinks.size} client(s)")
         }
 
         if (config.audioEnabled) {
@@ -191,7 +134,7 @@ class RtspManager(
             }
         }
 
-        camDriver.start(plan, cameraTargetSurface, previewSurface, sidecarSurface)
+        startVideoPipeline(config.deviceRotationDegrees)
 
         val srv = RtspServer(
             config.port,
@@ -202,11 +145,144 @@ class RtspManager(
         ).also { it.start() }
         server = srv
 
-        configuredBitrate = config.videoBitrateBps
-        currentBitrate = config.videoBitrateBps
         startAdaptiveLoop()
 
         return plan
+    }
+
+    /**
+     * Build the camera → (GL rotator) → H.264 encoder chain for [deviceRotationDegrees] and
+     * (re)start the Camera2 session, wiring the encoder's NALs into the RTP video stream (and
+     * local recording if active). Used by both [start] and the seamless [reconfigureVideo];
+     * the RTSP server, RTP stream state, sinks, and audio are untouched.
+     */
+    private suspend fun startVideoPipeline(deviceRotationDegrees: Int) {
+        val plan = currentPlan ?: return
+        val config = currentConfig ?: return
+        val cam = camera ?: return
+
+        // Rotation: for standard (≤30 fps) sessions we insert a real EGL/GL rotation stage
+        // (GlRotator) between the camera and the encoder, exactly like the SRT path — so the
+        // RTSP stream is upright in whatever orientation the phone is held, with the correct
+        // dimensions advertised in the SDP (they come from the SPS, which reflects the
+        // encoder's rotated size). glRotation = (360 - deviceRotation) % 360 because the
+        // SurfaceTexture transform already corrects the sensor mount (see SrtManager for the
+        // full derivation — sensorOrientation cancels).
+        //
+        // High-speed sessions (60/120/240 fps) use a constrained Camera2 path that only
+        // accepts MediaCodec/preview Surfaces, NOT a SurfaceTexture-backed one, so GL
+        // rotation can't be inserted there. Those fall back to the previous behaviour:
+        // encode sensor-native landscape and emit KEY_ROTATION as a hint for decoders that
+        // honour it, otherwise rotate at the receiver.
+        val useGlRotation = !plan.highSpeed
+        val glRotation = (360 - deviceRotationDegrees) % 360
+        val portraitOutput = useGlRotation &&
+            (deviceRotationDegrees == 0 || deviceRotationDegrees == 180)
+        val encoderW = if (portraitOutput) plan.size.height else plan.size.width
+        val encoderH = if (portraitOutput) plan.size.width else plan.size.height
+        // KEY_ROTATION hint only when NOT doing a real GL rotation (high-speed path).
+        val encoderRotation = if (useGlRotation) 0
+            else ((plan.sensorOrientation - deviceRotationDegrees) + 360) % 360
+        Log.i(TAG, "Rotation: sensor=${plan.sensorOrientation}° device=$deviceRotationDegrees° " +
+            "highSpeed=${plan.highSpeed} → ${if (useGlRotation) "GL rotate $glRotation° to ${encoderW}x$encoderH" else "KEY_ROTATION $encoderRotation° (receiver-side)"}")
+
+        // Start the new encoder at the current (possibly adaptively-lowered) bitrate so a
+        // rotation doesn't snap the picture quality back to the ceiling.
+        val startBitrate = if (currentBitrate > 0) currentBitrate else config.videoBitrateBps
+        val ve = H264Encoder(
+            width = encoderW,
+            height = encoderH,
+            frameRate = plan.fpsRange.upper,
+            bitrateBps = startBitrate,
+            rotationDegrees = encoderRotation,
+        ).also { videoEncoder = it }
+        val encoderInputSurface = ve.prepare()
+
+        // Standard session → camera feeds the rotator, rotator draws into the encoder. High-
+        // speed → camera feeds the encoder directly (no GL stage).
+        val cameraTargetSurface = if (useGlRotation) {
+            guru.freberg.lenscast.streaming.GlRotator(
+                encoderSurface = encoderInputSurface,
+                encoderWidth = encoderW,
+                encoderHeight = encoderH,
+                cameraBufferWidth = plan.size.width,
+                cameraBufferHeight = plan.size.height,
+                rotationDegrees = glRotation,
+            ).also { rotator = it }.cameraSurface
+        } else {
+            encoderInputSurface
+        }
+
+        ve.start { nal, ptsUs, isKey ->
+            // Capture SPS/PPS for the muxer the moment they're available — the encoder
+            // exposes them via parameterSets after the first config callback, which is
+            // delivered before any VCL NAL.
+            val rec = recorder
+            if (rec != null) {
+                val ps = ve.parameterSets
+                if (ps != null) rec.addVideoTrack(encoderW, encoderH, ps.sps, ps.pps)
+                val nalType = nal[0].toInt() and 0x1F
+                if (nalType in 1..5) rec.writeVideo(nal, ptsUs, isKey)
+            }
+
+            val ts = videoStream.timestampFromUs(ptsUs)
+            val nalType = nal[0].toInt() and 0x1F
+            // SPS/PPS NALs do not advance frames; mark non-VCL with no marker, VCL last NAL gets marker.
+            val markerOnLast = nalType in 1..5
+            val packets = H264RtpPacketizer.packetize(videoStream, nal, ts, markerOnLast = markerOnLast)
+            if (activeSinks.isEmpty()) return@start
+            for (sink in activeSinks) for (p in packets) sink.sendVideo(p)
+            if (isKey) Log.v(TAG, "Sent IDR (${packets.size} pkts, ${nal.size}B NAL) to ${activeSinks.size} client(s)")
+        }
+
+        cam.start(plan, cameraTargetSurface, heldPreviewSurface, heldSidecarSurface)
+        // Force an IDR so a freshly-(re)built encoder hands connected clients a decodable
+        // frame (with the new SPS) immediately rather than after the natural GOP.
+        try { videoEncoder?.requestKeyframe() } catch (_: Throwable) {}
+    }
+
+    /**
+     * Rotate the RTSP stream mid-session without dropping connected clients. Rebuilds only the
+     * camera + GL rotator + video encoder; the RTSP server, the client's RTSP/RTP session, the
+     * RTP sequence/SSRC state, and audio all keep running. The new encoder's SPS/PPS ship
+     * in-band on the forced keyframe, so a client re-initialises its decoder inline. Video RTP
+     * timestamps stay continuous because the Camera2 input-surface PTS is the monotonic system
+     * clock, unaffected by the encoder swap.
+     *
+     * Returns true if it handled the rotation; false means the caller should fall back to a
+     * full restart. We bail to a restart in two cases the in-place swap can't serve cleanly:
+     *  - High-speed sessions never GL-rotate (return true = no-op; orientation is fixed).
+     *  - Local recording is active: MediaMuxer can't change a track's dimensions mid-file, so
+     *    a portrait↔landscape change needs a fresh file (return false).
+     */
+    suspend fun reconfigureVideo(deviceRotationDegrees: Int): Boolean {
+        val plan = currentPlan ?: return false
+        val config = currentConfig ?: return false
+        if (camera == null) return false
+        if (plan.highSpeed) return true            // landscape-only; nothing to rotate
+        if (recorder != null) return false         // can't change MP4 track dims mid-file
+        if (config.deviceRotationDegrees == deviceRotationDegrees) return true
+        // RTSP clients fix their decoder dimensions from the SDP at SETUP and do NOT re-init
+        // on an in-band SPS change (unlike MPEG-TS/SRT). So an aspect-changing rotation
+        // (portrait↔landscape, i.e. the encoded resolution flips) can't be served in-place —
+        // it needs a re-DESCRIBE, i.e. a full restart so the client reconnects with the new
+        // SDP. Only same-aspect rotations (e.g. 180° flips) keep the resolution and can be
+        // swapped seamlessly.
+        val oldPortrait = config.deviceRotationDegrees == 0 || config.deviceRotationDegrees == 180
+        val newPortrait = deviceRotationDegrees == 0 || deviceRotationDegrees == 180
+        if (oldPortrait != newPortrait) return false
+        Log.i(TAG, "Seamless RTSP rotation → device=$deviceRotationDegrees")
+        // Tear down video only. Camera first so it stops feeding the rotator's SurfaceTexture
+        // before we release the GL context.
+        try { camera?.stop() } catch (_: Throwable) {}
+        try { rotator?.release() } catch (_: Throwable) {}
+        rotator = null
+        try { videoEncoder?.stop() } catch (_: Throwable) {}
+        try { videoEncoder?.shutdown() } catch (_: Throwable) {}
+        videoEncoder = null
+        currentConfig = config.copy(deviceRotationDegrees = deviceRotationDegrees)
+        startVideoPipeline(deviceRotationDegrees)
+        return true
     }
 
     /**
@@ -301,6 +377,10 @@ class RtspManager(
         // Finalise the MP4 only after the encoders have stopped feeding samples.
         lastRecordedUri = try { recorder?.stop() } catch (_: Throwable) { null }
         recorder = null
+        currentConfig = null
+        currentPlan = null
+        heldPreviewSurface = null
+        heldSidecarSurface = null
     }
 
     /** Uri of the last completed MP4 (after the most recent stop), or null if none. */
