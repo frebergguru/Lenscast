@@ -54,6 +54,7 @@ class RtspManager(
     private var camera: RtspCameraDriver? = null
     private var server: RtspServer? = null
     private var recorder: RecordingMuxer? = null
+    private var rotator: guru.freberg.lenscast.streaming.GlRotator? = null
     @Volatile private var lastRecordedUri: android.net.Uri? = null
 
     private val videoStream = RtpStream(payloadType = 96, ssrc = Random.nextInt(), clockHz = 90_000)
@@ -88,26 +89,54 @@ class RtspManager(
         }
         Log.i(TAG, "Plan: size=${plan.size}, fps=${plan.fpsRange}, high-speed=${plan.highSpeed}, bitrate=${config.videoBitrateBps} bps")
 
-        // RTSP video is encoded in the sensor's native (landscape) orientation. Rotating
-        // the frame inside a Compose-driven GL pipeline interacts unpredictably with
-        // SurfaceTexture transforms across Camera2 vendors, so we stream as-is and
-        // recommend OBS-side rotation. See Docs/Roadmap.md for the trade-off.
-        val encoderRotation = ((plan.sensorOrientation - config.deviceRotationDegrees) + 360) % 360
-        Log.i(TAG, "Sensor orientation: ${plan.sensorOrientation}°, device: ${config.deviceRotationDegrees}°, " +
-            "would-need rotation ${encoderRotation}° (not applied — rotate at the receiver)")
+        // Rotation: for standard (≤30 fps) sessions we insert a real EGL/GL rotation stage
+        // (GlRotator) between the camera and the encoder, exactly like the SRT path — so the
+        // RTSP stream is upright in whatever orientation the phone is held, with the correct
+        // dimensions advertised in the SDP (they come from the SPS, which reflects the
+        // encoder's rotated size). glRotation = (360 - deviceRotation) % 360 because the
+        // SurfaceTexture transform already corrects the sensor mount (see SrtManager for the
+        // full derivation — sensorOrientation cancels).
+        //
+        // High-speed sessions (60/120/240 fps) use a constrained Camera2 path that only
+        // accepts MediaCodec/preview Surfaces, NOT a SurfaceTexture-backed one, so GL
+        // rotation can't be inserted there. Those fall back to the previous behaviour:
+        // encode sensor-native landscape and emit KEY_ROTATION as a hint for decoders that
+        // honour it, otherwise rotate at the receiver.
+        val useGlRotation = !plan.highSpeed
+        val glRotation = (360 - config.deviceRotationDegrees) % 360
+        val portraitOutput = useGlRotation &&
+            (config.deviceRotationDegrees == 0 || config.deviceRotationDegrees == 180)
+        val encoderW = if (portraitOutput) plan.size.height else plan.size.width
+        val encoderH = if (portraitOutput) plan.size.width else plan.size.height
+        // KEY_ROTATION hint only when NOT doing a real GL rotation (high-speed path).
+        val encoderRotation = if (useGlRotation) 0
+            else ((plan.sensorOrientation - config.deviceRotationDegrees) + 360) % 360
+        Log.i(TAG, "Rotation: sensor=${plan.sensorOrientation}° device=${config.deviceRotationDegrees}° " +
+            "highSpeed=${plan.highSpeed} → ${if (useGlRotation) "GL rotate $glRotation° to ${encoderW}x$encoderH" else "KEY_ROTATION $encoderRotation° (receiver-side)"}")
 
         val ve = H264Encoder(
-            width = plan.size.width,
-            height = plan.size.height,
+            width = encoderW,
+            height = encoderH,
             frameRate = plan.fpsRange.upper,
             bitrateBps = config.videoBitrateBps,
-            // Keep KEY_ROTATION metadata as a *hint* for decoders that honour it. Most
-            // live-stream decoders don't, so OBS-side rotation is still recommended.
             rotationDegrees = encoderRotation,
         ).also { videoEncoder = it }
         val encoderInputSurface = ve.prepare()
 
-        val cameraTargetSurface = encoderInputSurface
+        // Standard session → camera feeds the rotator, rotator draws into the encoder. High-
+        // speed → camera feeds the encoder directly (no GL stage).
+        val cameraTargetSurface = if (useGlRotation) {
+            guru.freberg.lenscast.streaming.GlRotator(
+                encoderSurface = encoderInputSurface,
+                encoderWidth = encoderW,
+                encoderHeight = encoderH,
+                cameraBufferWidth = plan.size.width,
+                cameraBufferHeight = plan.size.height,
+                rotationDegrees = glRotation,
+            ).also { rotator = it }.cameraSurface
+        } else {
+            encoderInputSurface
+        }
 
         // Set up local recording before encoders start so we don't miss SPS/PPS arrival.
         if (config.recordLocally) {
@@ -124,7 +153,7 @@ class RtspManager(
             val rec = recorder
             if (rec != null) {
                 val ps = ve.parameterSets
-                if (ps != null) rec.addVideoTrack(plan.size.width, plan.size.height, ps.sps, ps.pps)
+                if (ps != null) rec.addVideoTrack(encoderW, encoderH, ps.sps, ps.pps)
                 val nalType = nal[0].toInt() and 0x1F
                 if (nalType in 1..5) rec.writeVideo(nal, ptsUs, isKey)
             }
@@ -259,6 +288,9 @@ class RtspManager(
         server = null
         try { camera?.stop() } catch (_: Throwable) {}
         camera = null
+        // Release the GL rotator after the camera stops feeding its SurfaceTexture.
+        try { rotator?.release() } catch (_: Throwable) {}
+        rotator = null
         try { videoEncoder?.stop() } catch (_: Throwable) {}
         try { videoEncoder?.shutdown() } catch (_: Throwable) {}
         videoEncoder = null
