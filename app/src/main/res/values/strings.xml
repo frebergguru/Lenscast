@@ -20,7 +20,7 @@
     <string name="card_connection_usb_hint">Run on your PC first:</string>
     <string name="card_connection_no_wifi">Not connected to Wi-Fi</string>
     <string name="card_connection_obs_hint">In OBS: Add → Media Source → uncheck \"Local File\" → paste URL above</string>
-    <string name="card_connection_srt_low_latency_hint">Most receivers buffer ~5 s of input by default. For real-time playback, launch ffplay with low-latency flags (or enable VLC\'s Low Delay / OBS\'s Low Latency option).</string>
+    <string name="card_connection_srt_low_latency_hint">SRT itself is real-time; the lag you may see is the receiver\'s default MPEG-TS buffer. In OBS Media Source set Network Buffering to 0.1 MB and uncheck \"Restart playback when source becomes active\". For ffplay, prepend the flags below.</string>
     <string name="card_connection_audio">Audio (PCM-16LE WAV)</string>
     <string name="card_connection_web_control">Web control panel</string>
 

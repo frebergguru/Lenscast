@@ -224,9 +224,11 @@ data class Settings(
      * SRT ARQ latency window in milliseconds. Controls how far back the receiver
      * can request retransmits. 120 ms is the libsrt default; 300 ms is safer on
      * cellular uplinks. Lower = lower glass-to-glass delay at the cost of more
-     * dropped frames under packet loss.
+     * dropped frames under packet loss. 200 ms is a LAN-friendly default that
+     * keeps OBS Media Source perceived lag low — receivers can override per
+     * connection via `?latency=N` in the SRT URL.
      */
-    val srtLatencyMs: Int = 500,
+    val srtLatencyMs: Int = 200,
     /**
      * Optional `streamid` for the listener to route the connection. The CALLER
      * sends it on connect; LISTENER-side filtering is the receiver's job.
