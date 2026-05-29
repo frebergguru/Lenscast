@@ -859,11 +859,16 @@ class StreamingService : LifecycleService() {
             }
         }
 
-        override fun exportSettingsJson(): String = SettingsCodec.toJson(_status.value.settings)
+        // Served over the LAN via /export — omit credentials so a backup pulled by any host
+        // (or a browser the user is tricked into pointing here) can't harvest them. The
+        // on-device file export in the Settings sheet keeps secrets for a true backup.
+        override fun exportSettingsJson(): String =
+            SettingsCodec.toJson(_status.value.settings, includeSecrets = false)
 
         override fun importSettingsJson(body: String): Boolean {
             if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
-            val parsed = SettingsCodec.fromJson(body) ?: return false
+            // Pass current settings so a redacted import keeps the existing credentials.
+            val parsed = SettingsCodec.fromJson(body, _status.value.settings) ?: return false
             val repo = SettingsRepository(this@StreamingService)
             lifecycleScope.launch {
                 repo.replace(parsed)
@@ -1015,7 +1020,9 @@ class StreamingService : LifecycleService() {
                 """"srtMode":"${lower(s.srtMode)}",""" +
                 """"srtHost":"${jsonEscape(s.srtHost)}",""" +
                 """"srtPort":${s.srtPort},""" +
-                """"srtPassphrase":"${jsonEscape(s.srtPassphrase)}",""" +
+                // Passphrase intentionally not echoed — the panel can set it but never reads
+                // it back, so the LAN /status poll can't leak it. Empty = "leave unchanged".
+                """"srtPassphrase":"",""" +
                 """"srtLatencyMs":${s.srtLatencyMs},""" +
                 """"srtStreamId":"${jsonEscape(s.srtStreamId)}",""" +
                 // RIST transport
@@ -1023,7 +1030,7 @@ class StreamingService : LifecycleService() {
                 """"ristHost":"${jsonEscape(s.ristHost)}",""" +
                 """"ristPort":${s.ristPort},""" +
                 """"ristProfile":"${lower(s.ristProfile)}",""" +
-                """"ristEncryptionPassphrase":"${jsonEscape(s.ristEncryptionPassphrase)}",""" +
+                """"ristEncryptionPassphrase":"",""" +
                 """"ristBufferMs":${s.ristBufferMs},""" +
                 """"ristAesKeyBits":${s.ristAesKeyBits},""" +
                 // presets — name + the streaming-shape fields the app preset carries

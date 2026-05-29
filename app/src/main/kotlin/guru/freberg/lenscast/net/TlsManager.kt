@@ -155,7 +155,9 @@ class TlsManager(private val context: Context) {
     private fun buildSelfSignedCertificate(keyPair: KeyPair, ips: List<String>): X509Certificate {
         val notBefore = Date()
         val notAfter = Date(notBefore.time + 100L * 365L * 24L * 60L * 60L * 1000L) // ~100y
-        val serial = BigInteger.valueOf(System.currentTimeMillis())
+        // ≥64 bits of entropy (CA/Browser Forum baseline) — a time-based serial is guessable
+        // and can collide across two certs issued in the same millisecond.
+        val serial = BigInteger(159, java.security.SecureRandom())
         val name = X500Name("CN=Lenscast, O=Lenscast")
         val builder = JcaX509v3CertificateBuilder(name, serial, notBefore, notAfter, name, keyPair.public)
         val sanEntries = buildList {

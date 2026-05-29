@@ -18,7 +18,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.random.Random
+import java.security.SecureRandom
 
 /**
  * Minimal multi-client RTSP/1.0 server. The streaming path is **TCP-interleaved** —
@@ -229,8 +229,11 @@ class RtspSession(
         }
     }
 
-    private val sessionId: String = (Random.nextLong(1_000_000_000L, 9_999_999_999L)).toString()
-    private val sessionNumeric: Long = sessionId.toLong()
+    // Session id is the only token guarding SETUP/PLAY/PAUSE/TEARDOWN against a foreign
+    // client on the LAN. SecureRandom (not kotlin.random) so it isn't predictable from
+    // observed ids; full 63-bit space instead of a 10-digit range.
+    private val sessionNumeric: Long = SecureRandom().nextLong() and Long.MAX_VALUE
+    private val sessionId: String = sessionNumeric.toString()
     private var state = State.INIT
     private var videoTransport: StreamTransport? = null
     private var audioTransport: StreamTransport? = null
@@ -343,6 +346,9 @@ class RtspSession(
         val version = parts[2]
         val headers = mutableMapOf<String, String>()
         while (true) {
+            // Cap the header count so a client can't stream headers forever and exhaust the
+            // map / heap before the (unauthenticated) request is even dispatched.
+            if (headers.size >= MAX_HEADERS) return null
             val l = readAsciiLine(input) ?: break
             if (l.isEmpty()) break
             val idx = l.indexOf(':')
@@ -365,7 +371,9 @@ class RtspSession(
         return Request(method, uri, version, headers)
     }
 
-    /** Reads bytes up to and including \n, returns the line minus trailing \r\n. */
+    /** Reads bytes up to and including \n, returns the line minus trailing \r\n. Caps the
+     *  line at [MAX_LINE_BYTES]: without it a client that never sends a newline grows the
+     *  StringBuilder unboundedly (OOM the foreground service). */
     private fun readAsciiLine(input: java.io.InputStream): String? {
         val sb = StringBuilder(64)
         while (true) {
@@ -375,6 +383,7 @@ class RtspSession(
                 if (sb.isNotEmpty() && sb[sb.length - 1] == '\r') sb.setLength(sb.length - 1)
                 return sb.toString()
             }
+            if (sb.length >= MAX_LINE_BYTES) throw java.io.IOException("RTSP line too long")
             sb.append(b.toChar())
         }
     }
@@ -467,7 +476,8 @@ class RtspSession(
         } catch (_: Throwable) { return false }
         val colon = decoded.indexOf(':')
         if (colon < 0) return false
-        return decoded.substring(0, colon) == authUsername && decoded.substring(colon + 1) == authPassword
+        return guru.freberg.lenscast.net.AuthUtils.constantTimeEquals(decoded.substring(0, colon), authUsername) &&
+            guru.freberg.lenscast.net.AuthUtils.constantTimeEquals(decoded.substring(colon + 1), authPassword)
     }
 
     private fun respondUnauthorized(req: Request) {
@@ -633,12 +643,17 @@ class RtspSession(
     private fun startUdpRtcpReader(transport: StreamTransport?) {
         if (transport !is StreamTransport.Udp) return
         val sock = transport.rtcpSocket
+        val expectedSource = transport.clientHost
         val t = Thread({
             val buf = ByteArray(2048)
             val packet = java.net.DatagramPacket(buf, buf.size)
             while (!sock.isClosed && state == State.PLAYING) {
                 try {
                     sock.receive(packet)
+                    // Only trust RTCP from the client we did SETUP with. A spoofed RR from any
+                    // other source could otherwise drive the adaptive-bitrate loop (e.g. pin
+                    // the encoder to its floor by faking 100% packet loss).
+                    if (packet.address != expectedSource) continue
                     var o = packet.offset
                     val end = packet.offset + packet.length
                     while (o + 4 <= end) {
@@ -829,5 +844,9 @@ class RtspSession(
         // We deliberately do NOT claim play.scale / play.speed / setup.* we can't honour,
         // so a Require for those correctly draws a 551.
         private val SUPPORTED_FEATURES = listOf("play.basic")
+        /** Hard caps on the request parser so a malformed/hostile peer can't exhaust heap
+         *  before the request is dispatched. RTSP request lines and headers are short. */
+        private const val MAX_LINE_BYTES = 8 * 1024
+        private const val MAX_HEADERS = 100
     }
 }

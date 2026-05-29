@@ -151,40 +151,66 @@ class SftpUploader(private val context: Context) {
 
     /**
      * Builds a HostKeyVerifier:
-     *   - if the user pinned a fingerprint, only accept hosts whose SHA-256 (or MD5) matches;
-     *   - otherwise accept any key (TOFU). LAN-only deployments are the target; users who
-     *     care about MITM are expected to pin.
+     *   - if the user pinned a fingerprint, only accept hosts whose SHA-256 matches (base64
+     *     `SHA256:` form or hex). MD5/SHA-1 are no longer accepted — they're collision-prone,
+     *     so a pin against them could be satisfied by a forged key.
+     *   - otherwise trust-on-first-use: record the key the first time a host is seen and
+     *     reject if it ever changes. This catches a later MITM, unlike the old accept-any
+     *     default which silently leaked the SSH password to whoever answered the handshake.
      */
     private fun verifierFor(pin: String): HostKeyVerifier {
         val target = normalizePin(pin)
         return object : HostKeyVerifier {
             override fun verify(hostname: String?, port: Int, key: PublicKey): Boolean {
-                if (target.isEmpty()) return true
                 val sha256 = SecurityUtils.getFingerprint(key) // "SHA256:..." (base64)
-                val sha256Hex = hashKeyHex(key, "SHA-256")
-                val md5Hex = hashKeyHex(key, "MD5")
-                return target == sha256.substringAfter(':').lowercase()
-                    || target == sha256Hex
-                    || target == md5Hex
+                if (target.isNotEmpty()) {
+                    return target == sha256.substringAfter(':').lowercase() ||
+                        target == hashKeyHex(key, "SHA-256")
+                }
+                return tofuVerify(hostname, port, sha256)
             }
             override fun findExistingAlgorithms(hostname: String?, port: Int): List<String> = emptyList()
         }
     }
 
     /**
-     * Normalise a pasted host-key fingerprint for comparison. Strips an optional algorithm
-     * prefix (`SHA256:`/`SHA1:`/`MD5:`) and any colon byte-separators, lower-casing the rest.
-     * Critically, a bare colon-separated hex fingerprint (`aa:bb:cc:…`, the classic
-     * `ssh-keygen` MD5 form without a prefix) has NO prefix, so we must not blindly drop
-     * everything before the first colon — the old `substringAfter(':')` did exactly that and
-     * silently mangled the first byte, making such pins never match.
+     * Trust-on-first-use against a private known-hosts file. Records `host:port fingerprint`
+     * the first time a host is seen (and accepts), then requires the same fingerprint on every
+     * later connect. The residual first-connect MITM is inherent to TOFU; pin a fingerprint in
+     * Settings to remove it.
+     */
+    private fun tofuVerify(hostname: String?, port: Int, fingerprint: String): Boolean {
+        val id = "${hostname ?: "?"}:$port"
+        val file = File(context.filesDir, "sftp_known_hosts")
+        val known: Map<String, String> = try {
+            if (file.exists()) file.readLines().mapNotNull { line ->
+                val sp = line.indexOf(' ')
+                if (sp <= 0) null else line.substring(0, sp) to line.substring(sp + 1).trim()
+            }.toMap() else emptyMap()
+        } catch (_: Throwable) { emptyMap() }
+        val seen = known[id]
+        return when {
+            seen == null -> {
+                try { file.appendText("$id $fingerprint\n") } catch (_: Throwable) {}
+                Log.i(TAG, "SFTP TOFU: pinned $id")
+                true
+            }
+            seen == fingerprint -> true
+            else -> {
+                Log.w(TAG, "SFTP host key for $id changed since first connect; rejecting")
+                false
+            }
+        }
+    }
+
+    /**
+     * Normalise a pasted SHA-256 host-key fingerprint for comparison. Strips an optional
+     * `SHA256:` prefix and any colon byte-separators, lower-casing the rest, so both the
+     * OpenSSH base64 form and a colon-separated hex form compare cleanly.
      */
     private fun normalizePin(pin: String): String {
         var p = pin.trim()
-        val lower = p.lowercase()
-        for (prefix in listOf("sha256:", "sha1:", "md5:")) {
-            if (lower.startsWith(prefix)) { p = p.substring(prefix.length); break }
-        }
+        if (p.lowercase().startsWith("sha256:")) p = p.substring("sha256:".length)
         // Hex fingerprints use ':' as a byte separator; base64 SHA-256 contains no ':' so
         // this is a no-op there.
         return p.trim().lowercase().replace(":", "")

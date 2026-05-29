@@ -41,7 +41,7 @@ class SettingsRepository(private val context: Context) {
             prefs[K_WB] = next.whiteBalance.ordinal
             prefs[K_AB] = next.antiBanding.ordinal
             prefs[K_USERNAME] = next.streamUsername.ifBlank { "Lenscast" }
-            prefs[K_PASSWORD] = next.streamPassword
+            prefs[K_PASSWORD] = SecretCipher.seal(next.streamPassword)
             prefs[K_AUTO_START] = next.autoStart
             prefs[K_RTSP_BITRATE] = next.rtspBitrateKbps.coerceIn(0, 50_000)
             prefs[K_BLANK_PREVIEW] = next.blankPreview
@@ -70,7 +70,7 @@ class SettingsRepository(private val context: Context) {
             prefs[K_SFTP_HOST] = next.sftpHost.trim().take(255)
             prefs[K_SFTP_PORT] = next.sftpPort.coerceIn(1, 65535)
             prefs[K_SFTP_USER] = next.sftpUser.trim().take(120)
-            prefs[K_SFTP_PASSWORD] = next.sftpPassword
+            prefs[K_SFTP_PASSWORD] = SecretCipher.seal(next.sftpPassword)
             prefs[K_SFTP_DIR] = next.sftpRemoteDir.trim().take(255)
             prefs[K_SFTP_FP] = next.sftpHostKeyFingerprint.trim().take(120)
             prefs[K_LANG] = next.languageTag.trim().take(16)
@@ -78,14 +78,14 @@ class SettingsRepository(private val context: Context) {
             prefs[K_SRT_MODE] = next.srtMode.ordinal
             prefs[K_SRT_HOST] = next.srtHost.trim().take(255)
             prefs[K_SRT_PORT] = next.srtPort.coerceIn(1, 65535)
-            prefs[K_SRT_PASS] = next.srtPassphrase.take(79)
+            prefs[K_SRT_PASS] = SecretCipher.seal(next.srtPassphrase.take(79))
             prefs[K_SRT_LATENCY] = next.srtLatencyMs.coerceIn(20, 8000)
             prefs[K_SRT_STREAMID] = next.srtStreamId.trim().take(512)
             prefs[K_RIST_MODE] = next.ristMode.ordinal
             prefs[K_RIST_HOST] = next.ristHost.trim().take(255)
             prefs[K_RIST_PORT] = next.ristPort.coerceIn(1, 65534)
             prefs[K_RIST_PROFILE] = next.ristProfile.ordinal
-            prefs[K_RIST_PASS] = next.ristEncryptionPassphrase.take(79)
+            prefs[K_RIST_PASS] = SecretCipher.seal(next.ristEncryptionPassphrase.take(79))
             prefs[K_RIST_BUFFER] = next.ristBufferMs.coerceIn(20, 8000)
             prefs[K_RIST_AES_BITS] = if (next.ristAesKeyBits == 256) 256 else 128
         }
@@ -107,7 +107,7 @@ class SettingsRepository(private val context: Context) {
         whiteBalance = WhiteBalance.entries.getOrNull(p[K_WB] ?: 0) ?: WhiteBalance.AUTO,
         antiBanding = AntiBanding.entries.getOrNull(p[K_AB] ?: 0) ?: AntiBanding.AUTO,
         streamUsername = (p[K_USERNAME] ?: "Lenscast").ifBlank { "Lenscast" },
-        streamPassword = p[K_PASSWORD] ?: "",
+        streamPassword = SecretCipher.open(p[K_PASSWORD] ?: ""),
         autoStart = p[K_AUTO_START] ?: false,
         rtspBitrateKbps = (p[K_RTSP_BITRATE] ?: 0).coerceIn(0, 50_000),
         blankPreview = p[K_BLANK_PREVIEW] ?: false,
@@ -139,7 +139,7 @@ class SettingsRepository(private val context: Context) {
         sftpHost = (p[K_SFTP_HOST] ?: "").trim(),
         sftpPort = (p[K_SFTP_PORT] ?: 22).coerceIn(1, 65535),
         sftpUser = (p[K_SFTP_USER] ?: "").trim(),
-        sftpPassword = p[K_SFTP_PASSWORD] ?: "",
+        sftpPassword = SecretCipher.open(p[K_SFTP_PASSWORD] ?: ""),
         sftpRemoteDir = (p[K_SFTP_DIR] ?: "").trim(),
         sftpHostKeyFingerprint = (p[K_SFTP_FP] ?: "").trim(),
         languageTag = (p[K_LANG] ?: "").trim(),
@@ -147,14 +147,14 @@ class SettingsRepository(private val context: Context) {
         srtMode = SrtMode.entries.getOrNull(p[K_SRT_MODE] ?: SrtMode.LISTENER.ordinal) ?: SrtMode.LISTENER,
         srtHost = (p[K_SRT_HOST] ?: "").trim(),
         srtPort = (p[K_SRT_PORT] ?: 9710).coerceIn(1, 65535),
-        srtPassphrase = p[K_SRT_PASS] ?: "",
+        srtPassphrase = SecretCipher.open(p[K_SRT_PASS] ?: ""),
         srtLatencyMs = (p[K_SRT_LATENCY] ?: 200).coerceIn(20, 8000),
         srtStreamId = (p[K_SRT_STREAMID] ?: "").trim(),
         ristMode = RistMode.entries.getOrNull(p[K_RIST_MODE] ?: RistMode.LISTENER.ordinal) ?: RistMode.LISTENER,
         ristHost = (p[K_RIST_HOST] ?: "").trim(),
         ristPort = (p[K_RIST_PORT] ?: 5004).coerceIn(1, 65534),
         ristProfile = RistProfile.entries.getOrNull(p[K_RIST_PROFILE] ?: 0) ?: RistProfile.SIMPLE,
-        ristEncryptionPassphrase = p[K_RIST_PASS] ?: "",
+        ristEncryptionPassphrase = SecretCipher.open(p[K_RIST_PASS] ?: ""),
         ristBufferMs = (p[K_RIST_BUFFER] ?: 200).coerceIn(20, 8000),
         ristAesKeyBits = if ((p[K_RIST_AES_BITS] ?: 128) == 256) 256 else 128,
     )

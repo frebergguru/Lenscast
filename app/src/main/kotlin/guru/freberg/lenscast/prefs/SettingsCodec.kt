@@ -17,7 +17,15 @@ object SettingsCodec {
     // block. Reads remain backward-compatible: missing keys fall back to [Settings] defaults.
     private const val VERSION = 3
 
-    fun toJson(s: Settings): String {
+    /**
+     * Serialise [Settings] to JSON. When [includeSecrets] is false the credential fields
+     * (stream/SFTP passwords, SRT/RIST passphrases) are omitted entirely — used for the
+     * network `/export` so a backup pulled over the LAN can't leak them. The on-device file
+     * export keeps secrets (the default) so it's a true backup. Omitting (rather than
+     * blanking) the keys means re-importing a redacted export preserves the existing
+     * secrets, because [fromJson]'s secret fields fall back to the current value.
+     */
+    fun toJson(s: Settings, includeSecrets: Boolean = true): String {
         val o = JSONObject().apply {
             put("version", VERSION)
             put("protocol", s.protocol.name)
@@ -35,7 +43,7 @@ object SettingsCodec {
             put("whiteBalance", s.whiteBalance.name)
             put("antiBanding", s.antiBanding.name)
             put("streamUsername", s.streamUsername)
-            put("streamPassword", s.streamPassword)
+            if (includeSecrets) put("streamPassword", s.streamPassword)
             put("autoStart", s.autoStart)
             put("rtspBitrateKbps", s.rtspBitrateKbps)
             put("blankPreview", s.blankPreview)
@@ -74,7 +82,7 @@ object SettingsCodec {
             put("sftpHost", s.sftpHost)
             put("sftpPort", s.sftpPort)
             put("sftpUser", s.sftpUser)
-            put("sftpPassword", s.sftpPassword)
+            if (includeSecrets) put("sftpPassword", s.sftpPassword)
             put("sftpRemoteDir", s.sftpRemoteDir)
             put("sftpHostKeyFingerprint", s.sftpHostKeyFingerprint)
             put("languageTag", s.languageTag)
@@ -82,14 +90,14 @@ object SettingsCodec {
             put("srtMode", s.srtMode.name)
             put("srtHost", s.srtHost)
             put("srtPort", s.srtPort)
-            put("srtPassphrase", s.srtPassphrase)
+            if (includeSecrets) put("srtPassphrase", s.srtPassphrase)
             put("srtLatencyMs", s.srtLatencyMs)
             put("srtStreamId", s.srtStreamId)
             put("ristMode", s.ristMode.name)
             put("ristHost", s.ristHost)
             put("ristPort", s.ristPort)
             put("ristProfile", s.ristProfile.name)
-            put("ristEncryptionPassphrase", s.ristEncryptionPassphrase)
+            if (includeSecrets) put("ristEncryptionPassphrase", s.ristEncryptionPassphrase)
             put("ristBufferMs", s.ristBufferMs)
             put("ristAesKeyBits", s.ristAesKeyBits)
         }
@@ -101,9 +109,13 @@ object SettingsCodec {
      * malformed JSON. Individual fields fall back to defaults — that's deliberate, so
      * older exports still work after [Settings] grows new fields.
      */
-    fun fromJson(json: String): Settings? {
+    fun fromJson(json: String, current: Settings? = null): Settings? {
         val o = try { JSONObject(json) } catch (_: Throwable) { return null }
         val d = Settings() // defaults — used as fallback for any missing field
+        // Secret fields fall back to the *current* value (not the empty default) when absent,
+        // so importing a redacted export (one produced with includeSecrets=false) keeps the
+        // credentials already stored on the device instead of wiping them.
+        val sec = current ?: d
         return Settings(
             protocol = enumByName(o, "protocol", d.protocol),
             resolution = enumByName(o, "resolution", d.resolution),
@@ -120,7 +132,7 @@ object SettingsCodec {
             whiteBalance = enumByName(o, "whiteBalance", d.whiteBalance),
             antiBanding = enumByName(o, "antiBanding", d.antiBanding),
             streamUsername = o.optString("streamUsername", d.streamUsername).ifBlank { "Lenscast" },
-            streamPassword = o.optString("streamPassword", d.streamPassword),
+            streamPassword = o.optString("streamPassword", sec.streamPassword),
             autoStart = o.optBoolean("autoStart", d.autoStart),
             rtspBitrateKbps = o.optInt("rtspBitrateKbps", d.rtspBitrateKbps).coerceIn(0, 50_000),
             blankPreview = o.optBoolean("blankPreview", d.blankPreview),
@@ -149,7 +161,7 @@ object SettingsCodec {
             sftpHost = o.optString("sftpHost", d.sftpHost).trim().take(255),
             sftpPort = o.optInt("sftpPort", d.sftpPort).coerceIn(1, 65535),
             sftpUser = o.optString("sftpUser", d.sftpUser).trim().take(120),
-            sftpPassword = o.optString("sftpPassword", d.sftpPassword),
+            sftpPassword = o.optString("sftpPassword", sec.sftpPassword),
             sftpRemoteDir = o.optString("sftpRemoteDir", d.sftpRemoteDir).trim().take(255),
             sftpHostKeyFingerprint = o.optString("sftpHostKeyFingerprint", d.sftpHostKeyFingerprint).trim().take(120),
             languageTag = o.optString("languageTag", d.languageTag).trim().take(16),
@@ -157,14 +169,14 @@ object SettingsCodec {
             srtMode = enumByName(o, "srtMode", d.srtMode),
             srtHost = o.optString("srtHost", d.srtHost).trim().take(255),
             srtPort = o.optInt("srtPort", d.srtPort).coerceIn(1, 65535),
-            srtPassphrase = o.optString("srtPassphrase", d.srtPassphrase).take(79),
+            srtPassphrase = o.optString("srtPassphrase", sec.srtPassphrase).take(79),
             srtLatencyMs = o.optInt("srtLatencyMs", d.srtLatencyMs).coerceIn(20, 8000),
             srtStreamId = o.optString("srtStreamId", d.srtStreamId).trim().take(512),
             ristMode = enumByName(o, "ristMode", d.ristMode),
             ristHost = o.optString("ristHost", d.ristHost).trim().take(255),
             ristPort = o.optInt("ristPort", d.ristPort).coerceIn(1, 65534),
             ristProfile = enumByName(o, "ristProfile", d.ristProfile),
-            ristEncryptionPassphrase = o.optString("ristEncryptionPassphrase", d.ristEncryptionPassphrase).take(79),
+            ristEncryptionPassphrase = o.optString("ristEncryptionPassphrase", sec.ristEncryptionPassphrase).take(79),
             ristBufferMs = o.optInt("ristBufferMs", d.ristBufferMs).coerceIn(20, 8000),
             ristAesKeyBits = if (o.optInt("ristAesKeyBits", d.ristAesKeyBits) == 256) 256 else 128,
         )

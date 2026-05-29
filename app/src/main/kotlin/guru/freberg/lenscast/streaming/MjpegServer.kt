@@ -225,7 +225,8 @@ class MjpegServer(
         if (colon < 0) return false
         val user = decoded.substring(0, colon)
         val pwd = decoded.substring(colon + 1)
-        return user == username && pwd == password
+        return guru.freberg.lenscast.net.AuthUtils.constantTimeEquals(user, username) &&
+            guru.freberg.lenscast.net.AuthUtils.constantTimeEquals(pwd, password)
     }
 
     private fun writeUnauthorized(out: OutputStream) {

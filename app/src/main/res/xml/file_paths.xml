@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <files-path name="files" path="." />
+    <!-- Scoped to the crash-report directory only. A FileProvider grant must never expose
+         the whole files/ root (TLS keystore, SFTP known-hosts, DataStore live there). -->
+    <files-path name="diagnostics" path="diagnostics/" />
 </paths>

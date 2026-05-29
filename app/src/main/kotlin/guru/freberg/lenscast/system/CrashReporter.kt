@@ -34,7 +34,13 @@ object CrashReporter {
         }
     }
 
-    fun reportFile(context: Context): File = File(context.filesDir, "lenscast-diagnostics.txt")
+    // Lives in a dedicated `diagnostics/` subdir so the FileProvider can be scoped to exactly
+    // this directory (see res/xml/file_paths.xml) — a Share grant then can't reach siblings in
+    // files/ like the TLS keystore or the SFTP known-hosts file.
+    fun reportFile(context: Context): File {
+        val dir = File(context.filesDir, "diagnostics").apply { mkdirs() }
+        return File(dir, "lenscast-diagnostics.txt")
+    }
 
     private fun writeCrashReport(context: Context, thread: Thread, throwable: Throwable) {
         val ts = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())

@@ -21,6 +21,18 @@ import javax.crypto.spec.SecretKeySpec
  * We implement PBKDF2 by hand on `Mac("HmacSHA256")` rather than via
  * `SecretKeyFactory("PBKDF2WithHmacSHA256")` to avoid the SunJCE char→byte password-encoding
  * ambiguity — librist hashes the raw passphrase bytes, and we feed UTF-8 bytes directly.
+ *
+ * SECURITY LIMITATIONS (inherent to the VSF TR-06-2 scheme — fixing them would break interop,
+ * so they are documented rather than patched):
+ *  - **No integrity/authentication.** AES-CTR is malleable: a network attacker can flip
+ *    ciphertext bits to flip the corresponding plaintext bits, and forged packets decrypt to
+ *    attacker-influenced data undetected. This is confidentiality only, not authenticated
+ *    encryption — do not treat RIST Main PSK as a secure (tamper-proof) transport.
+ *  - **Keystream reuse on GRE-sequence wrap.** The CTR counter is `BE32(greSeq) ‖ 0¹²` under a
+ *    key fixed for the session, so once the 32-bit `greSeq` wraps (≈ a very long stream) the
+ *    same (key, counter) encrypts new plaintext — two ciphertexts under one counter XOR to the
+ *    XOR of plaintexts. A long-lived session should be torn down / re-keyed (new nonce) before
+ *    `greSeq` wraps; the spec provides no in-band re-key.
  */
 class RistCrypto(passphrase: String, val keyBits: Int) {
 

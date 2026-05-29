@@ -368,9 +368,12 @@ class WebControlServer(
             var contentLength = 0
             var contentType = ""
             var authorization: String? = null
+            var originHeader: String? = null
+            var hostHeader: String? = null
             // Drain headers, but capture Content-Length (so we can read the body when the
-            // route needs one), Content-Type (so the WHEP endpoint can reject non-SDP), and
-            // Authorization (Basic auth, when a stream password is configured).
+            // route needs one), Content-Type (so the WHEP endpoint can reject non-SDP),
+            // Authorization (Basic auth, when a stream password is configured), and
+            // Origin/Host (so state-changing routes can reject cross-site browser requests).
             while (true) {
                 val line = reader.readLine() ?: break
                 if (line.isEmpty()) break
@@ -380,6 +383,10 @@ class WebControlServer(
                     contentType = line.substringAfter(':').trim()
                 } else if (line.startsWith("Authorization:", ignoreCase = true)) {
                     authorization = line.substringAfter(':').trim()
+                } else if (line.startsWith("Origin:", ignoreCase = true)) {
+                    originHeader = line.substringAfter(':').trim()
+                } else if (line.startsWith("Host:", ignoreCase = true)) {
+                    hostHeader = line.substringAfter(':').trim()
                 }
             }
             val parts = requestLine.split(' ')
@@ -397,6 +404,21 @@ class WebControlServer(
             val pwd = authPassword()
             if (pwd.isNotEmpty() && method != "OPTIONS" && !isAuthorized(authorization, pwd)) {
                 writeUnauthorized(out)
+                return@withContext
+            }
+
+            // CSRF guard: a state-changing request carrying a cross-origin `Origin` is a
+            // browser being driven by another site (the panel itself is same-origin, and
+            // non-browser clients — OBS, ffmpeg, curl — send no Origin at all). Without this,
+            // any web page the user visits could POST to the LAN control server and flip
+            // settings / start the camera. WHEP egress is meant to be called cross-origin by
+            // players, so those routes are exempt (and still password-gated above).
+            val mutating = method == "POST" || method == "PUT" ||
+                method == "DELETE" || method == "PATCH"
+            val whepRoute = pathOnly == "/whep" || pathOnly.startsWith("/whep/") ||
+                pathOnly == "/webrtc/offer"
+            if (mutating && !whepRoute && !isSameOrigin(originHeader, hostHeader)) {
+                writePlain(out, "403 Forbidden", "cross-origin request rejected")
                 return@withContext
             }
 
@@ -587,6 +609,19 @@ class WebControlServer(
         finally { try { socket.close() } catch (_: Throwable) {} }
     }
 
+    /**
+     * True when the request is safe to act on for a state-changing route: either no `Origin`
+     * header (native clients never send one) or an `Origin` whose authority matches the `Host`
+     * the request was sent to (the same-origin panel). A browser making a cross-site request
+     * always sends an `Origin` that won't match, so it's rejected.
+     */
+    private fun isSameOrigin(origin: String?, host: String?): Boolean {
+        if (origin.isNullOrEmpty() || origin == "null") return true
+        // Strip scheme; compare host:port authority against the Host header.
+        val originAuthority = origin.substringAfter("://", origin)
+        return host != null && originAuthority == host
+    }
+
     private fun queryParam(query: String, key: String): String? {
         if (query.isEmpty()) return null
         for (kv in query.split('&')) {
@@ -607,13 +642,18 @@ class WebControlServer(
         try {
             action()
         } catch (t: Throwable) {
-            body = (t.message ?: "error").toByteArray(Charsets.UTF_8)
+            // Only relay the message of an intentional `error()` (IllegalStateException) — those
+            // are the user-facing strings the panel shows as a toast. Any other exception is an
+            // internal fault; return a generic string and keep the detail in the log so we don't
+            // leak stack/internal state to the client.
+            body = (if (t is IllegalStateException) t.message ?: "error" else "internal error")
+                .toByteArray(Charsets.UTF_8)
+            if (t !is IllegalStateException) Log.w(TAG, "control action failed: ${t.message}")
             status = "503 Service Unavailable"
         }
         val header = ("HTTP/1.0 $status\r\n" +
             "Content-Type: text/plain; charset=utf-8\r\n" +
             "Cache-Control: no-cache\r\n" +
-            "Access-Control-Allow-Origin: *\r\n" +
             "Content-Length: ${body.size}\r\n\r\n").toByteArray(Charsets.US_ASCII)
         try { out.write(header); out.write(body); out.flush() } catch (_: IOException) {}
     }
@@ -772,10 +812,11 @@ class WebControlServer(
 
     private fun writeStatus(out: OutputStream) {
         val body = control.statusJson().toByteArray(Charsets.UTF_8)
+        // No wildcard CORS: /status is same-origin only (the panel polls it from the same
+        // host). Exposing it cross-origin let any web page read the LAN device's live state.
         val header = ("HTTP/1.0 200 OK\r\n" +
             "Content-Type: application/json; charset=utf-8\r\n" +
             "Cache-Control: no-cache\r\n" +
-            "Access-Control-Allow-Origin: *\r\n" +
             "Content-Length: ${body.size}\r\n\r\n").toByteArray(Charsets.US_ASCII)
         try { out.write(header); out.write(body); out.flush() } catch (_: IOException) {}
     }
@@ -2321,7 +2362,8 @@ class WebControlServer(
         if (colon < 0) return false
         val user = decoded.substring(0, colon)
         val pass = decoded.substring(colon + 1)
-        return user == authUsername() && pass == pwd
+        return guru.freberg.lenscast.net.AuthUtils.constantTimeEquals(user, authUsername()) &&
+            guru.freberg.lenscast.net.AuthUtils.constantTimeEquals(pass, pwd)
     }
 
     private fun writeUnauthorized(out: OutputStream) {
@@ -2336,7 +2378,9 @@ class WebControlServer(
 
     companion object {
         private const val TAG = "WebControlServer"
-        /** Upper bound on a request body we'll buffer (SDP offers / settings JSON are tiny). */
-        private const val MAX_BODY_BYTES = 4 * 1024 * 1024
+        /** Upper bound on a request body we'll buffer. SDP offers and the settings-import
+         *  JSON are well under 256 KiB; the cap exists so an unauthenticated client can't
+         *  declare a huge Content-Length and force a multi-MiB allocation per connection. */
+        private const val MAX_BODY_BYTES = 256 * 1024
     }
 }

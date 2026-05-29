@@ -338,7 +338,15 @@ class RistPublisher(
                 sock.receive(dp)
                 val from = dp.socketAddress as? InetSocketAddress
                 if (from != null && peerDataAddr == null) markPeerConnected(from)
-                if (mainProfile) parseInbound(buf, dp.length) else handleRtcp(buf, 0, dp.length)
+                // Only act on feedback from the connected peer. Without this, a single spoofed
+                // UDP datagram could trigger retransmit floods (NACK amplification) or — before
+                // a peer is learned — redirect the stream. Compare by address only: the receiver
+                // may send RTCP from an ephemeral port. (First-packet peer learning in LISTENER
+                // mode is still trust-on-first-use; RIST Simple has no handshake to prevent it.)
+                val peerAddr = peerDataAddr?.address
+                if (peerAddr == null || from == null || from.address == peerAddr) {
+                    if (mainProfile) parseInbound(buf, dp.length) else handleRtcp(buf, 0, dp.length)
+                }
             } catch (_: SocketTimeoutException) {
                 // fall through to the SR cadence check
             } catch (t: Throwable) {
