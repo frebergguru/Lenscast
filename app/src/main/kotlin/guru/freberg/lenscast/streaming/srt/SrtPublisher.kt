@@ -228,10 +228,17 @@ class SrtPublisher(
         // eviction drops the OLDEST first, which is the keyframe. The receiver then
         // gets only P-frames at start and floods the log with "non-existing PPS".
         if (currentState != State.CONNECTED) return
-        if (!queue.offer(tsPacket)) {
-            queue.poll()
-            queue.offer(tsPacket)
-        }
+        if (queue.offer(tsPacket)) return
+        // Queue is full. Block briefly (back-pressure up to muxer → encoder → camera,
+        // so MediaCodec drops a frame at the source rather than dropping a single TS
+        // packet mid-PES which would corrupt an in-flight access unit on the wire).
+        // 500 ms is long enough to ride out a Wi-Fi micro-stall, short enough that an
+        // actually-broken link doesn't hang the encoder thread.
+        try {
+            if (!queue.offer(tsPacket, 500, TimeUnit.MILLISECONDS)) {
+                Log.w(TAG, "SRT queue full for 500ms — link slower than encode rate, dropping packet")
+            }
+        } catch (_: InterruptedException) { /* closing */ }
     }
 
     fun stop() {
