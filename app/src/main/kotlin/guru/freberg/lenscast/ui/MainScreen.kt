@@ -109,6 +109,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 private data class CamBoxState(
     val service: StreamingService?,
     val lens: guru.freberg.lenscast.prefs.Lens,
+    val mirror: Boolean,
     val protocol: guru.freberg.lenscast.prefs.Protocol,
     val streaming: Boolean,
     val plannedSize: android.util.Size?,
@@ -359,6 +360,7 @@ fun MainScreen(
             CamBoxState(
                 service = service,
                 lens = settings.lens,
+                mirror = settings.mirror,
                 protocol = settings.protocol,
                 streaming = streaming,
                 plannedSize = rtspPlannedSize,
@@ -451,6 +453,8 @@ fun MainScreen(
                     PreviewSurface(
                         service = st.service,
                         protocol = st.protocol,
+                        lens = st.lens,
+                        mirror = st.mirror,
                         streaming = st.streaming,
                         plannedSize = st.plannedSize,
                         modifier = Modifier.fillMaxSize(),

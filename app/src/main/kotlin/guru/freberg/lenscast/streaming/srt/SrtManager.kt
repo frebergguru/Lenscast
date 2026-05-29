@@ -62,6 +62,9 @@ class SrtManager(private val context: Context) {
     @Volatile private var currentConfig: Config? = null
     @Volatile private var currentPlan: RtspCameraDriver.Plan? = null
     @Volatile private var heldPreviewSurface: Surface? = null
+    // Optional MJPEG-sidecar output. Re-applied on every camera (re)start so a mid-stream
+    // rotation / lens switch keeps feeding the browser preview. Owned by StreamingService.
+    @Volatile private var heldSidecarSurface: Surface? = null
 
     // Shared wall-clock origin for both encoders' PTS — see the long note in [start]. These
     // are fields (not captured locals) so [reconfigureVideo] can re-anchor video PTS to the
@@ -72,7 +75,7 @@ class SrtManager(private val context: Context) {
 
     fun state(): SrtPublisher.State = state
 
-    suspend fun start(config: Config, previewSurface: Surface?): RtspCameraDriver.Plan? {
+    suspend fun start(config: Config, previewSurface: Surface?, sidecarSurface: Surface? = null): RtspCameraDriver.Plan? {
         stop()
         val camDriver = RtspCameraDriver(context).also { camera = it }
         val plan = camDriver.plan(config.lens, config.resolution, config.fps) ?: run {
@@ -82,6 +85,7 @@ class SrtManager(private val context: Context) {
         currentConfig = config
         currentPlan = plan
         heldPreviewSurface = previewSurface
+        heldSidecarSurface = sidecarSurface
 
         // Forward-declared so the publisher's onState callback can reset the muxer +
         // request a fresh keyframe the moment a new receiver connects.
@@ -255,7 +259,7 @@ class SrtManager(private val context: Context) {
             }
         }
 
-        cam.start(plan, glRotator.cameraSurface, heldPreviewSurface, imageControls = config.imageControls)
+        cam.start(plan, glRotator.cameraSurface, heldPreviewSurface, heldSidecarSurface, imageControls = config.imageControls)
         // Force an IDR ~immediately so receivers don't have to wait for the encoder's
         // natural GOP boundary (usually 2–5 s). VLC's TSBPD window otherwise starts ticking
         // before the first decodable frame arrives, and the "non-existing PPS 0 referenced"
@@ -375,6 +379,7 @@ class SrtManager(private val context: Context) {
         currentConfig = null
         currentPlan = null
         heldPreviewSurface = null
+        heldSidecarSurface = null
         state = SrtPublisher.State.IDLE
     }
 

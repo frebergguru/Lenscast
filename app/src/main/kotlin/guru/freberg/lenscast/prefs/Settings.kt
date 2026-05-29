@@ -205,13 +205,15 @@ data class Settings(
      */
     val languageTag: String = "",
     /**
-     * When true and protocol = RTSP at ≤30 fps, also expose the MJPEG endpoints (`/video`,
-     * `/audio` if audio is on, `/shot.jpg`) on [mjpegPort] in parallel with the RTSP stream.
-     * Implemented via an extra ImageReader output added to the Camera2 capture session so a
-     * single camera open feeds both encoders. Cannot be enabled for high-speed sessions
-     * (>30 fps) because high-speed only accepts MediaCodec/preview Surfaces.
+     * When true and protocol = RTSP/SRT/RIST at ≤30 fps, also expose the MJPEG endpoints
+     * (`/video`, `/shot.jpg`) on [mjpegPort] in parallel with the codec stream, and drive the
+     * on-device preview from those same frames (the Camera2 codec paths can't host a preview
+     * SurfaceView through rotation, so the upright sidecar JPEGs stand in). Implemented via an
+     * extra ImageReader output added to the Camera2 capture session so a single camera open
+     * feeds both the encoder and the preview. On by default; cannot be enabled for high-speed
+     * sessions (>30 fps) because high-speed only accepts MediaCodec/preview Surfaces.
      */
-    val mjpegSidecar: Boolean = false,
+    val mjpegSidecar: Boolean = true,
     /**
      * Where to send the SRT stream (`Protocol.SRT`):
      *  - **LISTENER** (default): the phone listens on [srtPort]; receivers (OBS, ffmpeg)

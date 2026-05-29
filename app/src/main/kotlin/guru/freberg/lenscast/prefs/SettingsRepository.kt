@@ -143,7 +143,7 @@ class SettingsRepository(private val context: Context) {
         sftpRemoteDir = (p[K_SFTP_DIR] ?: "").trim(),
         sftpHostKeyFingerprint = (p[K_SFTP_FP] ?: "").trim(),
         languageTag = (p[K_LANG] ?: "").trim(),
-        mjpegSidecar = p[K_MJPEG_SIDECAR] ?: false,
+        mjpegSidecar = p[K_MJPEG_SIDECAR] ?: true,
         srtMode = SrtMode.entries.getOrNull(p[K_SRT_MODE] ?: SrtMode.LISTENER.ordinal) ?: SrtMode.LISTENER,
         srtHost = (p[K_SRT_HOST] ?: "").trim(),
         srtPort = (p[K_SRT_PORT] ?: 9710).coerceIn(1, 65535),

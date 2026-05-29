@@ -116,7 +116,7 @@
     <string name="notif_action_stop">Stopp</string>
 
     <string name="preview_rtsp_streaming_title">Strømmer direkte</string>
-    <string name="preview_rtsp_streaming_description">Kamerasignalet sendes til mottakerne dine. Forhåndsvisning på enheten er deaktivert mens strømmen er aktiv for å holde rotasjonen stabil.</string>
+    <string name="preview_rtsp_streaming_description">Kamerasignalet sendes til mottakerne dine. Slå på MJPEG-sidekanalen for å forhåndsvise det her.</string>
 
     <string name="settings_image_section">Bilde</string>
     <string name="settings_mirror">Speil horisontalt</string>
@@ -243,7 +243,7 @@
     <string name="settings_preset_lens_front">front</string>
 
     <string name="settings_mjpeg_sidecar">MJPEG-sidekanal (nettleserforhåndsvisning)</string>
-    <string name="settings_mjpeg_sidecar_hint">Eksponerer /video på MJPEG-porten slik at en nettleser-&lt;img&gt; fungerer parallelt med RTSP-strømmen. Samme kamera; maks 15 fps for sidekanalen.</string>
+    <string name="settings_mjpeg_sidecar_hint">Eksponerer /video på MJPEG-porten slik at en nettleser-&lt;img&gt; fungerer parallelt med RTSP/SRT/RIST-strømmen. Samme kamera; maks 15 fps for sidekanalen.</string>
     <string name="settings_mjpeg_sidecar_highspeed_note">Kun tilgjengelig ved ≤30 fps — Camera2 høyhastighetsøkter avviser ekstra utganger.</string>
     <string name="settings_record_locally">Lagre til MP4 mens du strømmer (kun RTSP)</string>
     <string name="settings_record_locally_hint">Lagres i Movies/Lenscast/. Kodes én gang; ingen ekstra batterikostnad utover filskrivingen.</string>
@@ -370,7 +370,7 @@
     <string name="web_lbl_rtsp_bitrate_cap">RTSP bitrate-tak</string>
     <string name="web_hint_rtsp_bitrate_auto">0 = auto fra oppløsning × fps</string>
     <string name="web_lbl_mjpeg_sidecar">MJPEG-sidekanal</string>
-    <string name="web_hint_mjpeg_sidecar">Kun RTSP · ≤30 fps · /video serveres også parallelt med RTSP</string>
+    <string name="web_hint_mjpeg_sidecar">RTSP/SRT/RIST · ≤30 fps · /video serveres også parallelt med strømmen</string>
     <string name="web_lbl_record_mp4">Ta opp til MP4 mens du strømmer</string>
     <string name="web_hint_record_rtsp_only">Kun RTSP · lagres i Movies/Lenscast/</string>
     <string name="web_lbl_sftp_auto_upload">SFTP automatisk opplasting</string>
@@ -514,7 +514,7 @@
     <string name="web_help_echo_cancel">Lar Androids innebygde ekkokansellerer fjerne avspillingsekko fra mikrofonen. Mest nyttig i toveis samtaler.</string>
     <string name="web_help_jpeg_quality">JPEG-komprimeringsnivå for MJPEG-strømmen. Høyere = skarpere bilde, større rammer, mer båndbredde. 80 er et godt utgangspunkt.</string>
     <string name="web_help_rtsp_bitrate">Mål-bitrate for H.264-koderen. 0 lar Lenscast velge ut fra oppløsning × FPS. Senk den for treg Wi-Fi.</string>
-    <string name="web_help_mjpeg_sidecar">Når på, kjøres MJPEG /video-endepunktet parallelt med RTSP og deler samme kamera. Lar nettleser forhåndsvise mens RTSP-mottakeren henter H.264. Begrenset til ≤30 fps.</string>
+    <string name="web_help_mjpeg_sidecar">Når på, kjøres MJPEG /video-endepunktet parallelt med RTSP/SRT/RIST og deler samme kamera. Lar nettleser forhåndsvise mens mottakeren henter H.264. Begrenset til ≤30 fps.</string>
     <string name="web_help_record_mp4">Lagrer RTSP-strømmen som en MP4-fil i Movies/Lenscast/ mens du strømmer. Kodes én gang, ingen ekstra batterikostnad.</string>
     <string name="web_help_sftp_auto_upload">Når opptaket er ferdig, settes det i kø for SFTP-opplasting til serveren du konfigurerer under.</string>
     <string name="web_help_sftp_host">Vertsnavn eller IP til SSH/SFTP-serveren.</string>

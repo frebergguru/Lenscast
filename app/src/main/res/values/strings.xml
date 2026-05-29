@@ -116,7 +116,7 @@
     <string name="notif_action_stop">Stop</string>
 
     <string name="preview_rtsp_streaming_title">Streaming live</string>
-    <string name="preview_rtsp_streaming_description">Camera feed is being sent to your receivers. On-device preview is disabled during streaming to keep rotation stable.</string>
+    <string name="preview_rtsp_streaming_description">Camera feed is being sent to your receivers. Turn on the MJPEG sidecar to preview it here.</string>
 
     <string name="settings_image_section">Image</string>
     <string name="settings_mirror">Mirror horizontally</string>
@@ -243,7 +243,7 @@
     <string name="settings_preset_lens_front">front</string>
 
     <string name="settings_mjpeg_sidecar">MJPEG sidecar (browser preview)</string>
-    <string name="settings_mjpeg_sidecar_hint">Adds /video on the MJPEG port so a browser &lt;img&gt; works alongside the RTSP feed. Same camera; ≤15 fps for the sidecar to keep the encoder cool.</string>
+    <string name="settings_mjpeg_sidecar_hint">Adds /video on the MJPEG port so a browser &lt;img&gt; works alongside the RTSP/SRT/RIST feed. Same camera; ≤15 fps for the sidecar to keep the encoder cool.</string>
     <string name="settings_mjpeg_sidecar_highspeed_note">Available at ≤30 fps only — high-speed Camera2 sessions reject extra outputs.</string>
     <string name="settings_record_locally">Record to MP4 while streaming (RTSP/SRT/RIST)</string>
     <string name="settings_record_locally_hint">Saves to Movies/Lenscast/. Encoded once; no extra battery cost beyond the file write. Not available on MJPEG or WebRTC.</string>
@@ -372,7 +372,7 @@
     <string name="web_lbl_rtsp_bitrate_cap">RTSP bitrate cap</string>
     <string name="web_hint_rtsp_bitrate_auto">0 = auto from resolution × fps</string>
     <string name="web_lbl_mjpeg_sidecar">MJPEG sidecar</string>
-    <string name="web_hint_mjpeg_sidecar">RTSP only · ≤30 fps · /video also served alongside RTSP</string>
+    <string name="web_hint_mjpeg_sidecar">RTSP/SRT/RIST · ≤30 fps · /video also served alongside the stream</string>
     <string name="web_lbl_record_mp4">Record to MP4 while streaming</string>
     <string name="web_hint_record_rtsp_only">RTSP/SRT/RIST · saves to Movies/Lenscast/</string>
     <string name="web_lbl_sftp_auto_upload">SFTP auto-upload</string>
@@ -530,7 +530,7 @@
     <string name="web_help_echo_cancel">Lets Android\'s built-in echo canceller remove playback echo from the mic. Mostly useful in two-way calls.</string>
     <string name="web_help_jpeg_quality">JPEG compression level for the MJPEG stream. Higher = sharper picture, larger frames, more bandwidth. 80 is a good default.</string>
     <string name="web_help_rtsp_bitrate">Target bitrate for the H.264 encoder. 0 lets Lenscast pick from resolution × FPS. Lower it for slow Wi-Fi.</string>
-    <string name="web_help_mjpeg_sidecar">When on, the MJPEG /video endpoint runs alongside RTSP using the same camera capture. Lets a browser preview while the RTSP receiver pulls H.264. Capped at ≤30 fps.</string>
+    <string name="web_help_mjpeg_sidecar">When on, the MJPEG /video endpoint runs alongside RTSP/SRT/RIST using the same camera capture. Lets a browser preview while the receiver pulls H.264. Capped at ≤30 fps.</string>
     <string name="web_help_record_mp4">Saves the RTSP stream to an MP4 file in Movies/Lenscast/ while streaming. Encoded once, no extra battery cost.</string>
     <string name="web_help_sftp_auto_upload">When the recording finishes, queue it for SFTP upload to the server you configure below.</string>
     <string name="web_help_sftp_host">Hostname or IP of the SSH/SFTP server.</string>

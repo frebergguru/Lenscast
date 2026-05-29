@@ -64,6 +64,9 @@ class RistManager(private val context: Context) {
     @Volatile private var currentConfig: Config? = null
     @Volatile private var currentPlan: RtspCameraDriver.Plan? = null
     @Volatile private var heldPreviewSurface: Surface? = null
+    // Optional MJPEG-sidecar output. Re-applied on every camera (re)start so a mid-stream
+    // rotation / lens switch keeps feeding the browser preview. Owned by StreamingService.
+    @Volatile private var heldSidecarSurface: Surface? = null
 
     // Shared wall-clock origin for both encoders' PTS — see the long note in SrtManager.start.
     private var streamStartNs: Long = 0L
@@ -72,7 +75,7 @@ class RistManager(private val context: Context) {
 
     fun state(): RistPublisher.State = state
 
-    suspend fun start(config: Config, previewSurface: Surface?): RtspCameraDriver.Plan? {
+    suspend fun start(config: Config, previewSurface: Surface?, sidecarSurface: Surface? = null): RtspCameraDriver.Plan? {
         stop()
         val camDriver = RtspCameraDriver(context).also { camera = it }
         val plan = camDriver.plan(config.lens, config.resolution, config.fps) ?: run {
@@ -82,6 +85,7 @@ class RistManager(private val context: Context) {
         currentConfig = config
         currentPlan = plan
         heldPreviewSurface = previewSurface
+        heldSidecarSurface = sidecarSurface
 
         var lateMuxer: MpegTsMuxer? = null
         val pub = RistPublisher(
@@ -205,7 +209,7 @@ class RistManager(private val context: Context) {
             }
         }
 
-        cam.start(plan, glRotator.cameraSurface, heldPreviewSurface, imageControls = config.imageControls)
+        cam.start(plan, glRotator.cameraSurface, heldPreviewSurface, heldSidecarSurface, imageControls = config.imageControls)
         try { videoEncoder?.requestKeyframe() } catch (_: Throwable) {}
     }
 
@@ -293,6 +297,7 @@ class RistManager(private val context: Context) {
         currentConfig = null
         currentPlan = null
         heldPreviewSurface = null
+        heldSidecarSurface = null
         state = RistPublisher.State.IDLE
     }
 

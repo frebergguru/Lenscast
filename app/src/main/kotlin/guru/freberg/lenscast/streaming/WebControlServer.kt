@@ -1215,7 +1215,8 @@ class WebControlServer(
                   <!-- Live RTSP hero -->
                   <div id="rtsp-block" class="hidden">
                     <div class="preview-frame">
-                      <div class="overlay">
+                      <img id="rtsp-preview" class="hidden" alt="${i.heroTitle}">
+                      <div class="overlay" id="rtsp-overlay">
                         <div>
                           <div class="big">${i.rtspLiveTitle}</div>
                           <div class="small">${i.rtspLiveNote}</div>
@@ -1239,7 +1240,8 @@ class WebControlServer(
                   <!-- Live SRT hero -->
                   <div id="srt-block" class="hidden">
                     <div class="preview-frame">
-                      <div class="overlay">
+                      <img id="srt-preview" class="hidden" alt="${i.heroTitle}">
+                      <div class="overlay" id="srt-overlay">
                         <div>
                           <div class="big">${i.srtLiveTitle}</div>
                           <div class="small">${i.srtLiveNote}</div>
@@ -1252,7 +1254,8 @@ class WebControlServer(
                   <!-- Live RIST hero -->
                   <div id="rist-block" class="hidden">
                     <div class="preview-frame">
-                      <div class="overlay">
+                      <img id="rist-preview" class="hidden" alt="${i.heroTitle}">
+                      <div class="overlay" id="rist-overlay">
                         <div>
                           <div class="big">${i.ristLiveTitle}</div>
                           <div class="small">${i.ristLiveNote}</div>
@@ -2192,23 +2195,39 @@ class WebControlServer(
                   show('live-card', live);
                   show('live-controls-card', live);
 
-                  // Live preview hookup: only attach <img src=/video> when we know the
-                  // MJPEG server is up, and bust the cache so the browser doesn't reuse
-                  // a stale failed connection from idle state. Detach on stop so it
-                  // doesn't endlessly retry against a dead server.
-                  const mjpegLive = live && s.protocol === 'mjpeg';
-                  const previewEl = document.getElementById('preview');
-                  if (mjpegLive && !previewEl.dataset.live) {
-                    previewEl.src = mjpegBase + '/video?t=' + Date.now();
-                    previewEl.dataset.live = '1';
-                  } else if (!mjpegLive && previewEl.dataset.live) {
-                    previewEl.removeAttribute('src');
-                    delete previewEl.dataset.live;
+                  // Live preview hookup: attach <img src=/video> wherever the MJPEG server is
+                  // actually serving frames (s.mjpegServing) — the MJPEG protocol, plus
+                  // RTSP/SRT/RIST when the optional sidecar is running. For the codec heroes the
+                  // image replaces the "… active" overlay placeholder. Bust the cache so the
+                  // browser doesn't reuse a stale failed connection from idle state, and detach
+                  // on stop so it doesn't endlessly retry against a dead server.
+                  const previews = [
+                    ['preview',      null,           live && s.protocol === 'mjpeg'],
+                    ['rtsp-preview', 'rtsp-overlay', live && s.protocol === 'rtsp' && s.mjpegServing === true],
+                    ['srt-preview',  'srt-overlay',  live && s.protocol === 'srt'  && s.mjpegServing === true],
+                    ['rist-preview', 'rist-overlay', live && s.protocol === 'rist' && s.mjpegServing === true],
+                  ];
+                  for (const [imgId, overlayId, on] of previews) {
+                    const img = document.getElementById(imgId);
+                    if (!img) continue;
+                    const overlay = overlayId ? document.getElementById(overlayId) : null;
+                    if (on && !img.dataset.live) {
+                      img.src = mjpegBase + '/video?t=' + Date.now();
+                      img.classList.remove('hidden');
+                      img.dataset.live = '1';
+                      if (overlay) overlay.style.display = 'none';
+                    } else if (!on && img.dataset.live) {
+                      img.removeAttribute('src');
+                      img.classList.add('hidden');
+                      delete img.dataset.live;
+                      if (overlay) overlay.style.display = '';
+                    }
                   }
 
-                  // Hide the snapshot button on RTSP — broadcaster has no frames there.
+                  // Snapshot saves the latest broadcaster frame, so it's available whenever
+                  // MJPEG is serving (the MJPEG path or an active sidecar), any protocol.
                   const snap = document.getElementById('snapshot-btn');
-                  if (snap) snap.style.display = (s.protocol === 'rtsp') ? 'none' : '';
+                  if (snap) snap.style.display = s.mjpegServing ? '' : 'none';
 
                   // JPEG quality slider only matters for MJPEG
                   show('quality-row', live && s.protocol === 'mjpeg');

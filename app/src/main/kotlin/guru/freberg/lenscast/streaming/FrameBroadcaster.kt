@@ -31,6 +31,10 @@ class FrameBroadcaster {
         return f.bytes to f.seq
     }
 
+    /** Drop the retained frame so a later consumer (e.g. the on-device preview) doesn't show
+     *  a stale image from a previous stream before fresh frames arrive. */
+    fun clear() { slot.set(null) }
+
     fun framesProduced(): Long = framesProduced.get()
 
     fun clientCount(): Int = clients.get()

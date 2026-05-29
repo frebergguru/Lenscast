@@ -988,6 +988,10 @@ class StreamingService : LifecycleService() {
                 """"sftpHostKeyFingerprint":"${jsonEscape(s.sftpHostKeyFingerprint)}",""" +
                 """"languageTag":"${jsonEscape(s.languageTag)}",""" +
                 """"mjpegSidecar":${s.mjpegSidecar},""" +
+                // Authoritative: the MJPEG /video endpoint is actually being served — true for
+                // the MJPEG protocol and for RTSP/SRT/RIST when the sidecar is running. Lets the
+                // web panel attach its <img> preview without re-deriving the gating rules.
+                """"mjpegServing":${mjpegServer != null},""" +
                 """"streamUsername":"${jsonEscape(s.streamUsername)}",""" +
                 """"persistentWebControl":${s.persistentWebControl},""" +
                 """"supportsManualSensor":${CameraCapabilities.supportsManualSensor(this@StreamingService, s.lens)},""" +
@@ -1170,25 +1174,9 @@ class StreamingService : LifecycleService() {
             android.view.Surface.ROTATION_270 -> 270
             else -> 0
         }
-        // Optional MJPEG sidecar: a second output Surface on the Camera2 capture session.
-        // Only legal for standard sessions (≤30 fps); high-speed sessions reject ImageReader
-        // YUV outputs. We also skip it if the user disabled the toggle.
-        val sidecarEnabled = settings.mjpegSidecar && settings.fps.value <= 30
-        val sidecarSurface: Surface? = if (sidecarEnabled) {
-            val reader = android.media.ImageReader.newInstance(
-                settings.resolution.width, settings.resolution.height,
-                android.graphics.ImageFormat.YUV_420_888,
-                2, // double buffer — gives the listener a frame in flight while the next arrives.
-            )
-            sidecarReader = reader
-            val thread = android.os.HandlerThread("LenscastMjpegSidecar").also { it.start() }
-            sidecarThread = thread
-            val handler = android.os.Handler(thread.looper)
-            sidecarHandler = handler
-            sidecarLastPublishMs = 0L
-            reader.setOnImageAvailableListener(makeSidecarListener(rotationDegrees, settings), handler)
-            reader.surface
-        } else null
+        // Optional MJPEG sidecar: a second output Surface on the Camera2 capture session so a
+        // browser can preview the feed while OBS pulls RTSP. Null when off / high-speed.
+        val sidecarSurface: Surface? = buildSidecarSurface(settings)
 
         val rtspAudioPermitted = androidx.core.content.ContextCompat.checkSelfPermission(
             this, android.Manifest.permission.RECORD_AUDIO,
@@ -1222,20 +1210,9 @@ class StreamingService : LifecycleService() {
             )
         }
         _lastRtspPlan = plan
-        if (sidecarEnabled) {
-            // Spin up the existing MJPEG server on its dedicated port so a browser <img>
-            // can hit /video while OBS pulls RTSP. The broadcaster is fed by the sidecar
-            // ImageReader listener; the audio sidecar (PCM WAV) isn't supported in this
-            // mode because Camera2 owns audio capture through MediaRecorder in RTSP.
-            val server = MjpegServer(
-                broadcaster, settings.mjpegPort, minOf(settings.fps.value, 15),
-                username = settings.streamUsername,
-                password = settings.streamPassword,
-                audioBroadcaster = null,
-                sslContext = if (settings.httpsEnabled) TlsManager.forContext(this).sslContext() else null,
-            ).also { it.start() }
-            mjpegServer = server
-            startNsd(NsdAdvertiser.TYPE_MJPEG, settings.mjpegPort)
+        if (sidecarSurface != null) {
+            attachSidecarListener(rotationDegrees, settings)
+            startSidecarMjpegServer(settings)
         }
         startNsd(NsdAdvertiser.TYPE_RTSP, settings.rtspPort)
     }
@@ -1246,11 +1223,18 @@ class StreamingService : LifecycleService() {
      * starve the H.264 encoder running on the same camera output.
      */
     private fun makeSidecarListener(rotationDegrees: Int, settings: Settings): android.media.ImageReader.OnImageAvailableListener {
+        // sensorOrientation MUST come from the resolved plan (set just before this is attached) —
+        // it's the sensor mount angle and is the dominant term. The sidecar's ImageReader gets
+        // raw sensor-oriented frames (no GL/SurfaceTexture transform), so we rotate to upright
+        // here the same way Camera2 JPEG capture would: back camera (sensorOrientation - device),
+        // front camera (sensorOrientation + device) because the mirror flips rotation handedness.
         val sensorOrientation = _lastRtspPlan?.sensorOrientation ?: 0
-        // Camera frames are sensor-oriented; the encoder ships them as-is on RTSP, but the
-        // MJPEG path historically rotates to upright. Match the sensor orientation for the
-        // sidecar so browser viewers see the same upright image they always have.
-        val sidecarRotation = ((sensorOrientation - rotationDegrees) + 360) % 360
+        val front = settings.lens == guru.freberg.lenscast.prefs.Lens.FRONT
+        val sidecarRotation = if (front) {
+            (sensorOrientation + rotationDegrees) % 360
+        } else {
+            (sensorOrientation - rotationDegrees + 360) % 360
+        }
         val minIntervalMs = 1000L / 15 // hard-cap at 15 fps
         return android.media.ImageReader.OnImageAvailableListener { reader ->
             val now = System.currentTimeMillis()
@@ -1277,6 +1261,62 @@ class StreamingService : LifecycleService() {
         try { sidecarThread?.quitSafely() } catch (_: Throwable) {}
         sidecarThread = null
         sidecarHandler = null
+        // Drop the last sidecar JPEG so the on-device preview falls back to its placeholder
+        // instead of freezing on the final frame of the stream that just ended.
+        broadcaster.clear()
+    }
+
+    /**
+     * Builds the optional MJPEG-sidecar [ImageReader] output for the Camera2 streaming paths
+     * (RTSP/SRT/RIST): a second capture-session surface whose YUV frames are JPEG-encoded and
+     * published to the shared [broadcaster] so a browser can preview the feed while the codec
+     * path ships H.264. Returns the surface to add as an extra capture target, or null when the
+     * sidecar toggle is off or the session is high-speed (Camera2 rejects ImageReader YUV on
+     * constrained high-speed sessions — same limit the RTSP path has always had).
+     *
+     * The frame listener is NOT attached here — [attachSidecarListener] attaches it after the
+     * camera plan resolves, because the rotation maths needs the plan's sensorOrientation (not
+     * known until the manager's start() returns; [_lastRtspPlan] is null at this point because
+     * stopStreaming clears it). The caller must invoke [tearDownSidecar] on stop/failure and
+     * [startSidecarMjpegServer] once the plan is confirmed.
+     */
+    private fun buildSidecarSurface(settings: Settings): Surface? {
+        if (!(settings.mjpegSidecar && settings.fps.value <= 30)) return null
+        val reader = android.media.ImageReader.newInstance(
+            settings.resolution.width, settings.resolution.height,
+            android.graphics.ImageFormat.YUV_420_888,
+            2, // double buffer — gives the listener a frame in flight while the next arrives.
+        )
+        sidecarReader = reader
+        val thread = android.os.HandlerThread("LenscastMjpegSidecar").also { it.start() }
+        sidecarThread = thread
+        sidecarHandler = android.os.Handler(thread.looper)
+        sidecarLastPublishMs = 0L
+        return reader.surface
+    }
+
+    /** Attaches the sidecar's frame listener once the camera plan (hence sensorOrientation) is
+     *  known. No-op when the sidecar isn't running. */
+    private fun attachSidecarListener(rotationDegrees: Int, settings: Settings) {
+        val reader = sidecarReader ?: return
+        reader.setOnImageAvailableListener(makeSidecarListener(rotationDegrees, settings), sidecarHandler)
+    }
+
+    /**
+     * Spins up the existing [MjpegServer] on the MJPEG port so a browser `<img>` can hit
+     * `/video` (fed by the sidecar [broadcaster]) while a codec protocol owns the camera. The
+     * audio sidecar (PCM WAV) isn't offered here — Camera2 owns audio capture on these paths.
+     */
+    private fun startSidecarMjpegServer(settings: Settings) {
+        val server = MjpegServer(
+            broadcaster, settings.mjpegPort, minOf(settings.fps.value, 15),
+            username = settings.streamUsername,
+            password = settings.streamPassword,
+            audioBroadcaster = null,
+            sslContext = if (settings.httpsEnabled) TlsManager.forContext(this).sslContext() else null,
+        ).also { it.start() }
+        mjpegServer = server
+        startNsd(NsdAdvertiser.TYPE_MJPEG, settings.mjpegPort)
     }
 
     private suspend fun startSrt(settings: Settings) {
@@ -1306,6 +1346,8 @@ class StreamingService : LifecycleService() {
         if (srtMode == guru.freberg.lenscast.streaming.srt.SrtPublisher.Mode.CALLER && settings.srtHost.isBlank()) {
             throw IllegalStateException("SRT caller mode needs a remote host. Set Settings → SRT host, or switch to Listener.")
         }
+        // Optional MJPEG sidecar: lets a browser preview the feed while SRT carries H.264.
+        val sidecarSurface: Surface? = buildSidecarSurface(settings)
         val mgr = guru.freberg.lenscast.streaming.srt.SrtManager(this).also { srtManager = it }
         val plan = mgr.start(
             guru.freberg.lenscast.streaming.srt.SrtManager.Config(
@@ -1329,13 +1371,19 @@ class StreamingService : LifecycleService() {
                 imageControls = settings.toImageControls(),
             ),
             previewSurface = null,
+            sidecarSurface = sidecarSurface,
         )
         if (plan == null) {
+            tearDownSidecar()
             throw IllegalStateException(
                 "No camera plan matched ${settings.resolution.label} @ ${settings.fps.value} fps on ${settings.lens}",
             )
         }
         _lastRtspPlan = plan
+        if (sidecarSurface != null) {
+            attachSidecarListener(rotationDegrees, settings)
+            startSidecarMjpegServer(settings)
+        }
     }
     @Volatile private var srtManager: guru.freberg.lenscast.streaming.srt.SrtManager? = null
 
@@ -1370,6 +1418,8 @@ class StreamingService : LifecycleService() {
         if (ristMode == guru.freberg.lenscast.streaming.rist.RistPublisher.Mode.CALLER && settings.ristHost.isBlank()) {
             throw IllegalStateException("RIST caller mode needs a remote host. Set Settings → RIST host, or switch to Listener.")
         }
+        // Optional MJPEG sidecar: lets a browser preview the feed while RIST carries H.264.
+        val sidecarSurface: Surface? = buildSidecarSurface(settings)
         val mgr = guru.freberg.lenscast.streaming.rist.RistManager(this).also { ristManager = it }
         val plan = mgr.start(
             guru.freberg.lenscast.streaming.rist.RistManager.Config(
@@ -1394,13 +1444,19 @@ class StreamingService : LifecycleService() {
                 imageControls = settings.toImageControls(),
             ),
             previewSurface = null,
+            sidecarSurface = sidecarSurface,
         )
         if (plan == null) {
+            tearDownSidecar()
             throw IllegalStateException(
                 "No camera plan matched ${settings.resolution.label} @ ${settings.fps.value} fps on ${settings.lens}",
             )
         }
         _lastRtspPlan = plan
+        if (sidecarSurface != null) {
+            attachSidecarListener(rotationDegrees, settings)
+            startSidecarMjpegServer(settings)
+        }
     }
     @Volatile private var ristManager: guru.freberg.lenscast.streaming.rist.RistManager? = null
 

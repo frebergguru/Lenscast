@@ -268,21 +268,28 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
       every NAL/AAC packet is fanned out to every PLAYing session. `RtspServer`
       no longer boots the previous client on new accept. Verified the
       `onClientTeardown(sink)` callback identifies the right sink to remove.
-- [x] **Multi-protocol simultaneous** (MJPEG + RTSP). New `Settings.mjpegSidecar`
-      toggle (RTSP path only). When on, `RtspCameraDriver.start` now also takes
-      a `sidecarSurface` and adds it to the `CameraCaptureSession` output set
-      alongside the H.264 encoder Surface. The sidecar is an `ImageReader`
-      (`YUV_420_888`, 2-buffer) whose `OnImageAvailableListener` pushes each
-      latest frame through `YuvToJpeg.encodeImage` and publishes to the
-      existing `FrameBroadcaster`; `MjpegServer` is started on `mjpegPort`
-      alongside RTSP. Self-throttled to 15 fps so the JPEG encode doesn't
-      starve the H.264 encoder on the same camera output. Constraint:
-      ≤30 fps only — Camera2 high-speed sessions reject ImageReader YUV
-      outputs, so the toggle is greyed at >30 fps with a note. WebRTC stays
-      mutually exclusive — its `Camera2Capturer` claims the camera the same
-      way `RtspCameraDriver` does, so all-three-at-once would need a deeper
-      rewrite (Camera2 ownership moved into a shared driver fanning out to
-      all three encoder backends).
+- [x] **Multi-protocol simultaneous** (MJPEG sidecar + RTSP/SRT/RIST). The
+      `Settings.mjpegSidecar` toggle now applies to all three Camera2 codec
+      paths (RTSP, SRT, RIST), not just RTSP. When on, `RtspCameraDriver.start`
+      also takes a `sidecarSurface` and adds it to the `CameraCaptureSession`
+      output set alongside the H.264 encoder Surface (for SRT/RIST the camera's
+      primary output is the GL rotator's SurfaceTexture; the sidecar is just a
+      third target). The sidecar is an `ImageReader` (`YUV_420_888`, 2-buffer)
+      whose `OnImageAvailableListener` pushes each latest frame through
+      `YuvToJpeg.encodeImage` and publishes to the existing `FrameBroadcaster`;
+      `MjpegServer` is started on `mjpegPort` alongside the codec stream.
+      `StreamingService.buildSidecarSurface` / `startSidecarMjpegServer` are the
+      shared helpers; `SrtManager`/`RistManager` hold the surface and re-apply it
+      across mid-stream rotation / lens switch. The web panel attaches its
+      `<img>` preview off the new `mjpegServing` status flag (RTSP/SRT/RIST
+      heroes each got their own preview `<img>` + overlay). Self-throttled to
+      15 fps so the JPEG encode doesn't starve the H.264 encoder on the same
+      camera output. Constraint: ≤30 fps only — Camera2 high-speed sessions
+      reject ImageReader YUV outputs, so the toggle is greyed at >30 fps with a
+      note. WebRTC stays mutually exclusive — its `Camera2Capturer` claims the
+      camera the same way `RtspCameraDriver` does, so a WebRTC-plus-sidecar would
+      need a deeper rewrite (Camera2 ownership moved into a shared driver fanning
+      out to all encoder backends).
 - [x] **Adaptive bitrate.** `Rtcp.parseReceiverReports` extracts fraction-lost +
       cumulative-loss + jitter from incoming RR packets. `RtspSession` starts a
       per-UDP-session listener on the rtcpSocket and forwards each RR to

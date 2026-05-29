@@ -609,7 +609,10 @@ fun SettingsSheet(
                 )
             }
 
-            if (settings.protocol == Protocol.RTSP) {
+            if (settings.protocol == Protocol.RTSP ||
+                settings.protocol == Protocol.SRT ||
+                settings.protocol == Protocol.RIST
+            ) {
                 ToggleRow(
                     title = stringResource(R.string.settings_mjpeg_sidecar),
                     checked = settings.mjpegSidecar,
