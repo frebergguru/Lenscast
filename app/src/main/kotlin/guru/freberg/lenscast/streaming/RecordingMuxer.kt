@@ -52,11 +52,14 @@ class RecordingMuxer private constructor(
         if (videoTrack >= 0) return true
         val m = muxer ?: return false
         val format = MediaFormat.createVideoFormat("video/avc", width, height)
-        // csd-0 for AVC inside MediaMuxer is SPS followed by PPS, each prefixed with the
-        // 4-byte start code. We have SPS/PPS as raw NALs (no start codes); reconstruct here.
-        val csd = ByteBuffer.allocate(8 + sps.size + pps.size)
-        csd.put(START_CODE).put(sps).put(START_CODE).put(pps).flip()
-        format.setByteBuffer("csd-0", csd)
+        // MediaMuxer's MPEG4Writer reads AVC codec config from TWO separate keys — csd-0 (SPS)
+        // and csd-1 (PPS), each a start-code-prefixed NAL, exactly as MediaCodec's own encoder
+        // output format presents them. A single combined csd-0 ([SC]SPS[SC]PPS) is tolerated by
+        // some devices but silently dropped by others — the track then finalises with no avcC
+        // ("Missing codec specific data" → status -1007 at stop), yielding sample data with an
+        // undecodable header. We have raw SPS/PPS NALs (no start codes), so prefix each.
+        format.setByteBuffer("csd-0", ByteBuffer.allocate(4 + sps.size).apply { put(START_CODE).put(sps).flip() })
+        format.setByteBuffer("csd-1", ByteBuffer.allocate(4 + pps.size).apply { put(START_CODE).put(pps).flip() })
         return try {
             videoTrack = m.addTrack(format)
             maybeStart()
