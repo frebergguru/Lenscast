@@ -1458,6 +1458,22 @@ class StreamingService : LifecycleService() {
         }
     }
 
+    /**
+     * Stop the current stream and immediately restart with new settings. Used for
+     * mid-stream lens switching on protocols where the camera is locked at start
+     * (RTSP, SRT) — the H.264 input Surface is bound to one CameraDevice for the
+     * stream's lifetime, so changing lens requires a full pipeline teardown. The
+     * receiver sees a brief disconnect; well-behaved clients (OBS Media Source,
+     * VLC, ffplay) reconnect automatically. Cheaper than nothing, less invasive
+     * than asking the user to Stop / change settings / Start manually.
+     */
+    fun restartStreaming(newSettings: Settings) {
+        if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) {
+            stopStreaming()
+        }
+        startStreaming(newSettings)
+    }
+
     fun stopStreaming() {
         try { mjpegServer?.stop() } catch (_: Throwable) {}
         mjpegServer = null

@@ -87,6 +87,7 @@ import guru.freberg.lenscast.ui.components.VuMeter
 import guru.freberg.lenscast.ui.components.rememberPermissionStatus
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
 
@@ -347,6 +348,16 @@ fun MainScreen(
                                 .nextBestFps(supportedFps, it.fps)
                             it.copy(lens = newLens, resolution = newRes, fps = newFps)
                         }
+                        // For protocols that lock the camera at start (RTSP, SRT), the
+                        // settings-flow rebind path the MJPEG service uses is a no-op:
+                        // those pipelines own Camera2 directly. Ask the service to
+                        // restart with the just-persisted settings instead.
+                        if (streaming &&
+                            (settings.protocol == guru.freberg.lenscast.prefs.Protocol.SRT ||
+                                settings.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP)) {
+                            val refreshed = repo.flow.first()
+                            service?.restartStreaming(refreshed)
+                        }
                     }
                 },
                 onToggleTorch = {
@@ -405,17 +416,15 @@ fun MainScreen(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                         horizontalAlignment = Alignment.End,
                     ) {
-                        // RTSP locks the camera at stream-start: the H.264 encoder's input
-                        // Surface is bound to one CameraDevice for the life of the stream, so
-                        // mid-stream lens switching isn't supported yet. Hide the button so the
-                        // user isn't tempted to press a no-op. MJPEG can switch mid-stream
-                        // (CameraX rebinds cleanly), so the button stays for that path.
-                        // RTSP + WebRTC both lock the camera at stream-start (Camera2-direct
-                        // pipelines). MJPEG can switch mid-stream via CameraX rebind.
-                        val cameraLocked = st.streaming && (
-                            st.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP ||
-                            st.protocol == guru.freberg.lenscast.prefs.Protocol.WEBRTC ||
-                            st.protocol == guru.freberg.lenscast.prefs.Protocol.SRT)
+                        // MJPEG rebinds CameraX cleanly mid-stream. RTSP and SRT both lock
+                        // Camera2 at stream-start (the H.264 encoder's input Surface is
+                        // bound to one CameraDevice), so lens switching there goes through
+                        // restartStreaming() — a brief stop + start with the new lens. The
+                        // receiver disconnects and well-behaved clients reconnect.
+                        // WebRTC stays hidden: the signalling session would need to be
+                        // renegotiated, which we haven't wired up yet.
+                        val cameraLocked = st.streaming &&
+                            st.protocol == guru.freberg.lenscast.prefs.Protocol.WEBRTC
                         if (!cameraLocked) {
                             OverlayIconButton(
                                 icon = Icons.Outlined.Cameraswitch,
