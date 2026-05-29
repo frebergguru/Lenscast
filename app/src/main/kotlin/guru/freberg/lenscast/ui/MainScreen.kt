@@ -362,14 +362,17 @@ fun MainScreen(
                             it.copy(lens = newLens, resolution = newRes, fps = newFps)
                         }
                         // For protocols that lock the camera at start (RTSP, SRT), the
-                        // settings-flow rebind path the MJPEG service uses is a no-op:
-                        // those pipelines own Camera2 directly. Ask the service to
-                        // restart with the just-persisted settings instead.
+                        // settings-flow rebind path the MJPEG service uses is a no-op: those
+                        // pipelines own Camera2 directly. Try a seamless in-place lens swap
+                        // first (keeps the receiver connected); fall back to a full restart
+                        // only when the swap can't be served in place (e.g. RTSP where the new
+                        // lens forces a different resolution).
                         if (streaming &&
                             (settings.protocol == guru.freberg.lenscast.prefs.Protocol.SRT ||
                                 settings.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP)) {
                             val refreshed = repo.flow.first()
-                            service?.restartStreaming(refreshed)
+                            val seamless = service?.switchLensSeamless(refreshed) ?: false
+                            if (!seamless) service?.restartStreaming(refreshed)
                         }
                     }
                 },

@@ -1532,6 +1532,25 @@ class StreamingService : LifecycleService() {
      * VLC, ffplay) reconnect automatically. Cheaper than nothing, less invasive
      * than asking the user to Stop / change settings / Start manually.
      */
+    /**
+     * Try to switch the camera lens mid-stream without restarting (which would drop the
+     * receiver). Routes to the protocol manager's seamless in-place lens swap. Returns true if
+     * handled; false means the caller should fall back to [restartStreaming] (e.g. RTSP where
+     * the new lens forces a different resolution, or any non-camera-locked protocol). On
+     * success the published settings are updated so the UI reflects the new lens.
+     */
+    suspend fun switchLensSeamless(newSettings: Settings): Boolean {
+        if (_status.value.state != State.STREAMING) return false
+        val size = Size(newSettings.resolution.width, newSettings.resolution.height)
+        val handled = when (newSettings.protocol) {
+            Protocol.SRT -> srtManager?.switchLens(newSettings.lens, size, newSettings.fps.value) ?: false
+            Protocol.RTSP -> rtspManager?.switchLens(newSettings.lens, size, newSettings.fps.value) ?: false
+            else -> false
+        }
+        if (handled) _status.value = _status.value.copy(settings = newSettings)
+        return handled
+    }
+
     fun restartStreaming(newSettings: Settings) {
         _restarting.value = true
         if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) {

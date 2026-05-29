@@ -270,6 +270,35 @@ class SrtManager(private val context: Context) {
         startVideoPipeline(deviceRotationDegrees)
     }
 
+    /**
+     * Switch the camera lens mid-stream without dropping the receiver. Re-plans for [newLens]
+     * (its resolution/fps may differ from the current lens), then tears down and rebuilds only
+     * the camera + GL rotator + video encoder — the SRT socket, connected client, muxer (TS
+     * continuity), and audio keep running. The new SPS ships in-band on the forced keyframe and
+     * MPEG-TS lets the receiver re-init inline, so even a resolution change is absorbed without
+     * a disconnect. Returns false if [newLens] has no usable plan (caller falls back to a full
+     * restart).
+     */
+    suspend fun switchLens(newLens: Lens, newResolution: Size, newFps: Int): Boolean {
+        val config = currentConfig ?: return false
+        val cam = camera ?: return false
+        if (muxer == null) return false
+        val newPlan = cam.plan(newLens, newResolution, newFps) ?: return false
+        Log.i(TAG, "Seamless SRT lens switch → $newLens ${newPlan.size}")
+        try { cam.stop() } catch (_: Throwable) {}
+        try { rotator?.release() } catch (_: Throwable) {}
+        rotator = null
+        try { videoEncoder?.stop() } catch (_: Throwable) {}
+        try { videoEncoder?.shutdown() } catch (_: Throwable) {}
+        videoEncoder = null
+        videoPtsOffsetUs.set(Long.MIN_VALUE)
+        muxer?.resetForNewClient()
+        currentPlan = newPlan
+        currentConfig = config.copy(lens = newLens, resolution = newResolution, fps = newFps)
+        startVideoPipeline(config.deviceRotationDegrees)
+        return true
+    }
+
     fun setTorch(on: Boolean) { camera?.setTorch(on) }
     fun setAudioMuted(muted: Boolean) { audioEncoder?.muted = muted }
     fun audioPeakDbfs(): Float = audioEncoder?.lastPeakDbfs() ?: -90f

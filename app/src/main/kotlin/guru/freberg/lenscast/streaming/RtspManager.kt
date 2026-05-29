@@ -246,8 +246,42 @@ class RtspManager(
     // decoder dimensions from the SDP at SETUP and never re-read them, so a portrait↔landscape
     // turn would need every client to reconnect (re-DESCRIBE) — there's no clean in-stream
     // change. SRT (MPEG-TS) doesn't have this constraint and rotates live; see
-    // SrtManager.reconfigureVideo. startVideoPipeline() above is therefore only called once,
-    // from start(), with the orientation chosen at Start.
+    // SrtManager.reconfigureVideo.
+
+    /**
+     * Switch the camera lens mid-stream without dropping connected clients. Re-plans for
+     * [newLens] and rebuilds only the camera + GL rotator + video encoder; the RTSP server,
+     * the client's session, the RTP sequence/SSRC state, and audio keep running. The new SPS
+     * ships in-band so the client re-inits its decoder inline.
+     *
+     * Returns false (→ caller does a full restart) when the swap can't be served in place:
+     *  - the new lens's plan has a different resolution (RTSP clients pin decoder dims from the
+     *    SDP — a size change needs a re-DESCRIBE); commonly true when switching between a 4K
+     *    back sensor and a 1080p front one, but a 1080p stream both lenses support stays in place
+     *  - the standard↔high-speed session type would change (GL vs direct encoder surface)
+     *  - local recording is active (MediaMuxer can't change a track's dims mid-file)
+     *  - the new lens has no usable plan
+     */
+    suspend fun switchLens(newLens: Lens, newResolution: Size, newFps: Int): Boolean {
+        val cam = camera ?: return false
+        val config = currentConfig ?: return false
+        val oldPlan = currentPlan ?: return false
+        if (recorder != null) return false
+        val newPlan = cam.plan(newLens, newResolution, newFps) ?: return false
+        if (newPlan.size != oldPlan.size) return false
+        if (newPlan.highSpeed != oldPlan.highSpeed) return false
+        Log.i(TAG, "Seamless RTSP lens switch → $newLens ${newPlan.size}")
+        try { cam.stop() } catch (_: Throwable) {}
+        try { rotator?.release() } catch (_: Throwable) {}
+        rotator = null
+        try { videoEncoder?.stop() } catch (_: Throwable) {}
+        try { videoEncoder?.shutdown() } catch (_: Throwable) {}
+        videoEncoder = null
+        currentPlan = newPlan
+        currentConfig = config.copy(lens = newLens, resolution = newResolution, fps = newFps)
+        startVideoPipeline(config.deviceRotationDegrees)
+        return true
+    }
 
     /**
      * Simple AIMD on the H.264 bitrate driven by per-stream RTCP RR fraction-lost.
