@@ -126,6 +126,20 @@ class WebControlServer(
         val hintImportReplaces: String, val phImportJson: String, val btnImport: String,
         val footerPanel: String,
         val streamLockedHint: String,
+        // SRT transport
+        val protoSrtDesc: String, val srtLiveTitle: String, val srtLiveNote: String,
+        val srtSectionH: String, val lblSrtMode: String, val srtModeCaller: String,
+        val srtModeListener: String, val lblSrtHost: String, val lblSrtPort: String,
+        val lblSrtPassphrase: String, val hintSrtPassphrase: String, val lblSrtLatency: String,
+        val hintSrtLatency: String, val lblSrtStreamId: String, val hintSrtStreamId: String,
+        // Language
+        val lblLanguage: String, val langSystem: String, val langEn: String, val langNb: String,
+        // Web control port
+        val lblWebControlPort: String, val hintWebControlPort: String,
+        // Presets
+        val tabPresets: String, val presetsH: String, val phPresetName: String,
+        val btnSavePreset: String, val btnApplyPreset: String, val btnDeletePreset: String,
+        val hintPresetsLocked: String,
         // WebRTC viewer
         val viewerTitle: String, val viewerH1: String, val viewerNote: String, val viewerBtnConnect: String,
     )
@@ -264,6 +278,34 @@ class WebControlServer(
             btnImport = s(R.string.web_btn_import),
             footerPanel = s(R.string.web_footer_panel),
             streamLockedHint = s(R.string.web_stream_locked_hint),
+            protoSrtDesc = s(R.string.web_proto_srt_desc),
+            srtLiveTitle = s(R.string.web_srt_live_title),
+            srtLiveNote = s(R.string.web_srt_live_note),
+            srtSectionH = s(R.string.web_srt_section_h),
+            lblSrtMode = s(R.string.web_lbl_srt_mode),
+            srtModeCaller = s(R.string.web_srt_mode_caller),
+            srtModeListener = s(R.string.web_srt_mode_listener),
+            lblSrtHost = s(R.string.web_lbl_srt_host),
+            lblSrtPort = s(R.string.web_lbl_srt_port),
+            lblSrtPassphrase = s(R.string.web_lbl_srt_passphrase),
+            hintSrtPassphrase = s(R.string.web_hint_srt_passphrase),
+            lblSrtLatency = s(R.string.web_lbl_srt_latency),
+            hintSrtLatency = s(R.string.web_hint_srt_latency),
+            lblSrtStreamId = s(R.string.web_lbl_srt_streamid),
+            hintSrtStreamId = s(R.string.web_hint_srt_streamid),
+            lblLanguage = s(R.string.web_lbl_language),
+            langSystem = s(R.string.web_lang_system),
+            langEn = s(R.string.web_lang_en),
+            langNb = s(R.string.web_lang_nb),
+            lblWebControlPort = s(R.string.web_lbl_web_control_port),
+            hintWebControlPort = s(R.string.web_hint_web_control_port),
+            tabPresets = s(R.string.web_tab_presets),
+            presetsH = s(R.string.web_presets_h),
+            phPresetName = s(R.string.web_ph_preset_name),
+            btnSavePreset = s(R.string.web_btn_save_preset),
+            btnApplyPreset = s(R.string.web_btn_apply_preset),
+            btnDeletePreset = s(R.string.web_btn_delete_preset),
+            hintPresetsLocked = s(R.string.web_hint_presets_locked),
             viewerTitle = s(R.string.web_viewer_title), viewerH1 = s(R.string.web_viewer_h1),
             viewerNote = s(R.string.web_viewer_note),
             viewerBtnConnect = s(R.string.web_viewer_btn_connect),
@@ -414,6 +456,21 @@ class WebControlServer(
                         if (isStreaming) error("Stop the stream first to change $k.")
                         else error("Setting $k = $v is invalid.")
                     }
+                }
+                pathOnly == "/control/preset/save"   && method == "POST" -> handleControl(out) {
+                    val n = queryParam(query, "name") ?: error("missing name=")
+                    val ok = control.savePreset(n)
+                    if (!ok) error("cannot save preset (blank name or stream running)")
+                }
+                pathOnly == "/control/preset/apply"  && method == "POST" -> handleControl(out) {
+                    val n = queryParam(query, "name") ?: error("missing name=")
+                    val ok = control.applyPreset(n)
+                    if (!ok) error("cannot apply '$n' (unknown preset or stream running)")
+                }
+                pathOnly == "/control/preset/delete" && method == "POST" -> handleControl(out) {
+                    val n = queryParam(query, "name") ?: error("missing name=")
+                    val ok = control.deletePreset(n)
+                    if (!ok) error("no preset named '$n'")
                 }
                 pathOnly == "/control/kick"       && method == "POST" -> handleControl(out) {
                     // queryParam already percent-decodes, so the host:port arrives intact.
@@ -791,6 +848,14 @@ class WebControlServer(
             "persistent_web" to R.string.web_help_persistent_web,
             "export" to R.string.web_help_export,
             "import" to R.string.web_help_import,
+            "srt_mode" to R.string.web_help_srt_mode,
+            "srt_host" to R.string.web_help_srt_host,
+            "srt_port" to R.string.web_help_srt_port,
+            "srt_passphrase" to R.string.web_help_srt_passphrase,
+            "srt_latency" to R.string.web_help_srt_latency,
+            "srt_streamid" to R.string.web_help_srt_streamid,
+            "language" to R.string.web_help_language,
+            "web_control_port" to R.string.web_help_web_control_port,
         )
         fun esc(s: String) = s.replace("\\", "\\\\").replace("\"", "\\\"")
             .replace("\n", "\\n").replace("\r", "\\r")
@@ -1045,6 +1110,13 @@ class WebControlServer(
                           <div class="proto-desc">${i.protoWebrtcDesc}</div>
                         </div>
                       </label>
+                      <label class="proto">
+                        <input type="radio" name="proto" value="srt">
+                        <div class="proto-inner">
+                          <div class="proto-name">SRT</div>
+                          <div class="proto-desc">${i.protoSrtDesc}</div>
+                        </div>
+                      </label>
                     </div>
                     <button data-act="start" class="btn primary big">${i.start}</button>
                   </div>
@@ -1083,6 +1155,19 @@ class WebControlServer(
                       <a id="webrtc-view-link" href="/webrtc/view" target="_blank">${i.webrtcViewLink}</a>
                       <code id="webrtc-whep-url"></code>
                     </div>
+                  </div>
+
+                  <!-- Live SRT hero -->
+                  <div id="srt-block" class="hidden">
+                    <div class="preview-frame">
+                      <div class="overlay">
+                        <div>
+                          <div class="big">${i.srtLiveTitle}</div>
+                          <div class="small">${i.srtLiveNote}</div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="links"><code id="srt-url"></code></div>
                   </div>
                 </section>
 
@@ -1158,6 +1243,7 @@ class WebControlServer(
                     <button class="tab" role="tab" data-tab="audio">${i.tabAudio}</button>
                     <button class="tab" role="tab" data-tab="stream">${i.tabStream}</button>
                     <button class="tab" role="tab" data-tab="ux">${i.tabUx}</button>
+                    <button class="tab" role="tab" data-tab="presets">${i.tabPresets}</button>
                     <button class="tab" role="tab" data-tab="system">${i.tabSystem}</button>
                   </div>
 
@@ -1334,6 +1420,44 @@ class WebControlServer(
 
                   <!-- Stream tab -->
                   <div class="panel" data-panel="stream">
+                    <!-- SRT transport — whole block hidden unless protocol = SRT (JS-gated
+                         via #srt-settings) and stream-locked while live. -->
+                    <div id="srt-settings" class="hidden">
+                      <div class="l" style="color:var(--text-dim);font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;margin-bottom:var(--gap-2)">${i.srtSectionH}</div>
+                      <div class="field stream-locked" data-help="srt_mode">
+                        <div class="l">${i.lblSrtMode}</div>
+                        <div class="c">
+                          <select data-setting="srtMode">
+                            <option value="listener">${i.srtModeListener}</option>
+                            <option value="caller">${i.srtModeCaller}</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div class="field stream-locked" id="srt-host-row" data-help="srt_host">
+                        <div class="l">${i.lblSrtHost}</div>
+                        <div class="c"><input type="text" data-setting="srtHost" placeholder="srt.example.org"></div>
+                      </div>
+                      <div class="field stream-locked" data-help="srt_port">
+                        <div class="l">${i.lblSrtPort}</div>
+                        <div class="c"><input type="number" min="1024" max="65535" data-setting-int="srtPort"></div>
+                      </div>
+                      <div class="field stream-locked" data-help="srt_passphrase">
+                        <div class="l">${i.lblSrtPassphrase}<small>${i.hintSrtPassphrase}</small></div>
+                        <div class="c"><input type="password" data-setting="srtPassphrase"></div>
+                      </div>
+                      <div class="field stream-locked" data-help="srt_latency">
+                        <div class="l">${i.lblSrtLatency}<small>${i.hintSrtLatency}</small></div>
+                        <div class="c">
+                          <input type="range" min="20" max="8000" step="20" data-setting-range="srtLatencyMs">
+                          <span class="val" data-rangeval="srtLatencyMs">200</span><span class="val">ms</span>
+                        </div>
+                      </div>
+                      <div class="field stream-locked" data-help="srt_streamid">
+                        <div class="l">${i.lblSrtStreamId}<small>${i.hintSrtStreamId}</small></div>
+                        <div class="c"><input type="text" data-setting="srtStreamId"></div>
+                      </div>
+                      <div class="divider"></div>
+                    </div>
                     <div class="field" data-help="jpeg_quality">
                       <div class="l">${i.lblJpegQuality}<small>${i.hintMjpegOutput}</small></div>
                       <div class="c">
@@ -1416,6 +1540,19 @@ class WebControlServer(
                     </div>
                   </div>
 
+                  <!-- Presets tab -->
+                  <div class="panel" data-panel="presets">
+                    <div class="field stream-locked">
+                      <div class="l">${i.presetsH}</div>
+                      <div class="c" style="flex:1">
+                        <input type="text" id="preset-name" placeholder="${i.phPresetName}" style="flex:1">
+                        <button class="btn" id="preset-save-btn">${i.btnSavePreset}</button>
+                      </div>
+                    </div>
+                    <div id="presets-list" style="display:flex;flex-direction:column;gap:var(--gap-2)"></div>
+                    <p class="stream-only" style="display:none;color:var(--text-mute);font-size:12px;text-align:center;margin:8px 0">${i.hintPresetsLocked}</p>
+                  </div>
+
                   <!-- System / Advanced tab -->
                   <div class="panel" data-panel="system">
                     <div class="field stream-locked" data-help="mjpeg_port">
@@ -1425,6 +1562,10 @@ class WebControlServer(
                     <div class="field stream-locked" data-help="rtsp_port">
                       <div class="l">${i.lblRtspPort}</div>
                       <div class="c"><input type="number" min="1024" max="65535" data-setting-int="rtspPort"></div>
+                    </div>
+                    <div class="field" data-help="web_control_port">
+                      <div class="l">${i.lblWebControlPort}<small>${i.hintWebControlPort}</small></div>
+                      <div class="c"><input type="number" min="1024" max="65535" data-setting-int="webControlPort"></div>
                     </div>
                     <div class="divider stream-locked"></div>
                     <div class="field stream-locked" data-help="https">
@@ -1458,6 +1599,17 @@ class WebControlServer(
                     <div class="field" data-help="persistent_web">
                       <div class="l">${i.lblPersistentWeb}<small>${i.hintPersistentWeb}</small></div>
                       <div class="c"><input type="checkbox" data-setting="persistentWebControl"></div>
+                    </div>
+                    <div class="divider"></div>
+                    <div class="field" data-help="language">
+                      <div class="l">${i.lblLanguage}</div>
+                      <div class="c">
+                        <select data-setting="languageTag">
+                          <option value="">${i.langSystem}</option>
+                          <option value="en">${i.langEn}</option>
+                          <option value="nb">${i.langNb}</option>
+                        </select>
+                      </div>
                     </div>
                     <div class="divider"></div>
                     <div class="field" data-help="export">
@@ -1748,6 +1900,52 @@ class WebControlServer(
                   } catch (e) { showToast('import: ' + e, true); }
                 });
 
+                // ── Presets ───────────────────────────────────────────
+                document.getElementById('preset-save-btn').addEventListener('click', async () => {
+                  const name = document.getElementById('preset-name').value.trim();
+                  if (!name) { showToast('preset: enter a name first', true); return; }
+                  await post('preset/save', 'name=' + encodeURIComponent(name));
+                  document.getElementById('preset-name').value = '';
+                  refresh();
+                });
+                // Renders the saved-preset list each /status tick. Keyed on the serialized
+                // list so we skip the DOM rebuild (and its focus churn) when nothing changed.
+                let presetsKey = null;
+                function renderPresets(presets) {
+                  const key = JSON.stringify(presets || []);
+                  if (key === presetsKey) return;
+                  presetsKey = key;
+                  const wrap = document.getElementById('presets-list');
+                  wrap.replaceChildren(...(presets || []).map(p => {
+                    const row = document.createElement('div');
+                    row.className = 'field';
+                    const l = document.createElement('div');
+                    l.className = 'l';
+                    l.innerHTML = '<b></b><small></small>';
+                    l.querySelector('b').textContent = p.name;
+                    l.querySelector('small').textContent =
+                      p.protocol.toUpperCase() + ' · ' + p.resolution + ' · ' + p.fps + ' fps · ' + p.lens;
+                    const c = document.createElement('div');
+                    c.className = 'c';
+                    const apply = document.createElement('button');
+                    apply.className = 'btn'; apply.textContent = '${i.btnApplyPreset}';
+                    apply.classList.add('stream-locked');
+                    apply.addEventListener('click', async () => {
+                      await post('preset/apply', 'name=' + encodeURIComponent(p.name));
+                      refresh();
+                    });
+                    const del = document.createElement('button');
+                    del.className = 'btn ghost'; del.textContent = '${i.btnDeletePreset}';
+                    del.addEventListener('click', async () => {
+                      await post('preset/delete', 'name=' + encodeURIComponent(p.name));
+                      refresh();
+                    });
+                    c.appendChild(apply); c.appendChild(del);
+                    row.appendChild(l); row.appendChild(c);
+                    return row;
+                  }));
+                }
+
                 // ── JPEG quality slider (live, debounced) ─────────────
                 const q = document.getElementById('q');
                 let qTimer = null;
@@ -1803,7 +2001,7 @@ class WebControlServer(
 
                   // Hero title
                   document.getElementById('hero-title').textContent = live
-                    ? (s.protocol === 'mjpeg' ? 'Live preview' : 'RTSP active')
+                    ? (s.protocol === 'mjpeg' ? 'Live preview' : (s.protocol || '').toUpperCase() + ' active')
                     : 'Ready';
 
                   // Hero swap
@@ -1811,6 +2009,22 @@ class WebControlServer(
                   show('mjpeg-block', live && s.protocol === 'mjpeg');
                   show('rtsp-block',  live && s.protocol === 'rtsp');
                   show('webrtc-block', live && s.protocol === 'webrtc');
+                  show('srt-block',   live && s.protocol === 'srt');
+
+                  // SRT pull URL — only meaningful in LISTENER mode (receivers pull from the
+                  // phone). In CALLER mode the phone dials out, so there's no local URL.
+                  if (s.protocol === 'srt' && s.srtPort) {
+                    const srtEl = document.getElementById('srt-url');
+                    srtEl.textContent = (s.srtMode === 'caller')
+                      ? 'caller → ' + (s.srtHost || '?') + ':' + s.srtPort
+                      : 'srt://' + host + ':' + s.srtPort;
+                  }
+
+                  // SRT settings block — only shown when SRT is the selected protocol;
+                  // the host row only matters in CALLER mode.
+                  show('srt-settings', s.protocol === 'srt');
+                  const srtHostRow = document.getElementById('srt-host-row');
+                  if (srtHostRow) srtHostRow.style.display = (s.srtMode === 'caller') ? '' : 'none';
                   // Lazy-attach the in-panel WebRTC preview on the live→live transition.
                   if (live && s.protocol === 'webrtc') ensureWebRtcPreview();
                   else tearDownWebRtcPreview();
@@ -1948,6 +2162,9 @@ class WebControlServer(
                   // TLS fingerprint in the System tab
                   if (s.tlsFingerprint)
                     document.getElementById('tls-fingerprint').textContent = s.tlsFingerprint;
+
+                  // Presets list
+                  renderPresets(s.presets);
 
                   // Manual exposure: gate the row + clamp slider ranges
                   const manualOk = !!s.supportsManualSensor;

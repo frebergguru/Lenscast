@@ -191,12 +191,14 @@ fun MainScreen(
     // also polls the client count so it updates without depending on other state changes.
     var fpsObserved by remember { mutableStateOf(0) }
     var clientsObserved by remember { mutableStateOf(0) }
+    var clientList by remember { mutableStateOf<List<String>>(emptyList()) }
     var audioPeak by remember { mutableStateOf(-90f) }
     var txKbps by remember { mutableStateOf(0) }
     LaunchedEffect(streaming, service) {
         if (!streaming || service == null) {
             fpsObserved = 0
             clientsObserved = 0
+            clientList = emptyList()
             audioPeak = -90f
             txKbps = 0
             return@LaunchedEffect
@@ -205,6 +207,7 @@ fun MainScreen(
         var lastBytes = service.bytesSentNow()
         var lastT = System.currentTimeMillis()
         clientsObserved = service.connectedClientCount()
+        clientList = service.clientAddresses()
         while (true) {
             delay(250)
             val now = System.currentTimeMillis()
@@ -214,6 +217,7 @@ fun MainScreen(
             fpsObserved = ((count - lastCount) * 1000.0 / dt).toInt()
             txKbps = (((bytes - lastBytes) * 8.0) / dt).toInt() // bytes * 8 / ms = kbps
             clientsObserved = service.connectedClientCount()
+            clientList = service.clientAddresses()
             audioPeak = service.audioPeakDbfs()
             lastCount = count
             lastBytes = bytes
@@ -543,6 +547,17 @@ fun MainScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+                if (clientList.isNotEmpty()) {
+                    ClientsCard(
+                        clients = clientList,
+                        onKick = { addr ->
+                            scope.launch {
+                                val ok = service?.kickClient(addr) ?: false
+                                if (ok) clientList = clientList.filterNot { it == addr }
+                            }
+                        },
+                    )
+                }
             }
             ConnectionInfoCard(
                 wifiIp = localIp,
@@ -839,6 +854,53 @@ private fun PrimaryActionButton(
                     text = if (isLive) stringResource(R.string.action_stop) else stringResource(R.string.action_start),
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                 )
+            }
+        }
+    }
+}
+
+/**
+ * Connected-clients list with a per-client "Drop" button — the on-device twin of the web
+ * panel's client list. Only rendered while streaming with at least one client. Kicking
+ * closes the matching streaming socket via [StreamingService.kickClient]; well-behaved
+ * receivers reconnect, misbehaving / forgotten ones stay gone.
+ */
+@Composable
+private fun ClientsCard(
+    clients: List<String>,
+    onKick: (String) -> Unit,
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                text = stringResource(R.string.clients_card_title, clients.size),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            clients.forEach { addr ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
+                ) {
+                    Text(
+                        text = addr,
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    androidx.compose.material3.TextButton(onClick = { onKick(addr) }) {
+                        Text(stringResource(R.string.action_drop_client))
+                    }
+                }
             }
         }
     }

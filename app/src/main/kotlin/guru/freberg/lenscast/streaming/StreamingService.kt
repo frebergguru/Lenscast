@@ -782,6 +782,42 @@ class StreamingService : LifecycleService() {
                     if (streaming) return null
                     Pair({ it.copy(streamPassword = value) }, false)
                 }
+                "webControlPort" -> {
+                    // Editable any time (matches the app); the repo.flow observer rebinds the
+                    // web server on change. From the browser this drops the current connection
+                    // once the server re-binds on the new port — expected.
+                    val p = value.toIntOrNull()?.takeIf { it in 1024..65535 } ?: return null
+                    Pair({ it.copy(webControlPort = p) }, false)
+                }
+                // SRT transport — all locked while streaming, mirroring the app's disabled
+                // fields. SrtManager reconfigures rotation in place but not these knobs.
+                "srtMode" -> {
+                    if (streaming) return null
+                    val m = enumValueOrNull<guru.freberg.lenscast.prefs.SrtMode>(v) ?: return null
+                    Pair({ it.copy(srtMode = m) }, false)
+                }
+                "srtHost" -> {
+                    if (streaming) return null
+                    Pair({ it.copy(srtHost = value.trim().take(255)) }, false)
+                }
+                "srtPort" -> {
+                    if (streaming) return null
+                    val p = value.toIntOrNull()?.takeIf { it in 1024..65535 } ?: return null
+                    Pair({ it.copy(srtPort = p) }, false)
+                }
+                "srtPassphrase" -> {
+                    if (streaming) return null
+                    Pair({ it.copy(srtPassphrase = value.take(79)) }, false)
+                }
+                "srtLatencyMs" -> {
+                    if (streaming) return null
+                    val n = value.toIntOrNull()?.coerceIn(20, 8000) ?: return null
+                    Pair({ it.copy(srtLatencyMs = n) }, false)
+                }
+                "srtStreamId" -> {
+                    if (streaming) return null
+                    Pair({ it.copy(srtStreamId = value.trim().take(255)) }, false)
+                }
                 else -> null
             }
         }
@@ -810,6 +846,53 @@ class StreamingService : LifecycleService() {
 
         override fun retryLastSftpUpload(): Boolean = this@StreamingService.retryLastSftpUpload()
         override fun sftpStatusJson(): String = this@StreamingService.sftpStatusJson()
+
+        override fun savePreset(name: String): Boolean {
+            val trimmed = name.trim().take(40)
+            if (trimmed.isEmpty()) return false
+            if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                repo.update { s ->
+                    val preset = guru.freberg.lenscast.prefs.Preset(
+                        name = trimmed, protocol = s.protocol, resolution = s.resolution,
+                        fps = s.fps, lens = s.lens,
+                    )
+                    // Replace a same-named preset rather than duplicating it.
+                    s.copy(presets = s.presets.filterNot { it.name == trimmed } + preset)
+                }
+                _status.value = _status.value.copy(settings = repo.flow.first())
+            }
+            return true
+        }
+
+        override fun applyPreset(name: String): Boolean {
+            if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
+            val preset = _status.value.settings.presets.firstOrNull { it.name == name } ?: return false
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                repo.update {
+                    it.copy(
+                        protocol = preset.protocol, resolution = preset.resolution,
+                        fps = preset.fps, lens = preset.lens,
+                    )
+                }
+                val s = repo.flow.first()
+                rebindCameraFor(s)
+                _status.value = _status.value.copy(settings = s)
+            }
+            return true
+        }
+
+        override fun deletePreset(name: String): Boolean {
+            if (_status.value.settings.presets.none { it.name == name }) return false
+            val repo = SettingsRepository(this@StreamingService)
+            lifecycleScope.launch {
+                repo.update { s -> s.copy(presets = s.presets.filterNot { it.name == name }) }
+                _status.value = _status.value.copy(settings = repo.flow.first())
+            }
+            return true
+        }
 
         override fun startStream(): Boolean {
             if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
@@ -889,7 +972,25 @@ class StreamingService : LifecycleService() {
                 """"startOnBoot":${s.startOnBoot},""" +
                 """"recordLocally":${s.recordLocally},""" +
                 // ports
-                """"mjpegPort":${s.mjpegPort},"rtspPort":${s.rtspPort}""" +
+                """"mjpegPort":${s.mjpegPort},"rtspPort":${s.rtspPort},""" +
+                """"webControlPort":${s.webControlPort},""" +
+                // SRT transport
+                """"srtMode":"${lower(s.srtMode)}",""" +
+                """"srtHost":"${jsonEscape(s.srtHost)}",""" +
+                """"srtPort":${s.srtPort},""" +
+                """"srtPassphrase":"${jsonEscape(s.srtPassphrase)}",""" +
+                """"srtLatencyMs":${s.srtLatencyMs},""" +
+                """"srtStreamId":"${jsonEscape(s.srtStreamId)}",""" +
+                // presets — name + the streaming-shape fields the app preset carries
+                """"presets":[${s.presets.joinToString(",") { p ->
+                    "{" +
+                        """"name":"${jsonEscape(p.name)}",""" +
+                        """"protocol":"${lower(p.protocol)}",""" +
+                        """"resolution":"${p.resolution.label}",""" +
+                        """"fps":${p.fps.value},""" +
+                        """"lens":"${lower(p.lens)}"""" +
+                    "}"
+                }}]""" +
             "}"
         }
     }

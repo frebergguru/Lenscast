@@ -88,6 +88,14 @@ interface MjpegControl {
     fun retryLastSftpUpload(): Boolean
     /** One-line JSON snapshot of the SFTP queue + last error / success. */
     fun sftpStatusJson(): String
+    /** Save the current streaming-shape settings (protocol/resolution/fps/lens) as a named
+     *  preset. Returns false on a blank name or while streaming. */
+    fun savePreset(name: String): Boolean
+    /** Apply a saved preset by name (sets protocol/resolution/fps/lens). Returns false on an
+     *  unknown name or while streaming. */
+    fun applyPreset(name: String): Boolean
+    /** Delete a saved preset by name. Returns false if no preset matched. */
+    fun deletePreset(name: String): Boolean
 }
 
 class MjpegServer(

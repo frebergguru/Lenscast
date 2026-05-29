@@ -27,6 +27,8 @@
     <string name="stat_resolution">Resolution</string>
     <string name="stat_fps">FPS</string>
     <string name="stat_clients">Clients</string>
+    <string name="clients_card_title">Connected clients (%1$d)</string>
+    <string name="action_drop_client">Drop</string>
     <string name="stat_protocol">Protocol</string>
     <string name="stat_bitrate">Bitrate</string>
 
@@ -391,6 +393,34 @@
     <string name="web_btn_import">Import</string>
     <string name="web_footer_panel">control panel</string>
     <string name="web_stream_locked_hint">Stop the stream to change these settings.</string>
+    <string name="web_proto_srt_desc">H.264 + AAC over SRT. Low-latency, loss-tolerant. Rotates live. OBS / ffmpeg / VLC.</string>
+    <string name="web_srt_live_title">SRT is live</string>
+    <string name="web_srt_live_note">Pull with OBS / ffmpeg / VLC — browsers can\'t render SRT natively.</string>
+    <string name="web_srt_section_h">SRT transport</string>
+    <string name="web_lbl_srt_mode">Mode</string>
+    <string name="web_srt_mode_caller">Caller (dial out)</string>
+    <string name="web_srt_mode_listener">Listener (receivers pull)</string>
+    <string name="web_lbl_srt_host">Remote host</string>
+    <string name="web_lbl_srt_port">SRT port</string>
+    <string name="web_lbl_srt_passphrase">Encryption passphrase</string>
+    <string name="web_hint_srt_passphrase">10–79 chars. Blank disables encryption.</string>
+    <string name="web_lbl_srt_latency">Latency window</string>
+    <string name="web_hint_srt_latency">SRT ARQ window. 120–300 ms typical.</string>
+    <string name="web_lbl_srt_streamid">Stream ID (optional)</string>
+    <string name="web_hint_srt_streamid">Sent on connect (CALLER). Leave blank for most setups.</string>
+    <string name="web_lbl_language">App language</string>
+    <string name="web_lang_system">Follow system</string>
+    <string name="web_lang_en">English</string>
+    <string name="web_lang_nb">Norsk (Bokmål)</string>
+    <string name="web_lbl_web_control_port">Web control port</string>
+    <string name="web_hint_web_control_port">Changing this reloads the panel on the new port</string>
+    <string name="web_tab_presets">Presets</string>
+    <string name="web_presets_h">Save current shape</string>
+    <string name="web_ph_preset_name">Preset name</string>
+    <string name="web_btn_save_preset">Save</string>
+    <string name="web_btn_apply_preset">Apply</string>
+    <string name="web_btn_delete_preset">Delete</string>
+    <string name="web_hint_presets_locked">Stop the stream to save or apply presets.</string>
 
     <!-- Settings sheet — collapsible section titles. -->
     <string name="settings_group_streaming_basics">Streaming basics</string>
@@ -468,6 +498,14 @@
     <string name="web_help_persistent_web">Keeps this web control panel reachable when the app is backgrounded. Adds a persistent low-priority notification.</string>
     <string name="web_help_export">Download every setting as a JSON file you can re-import on another phone.</string>
     <string name="web_help_import">Replace every setting with a previously-exported JSON blob. Stream must be stopped.</string>
+    <string name="web_help_srt_mode">Listener = receivers pull from the phone (srt://phone-ip:port). Caller = the phone dials out to a remote SRT listener; easiest through NAT.</string>
+    <string name="web_help_srt_host">Hostname/IP of the remote SRT listener to dial out to. Only used in Caller mode.</string>
+    <string name="web_help_srt_port">TCP/UDP port for the SRT stream. Listener mode binds it on the phone; Caller mode connects to it on the remote host.</string>
+    <string name="web_help_srt_passphrase">AES passphrase for SRT encryption. 10–79 characters. Blank = no encryption. Receivers must match it.</string>
+    <string name="web_help_srt_latency">How far back the receiver can request retransmits, in milliseconds. Lower = less delay; higher = better packet-loss tolerance on cellular.</string>
+    <string name="web_help_srt_streamid">Optional streamid sent on connect in Caller mode, used by the receiver to route the connection.</string>
+    <string name="web_help_language">Language for this control panel and the app UI. Follow system uses the phone\'s language.</string>
+    <string name="web_help_web_control_port">TCP port this control panel listens on. Changing it reloads the panel at the new port.</string>
 
     <!-- WebRTC viewer (the standalone /webrtc/view page) -->
     <string name="web_viewer_title">Lenscast — WebRTC</string>

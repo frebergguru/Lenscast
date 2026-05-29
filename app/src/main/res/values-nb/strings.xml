@@ -27,6 +27,8 @@
     <string name="stat_resolution">Oppløsning</string>
     <string name="stat_fps">FPS</string>
     <string name="stat_clients">Klienter</string>
+    <string name="clients_card_title">Tilkoblede klienter (%1$d)</string>
+    <string name="action_drop_client">Koble fra</string>
     <string name="stat_protocol">Protokoll</string>
     <string name="stat_bitrate">Bitrate</string>
 
@@ -389,6 +391,34 @@
     <string name="web_btn_import">Importer</string>
     <string name="web_footer_panel">kontrollpanel</string>
     <string name="web_stream_locked_hint">Stopp strømmen for å endre disse innstillingene.</string>
+    <string name="web_proto_srt_desc">H.264 + AAC over SRT. Lav latens, tåler pakketap. Roterer live. OBS / ffmpeg / VLC.</string>
+    <string name="web_srt_live_title">SRT er aktiv</string>
+    <string name="web_srt_live_note">Hent med OBS / ffmpeg / VLC — nettlesere kan ikke vise SRT direkte.</string>
+    <string name="web_srt_section_h">SRT-transport</string>
+    <string name="web_lbl_srt_mode">Modus</string>
+    <string name="web_srt_mode_caller">Oppringer (ring ut)</string>
+    <string name="web_srt_mode_listener">Lytter (mottakere henter)</string>
+    <string name="web_lbl_srt_host">Ekstern vert</string>
+    <string name="web_lbl_srt_port">SRT-port</string>
+    <string name="web_lbl_srt_passphrase">Krypteringspassord</string>
+    <string name="web_hint_srt_passphrase">10–79 tegn. Tomt slår av kryptering.</string>
+    <string name="web_lbl_srt_latency">Latensvindu</string>
+    <string name="web_hint_srt_latency">SRT ARQ-vindu. 120–300 ms er vanlig.</string>
+    <string name="web_lbl_srt_streamid">Strøm-ID (valgfritt)</string>
+    <string name="web_hint_srt_streamid">Sendes ved tilkobling (oppringer). La stå tomt i de fleste oppsett.</string>
+    <string name="web_lbl_language">Appspråk</string>
+    <string name="web_lang_system">Følg systemet</string>
+    <string name="web_lang_en">English</string>
+    <string name="web_lang_nb">Norsk (Bokmål)</string>
+    <string name="web_lbl_web_control_port">Kontrollpanel-port</string>
+    <string name="web_hint_web_control_port">Endring laster panelet på nytt på den nye porten</string>
+    <string name="web_tab_presets">Forhåndsinnst.</string>
+    <string name="web_presets_h">Lagre gjeldende oppsett</string>
+    <string name="web_ph_preset_name">Navn på forhåndsinnstilling</string>
+    <string name="web_btn_save_preset">Lagre</string>
+    <string name="web_btn_apply_preset">Bruk</string>
+    <string name="web_btn_delete_preset">Slett</string>
+    <string name="web_hint_presets_locked">Stopp strømmen for å lagre eller bruke forhåndsinnstillinger.</string>
 
     <string name="settings_group_streaming_basics">Strømming – grunnleggende</string>
     <string name="settings_group_image">Bilde</string>
@@ -459,6 +489,14 @@
     <string name="web_help_persistent_web">Holder dette webkontrollpanelet tilgjengelig når appen er i bakgrunnen. Legger til et vedvarende varsel med lav prioritet.</string>
     <string name="web_help_export">Last ned alle innstillinger som en JSON-fil du kan importere på en annen telefon.</string>
     <string name="web_help_import">Erstatt alle innstillinger med en tidligere eksportert JSON. Strømmen må være stoppet.</string>
+    <string name="web_help_srt_mode">Lytter = mottakere henter fra telefonen (srt://telefon-ip:port). Oppringer = telefonen ringer ut til en ekstern SRT-lytter; enklest gjennom NAT.</string>
+    <string name="web_help_srt_host">Vertsnavn/IP til den eksterne SRT-lytteren det ringes til. Brukes bare i oppringermodus.</string>
+    <string name="web_help_srt_port">TCP/UDP-port for SRT-strømmen. Lyttermodus binder den på telefonen; oppringermodus kobler til den på den eksterne verten.</string>
+    <string name="web_help_srt_passphrase">AES-passord for SRT-kryptering. 10–79 tegn. Tomt = ingen kryptering. Mottakere må bruke samme.</string>
+    <string name="web_help_srt_latency">Hvor langt tilbake mottakeren kan be om retransmisjoner, i millisekunder. Lavere = mindre forsinkelse; høyere = bedre toleranse for pakketap på mobilnett.</string>
+    <string name="web_help_srt_streamid">Valgfri strøm-ID som sendes ved tilkobling i oppringermodus, brukt av mottakeren til å rute tilkoblingen.</string>
+    <string name="web_help_language">Språk for dette kontrollpanelet og appen. Følg systemet bruker telefonens språk.</string>
+    <string name="web_help_web_control_port">TCP-porten dette kontrollpanelet lytter på. Endring laster panelet på nytt på den nye porten.</string>
 
     <!-- WebRTC-visning -->
     <string name="web_viewer_title">Lenscast — WebRTC</string>
