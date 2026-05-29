@@ -295,6 +295,9 @@ class RtspSession(
             raw.unread(first)
             val request = readRequest(raw) ?: break
             handle(request)
+            // RFC 7826 §18.10: a client may ask us to drop the persistent connection after
+            // this exchange. We echo `Connection: close` (see echoHeaders) and close here.
+            if (request.headers["connection"]?.contains("close", ignoreCase = true) == true) break
         }
     }
 
@@ -391,23 +394,29 @@ class RtspSession(
             respondUnauthorized(req)
             return
         }
-        // We support no optional feature tags, so any Require/Proxy-Require must be refused
-        // with the unsupported tags echoed back (RFC 7826 §18.43 / RFC 2326 §12.32).
-        val require = req.headers["require"] ?: req.headers["proxy-require"]
-        if (!require.isNullOrBlank()) {
-            respond(req, 551, "Option not supported", extra = "Unsupported: $require\r\n"); return
+        // Feature negotiation (RFC 7826 §18.43 / RFC 2326 §12.32): refuse only the tags we
+        // don't implement. Refusing one we DO support (e.g. play.basic) would itself violate
+        // the spec, so we filter against SUPPORTED_FEATURES and 551 only the leftovers.
+        val required = (req.headers["require"].orEmpty() + "," + req.headers["proxy-require"].orEmpty())
+            .split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        val unsupported = required.filter { it !in SUPPORTED_FEATURES }
+        if (unsupported.isNotEmpty()) {
+            respond(req, 551, "Option not supported", extra = "Unsupported: ${unsupported.joinToString(", ")}\r\n")
+            return
+        }
+        // A Session header naming an id we never issued is a stale or foreign session
+        // (RFC 7826 §18.49 / RFC 2326 §11.3.7). Clients using Pipelined-Requests carry no
+        // Session id yet, so an absent header is fine — the state machine guards those.
+        val sid = req.headers["session"]?.substringBefore(';')?.trim()
+        if (!sid.isNullOrEmpty() && sid != sessionId) {
+            respond(req, 454, "Session Not Found"); return
         }
         when (method) {
             "OPTIONS" -> respond(req, 200, "OK", extra = "Public: $PUBLIC_METHODS\r\n")
             "DESCRIBE" -> handleDescribe(req)
             "SETUP" -> handleSetup(req)
             "PLAY" -> handlePlay(req)
-            "PAUSE" -> {
-                // Real PAUSE: stop delivery but keep the session/transports so a later PLAY
-                // resumes (RFC 7826 §13.6). PAUSE in READY is a no-op per spec.
-                if (state == State.PLAYING) { state = State.READY; pauseDelivery() }
-                respond(req, 200, "OK", extra = "Session: $sessionId\r\n")
-            }
+            "PAUSE" -> handlePause(req)
             "TEARDOWN" -> {
                 respond(req, 200, "OK", extra = "Session: $sessionId\r\n")
                 state = State.TEARDOWN
@@ -421,6 +430,16 @@ class RtspSession(
             }
             else -> respond(req, 501, "Not Implemented", extra = "Allow: $PUBLIC_METHODS\r\n")
         }
+    }
+
+    private fun handlePause(req: Request) {
+        // PAUSE needs an established session: in Init it is out of sequence (RFC 7826
+        // §13.6 / §17.1 state table). In Ready it's a harmless no-op; in Play it stops media.
+        if (state == State.INIT) {
+            respond(req, 455, "Method Not Valid in This State", extra = "Allow: $PUBLIC_METHODS\r\n"); return
+        }
+        if (state == State.PLAYING) { state = State.READY; pauseDelivery() }
+        respond(req, 200, "OK", extra = "Session: $sessionId\r\n")
     }
 
     /**
@@ -456,6 +475,14 @@ class RtspSession(
     }
 
     private fun handleDescribe(req: Request) {
+        // We only describe via SDP. If the client's Accept rules SDP out entirely, say so
+        // rather than send a body it asked us not to (RFC 7826 §18.1).
+        val accept = req.headers["accept"]
+        if (accept != null && !accept.contains("application/sdp", ignoreCase = true) &&
+            !accept.contains("*/*") && !accept.contains("application/*", ignoreCase = true)
+        ) {
+            respond(req, 406, "Not Acceptable"); return
+        }
         val video = provider.videoTrack()
         if (video == null) {
             android.util.Log.w("RtspSession", "DESCRIBE rejected: no video track available yet")
@@ -542,6 +569,13 @@ class RtspSession(
         if (state != State.READY && state != State.PLAYING) {
             respond(req, 455, "Method Not Valid in This State", extra = "Allow: $PUBLIC_METHODS\r\n"); return
         }
+        // This is a live, non-seekable source, so the only range unit we can honour is NPT
+        // (and only its open/`now` forms). A smpte/clock/utc range can't be satisfied
+        // against a stream with no stored timeline (RFC 7826 §18.40 → 457).
+        val reqRange = req.headers["range"]?.trim()
+        if (reqRange != null && !reqRange.startsWith("npt", ignoreCase = true)) {
+            respond(req, 457, "Invalid Range"); return
+        }
         // Re-PLAY while already playing (or after PAUSE): drop the old wiring first so we
         // don't register a second sink and double-send every packet.
         if (state == State.PLAYING) pauseDelivery()
@@ -562,7 +596,11 @@ class RtspSession(
         // Live source: open-ended, non-seekable, clock-advancing. 2.0 clients consume these
         // to set their seek UI and playback clock; 1.0 has no equivalent so the bare Range stands.
         val rangeHeader = if (is20) "Range: npt=now-\r\n" else "Range: npt=0.000-\r\n"
-        val liveProps = if (is20) "Media-Properties: No-Seeking, Time-Progressing\r\nAccept-Ranges: NPT\r\n" else ""
+        // Media-Range advertises what's currently available; for a time-progressing live
+        // edge that's "now" onward (RFC 7826 §18.30).
+        val liveProps = if (is20)
+            "Media-Properties: No-Seeking, Time-Progressing\r\nMedia-Range: npt=now-\r\nAccept-Ranges: NPT\r\n"
+        else ""
 
         sink = object : RtspServer.OutgoingPacketSink {
             override fun sendVideo(rtp: ByteArray) {
@@ -725,12 +763,12 @@ class RtspSession(
     }
 
     private fun respond(req: Request, code: Int, status: String, extra: String = "") {
-        val msg = "${req.version} $code $status\r\nCSeq: ${req.cseq()}\r\n${commonHeaders()}$extra\r\n"
+        val msg = "${req.version} $code $status\r\nCSeq: ${req.cseq()}\r\n${commonHeaders()}${echoHeaders(req)}$extra\r\n"
         writeLine(msg)
     }
 
     private fun respondWithBody(req: Request, code: Int, status: String, headers: String, body: ByteArray) {
-        val head = "${req.version} $code $status\r\nCSeq: ${req.cseq()}\r\n${commonHeaders()}$headers\r\n"
+        val head = "${req.version} $code $status\r\nCSeq: ${req.cseq()}\r\n${commonHeaders()}${echoHeaders(req)}$headers\r\n"
         synchronized(writeLock) {
             try {
                 out.write(head.toByteArray(Charsets.US_ASCII)); out.write(body); out.flush()
@@ -740,7 +778,7 @@ class RtspSession(
 
     /** Sent when the request line carries a version we don't speak (anything but 1.0/2.0). */
     private fun respondVersionNotSupported(req: Request) {
-        val msg = "RTSP/2.0 505 RTSP Version Not Supported\r\nCSeq: ${req.cseq()}\r\n${commonHeaders()}\r\n"
+        val msg = "RTSP/2.0 505 RTSP Version Not Supported\r\nCSeq: ${req.cseq()}\r\n${commonHeaders()}${echoHeaders(req)}\r\n"
         writeLine(msg)
     }
 
@@ -749,6 +787,28 @@ class RtspSession(
         val fmt = java.text.SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US)
         fmt.timeZone = java.util.TimeZone.getTimeZone("GMT")
         return "Server: Lenscast\r\nDate: ${fmt.format(java.util.Date())}\r\n"
+    }
+
+    /**
+     * Headers that must be reflected back from the request, computed per-response so they
+     * stay correct for every status code. None of these fire for a stock 1.0 client (it
+     * sends none of them), so the 1.0 wire output is unchanged:
+     *  - `Timestamp` — copied verbatim so the client can measure round-trip time (§18.53).
+     *  - `Pipelined-Requests` — correlates requests pipelined before a Session id existed (§18.33).
+     *  - `Supported` — when the client probes, we answer with the feature tags we implement (§18.51).
+     *  - `Connection: close` — acknowledge a client-requested non-persistent connection (§18.10).
+     */
+    private fun echoHeaders(req: Request): String {
+        val sb = StringBuilder()
+        req.headers["timestamp"]?.let { sb.append("Timestamp: ").append(it).append("\r\n") }
+        req.headers["pipelined-requests"]?.let { sb.append("Pipelined-Requests: ").append(it).append("\r\n") }
+        if (req.headers.containsKey("supported")) {
+            sb.append("Supported: ").append(SUPPORTED_FEATURES.joinToString(", ")).append("\r\n")
+        }
+        if (req.headers["connection"]?.contains("close", ignoreCase = true) == true) {
+            sb.append("Connection: close\r\n")
+        }
+        return sb.toString()
     }
 
     private fun writeLine(s: String) {
@@ -764,5 +824,10 @@ class RtspSession(
         // we actually dispatch (RFC 7826 §18.6 requires Allow to list valid methods).
         private const val PUBLIC_METHODS =
             "OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN, GET_PARAMETER, SET_PARAMETER"
+        // Feature tags we implement (RFC 7826 §11.1, IANA RTSP feature-tag registry).
+        // `play.basic` = basic non-seeking playback, which is exactly this live source.
+        // We deliberately do NOT claim play.scale / play.speed / setup.* we can't honour,
+        // so a Require for those correctly draws a 551.
+        private val SUPPORTED_FEATURES = listOf("play.basic")
     }
 }
