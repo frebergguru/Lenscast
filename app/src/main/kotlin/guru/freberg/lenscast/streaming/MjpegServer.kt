@@ -78,6 +78,13 @@ interface MjpegControl {
     /** Browser-side WebRTC handshake. Pass the offer SDP + the HTTP peer's host:port for
      *  bookkeeping; receive back the SDP answer with all ICE candidates inlined. */
     fun webRtcAnswer(offerSdp: String, remoteHostPort: String): String?
+    /** WHEP (WebRTC-HTTP Egress Protocol) session create. Pass the player's offer SDP + its
+     *  host:port; receive `(resourceId, answerSdp)` so the server can return a `201 Created`
+     *  with a `Location: /whep/<resourceId>` the player can later DELETE. Null if WebRTC
+     *  isn't running. */
+    fun webRtcWhepCreate(offerSdp: String, remoteHostPort: String): Pair<String, String>?
+    /** WHEP resource teardown by id (the `DELETE /whep/<id>` path tail). False if no match. */
+    fun webRtcWhepDelete(resourceId: String): Boolean
     /** Re-queue the last finished MP4 for SFTP upload. Returns false if nothing to upload. */
     fun retryLastSftpUpload(): Boolean
     /** One-line JSON snapshot of the SFTP queue + last error / success. */

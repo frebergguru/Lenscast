@@ -462,8 +462,16 @@ class StreamingService : LifecycleService() {
                     else guru.freberg.lenscast.prefs.Lens.BACK
                     it.copy(lens = newLens)
                 }
-                // Rebind to the new lens with the current settings, including newLens.
                 val s = repo.flow.first()
+                // While WebRTC is live it owns Camera2 via its own capturer — a CameraX rebind
+                // here would fight it. Drive the capturer's seamless switch instead. (The DataChannel
+                // path bypasses this method; this covers the HTTP /control/lens fallback.)
+                if (_status.value.state == State.STREAMING && s.protocol == Protocol.WEBRTC) {
+                    webRtcManager?.switchLens(s.lens)
+                    _status.value = _status.value.copy(settings = s)
+                    return@launch
+                }
+                // Rebind to the new lens with the current settings, including newLens.
                 bindCameraIfNeeded(
                     s.lens, s.resolution, s.fps.value, s.jpegQuality,
                     mirror = s.mirror,
@@ -815,6 +823,10 @@ class StreamingService : LifecycleService() {
 
         override fun webRtcAnswer(offerSdp: String, remoteHostPort: String): String? =
             this@StreamingService.webRtcAnswer(offerSdp, remoteHostPort)
+        override fun webRtcWhepCreate(offerSdp: String, remoteHostPort: String): Pair<String, String>? =
+            webRtcManager?.createWhepSession(offerSdp, remoteHostPort)?.let { it.id to it.answerSdp }
+        override fun webRtcWhepDelete(resourceId: String): Boolean =
+            webRtcManager?.closeWhepSession(resourceId) ?: false
 
         override fun retryLastSftpUpload(): Boolean = this@StreamingService.retryLastSftpUpload()
         override fun sftpStatusJson(): String = this@StreamingService.sftpStatusJson()
@@ -1172,6 +1184,8 @@ class StreamingService : LifecycleService() {
         previewBoundKey = null
         streamingCamera = true
         val bridge = object : guru.freberg.lenscast.streaming.webrtc.WebRtcManager.ControlBridge {
+            // mjpegControl.switchLens detects the live WebRTC path and drives the capturer's
+            // seamless switch (rather than a CameraX rebind), so plain delegation is correct.
             override fun switchLens() = mjpegControl.switchLens()
             override fun toggleTorch() = mjpegControl.toggleTorch()
             override fun toggleMirror() = mjpegControl.toggleMirror()
@@ -1545,6 +1559,9 @@ class StreamingService : LifecycleService() {
         val handled = when (newSettings.protocol) {
             Protocol.SRT -> srtManager?.switchLens(newSettings.lens, size, newSettings.fps.value) ?: false
             Protocol.RTSP -> rtspManager?.switchLens(newSettings.lens, size, newSettings.fps.value) ?: false
+            // WebRTC's capturer swaps the camera in place (no resolution lock — receivers
+            // absorb the change), so any front↔back switch is seamless.
+            Protocol.WEBRTC -> webRtcManager?.switchLens(newSettings.lens) ?: false
             else -> false
         }
         if (handled) _status.value = _status.value.copy(settings = newSettings)

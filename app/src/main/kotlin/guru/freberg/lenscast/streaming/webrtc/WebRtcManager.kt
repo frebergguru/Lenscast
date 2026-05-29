@@ -74,8 +74,15 @@ class WebRtcManager(
     @Volatile private var audioDeviceModule: JavaAudioDeviceModule? = null
     @Volatile private var capturer: CameraVideoCapturer? = null
     @Volatile private var eglBase: EglBase? = null
+    /** Lens the capturer is currently bound to — tracked so [switchLens] can no-op a same-lens
+     *  request and so a switch knows which Camera2 device to target next. */
+    @Volatile private var currentLens: Lens? = null
     private val peers = CopyOnWriteArrayList<PeerConnection>()
     private val peerDataChannels = java.util.concurrent.ConcurrentHashMap<PeerConnection, DataChannel>()
+    /** WHEP resource id → PeerConnection, so a `DELETE /whep/<id>` can tear down the exact
+     *  session the player created. Distinct from [peers] (which also holds legacy
+     *  `/webrtc/offer` peers that have no addressable resource). */
+    private val whepSessions = java.util.concurrent.ConcurrentHashMap<String, PeerConnection>()
 
     fun start(lens: Lens, width: Int, height: Int, fps: Int, audioEnabled: Boolean = false): Boolean {
         if (factory != null) return true
@@ -110,6 +117,7 @@ class WebRtcManager(
             }
             val cap = Camera2Capturer(context, targetName, null)
             capturer = cap
+            currentLens = lens
 
             val src = f.createVideoSource(false)
             videoSource = src
@@ -148,8 +156,10 @@ class WebRtcManager(
     fun stop() {
         for ((_, ch) in peerDataChannels) try { ch.close() } catch (_: Throwable) {}
         peerDataChannels.clear()
+        whepSessions.clear()
         for (pc in peers) try { pc.close() } catch (_: Throwable) {}
         peers.clear()
+        currentLens = null
         try { capturer?.stopCapture() } catch (_: Throwable) {}
         try { capturer?.dispose() } catch (_: Throwable) {}
         capturer = null
@@ -182,10 +192,69 @@ class WebRtcManager(
     private val clientAddrMap = java.util.concurrent.ConcurrentHashMap<PeerConnection, String>()
 
     /**
+     * Seamless mid-stream lens switch. [CameraVideoCapturer.switchCamera] swaps the underlying
+     * Camera2 device while keeping the same [VideoSource]/[VideoTrack], so every connected peer
+     * keeps streaming with no renegotiation and no receiver drop. Capture is re-negotiated to
+     * the closest size the new camera supports (WebRTC receivers absorb mid-stream resolution
+     * changes, unlike RTSP). Returns false when WebRTC isn't running or no device matches the
+     * requested facing; the actual switch completes asynchronously.
+     */
+    fun switchLens(lens: Lens): Boolean {
+        val cap = capturer ?: return false
+        if (lens == currentLens) return true
+        val target = pickCamera(Camera2Enumerator(context), lens) ?: run {
+            Log.w(TAG, "switchLens: no Camera2 device for lens=$lens")
+            return false
+        }
+        currentLens = lens
+        cap.switchCamera(object : CameraVideoCapturer.CameraSwitchHandler {
+            override fun onCameraSwitchDone(isFrontFacing: Boolean) {
+                Log.i(TAG, "WebRTC lens switched (front=$isFrontFacing)")
+            }
+            override fun onCameraSwitchError(error: String?) {
+                Log.w(TAG, "WebRTC lens switch failed: $error")
+            }
+        }, target)
+        return true
+    }
+
+    /** Result of a WHEP session create: the resource id (for the `Location` header / later
+     *  DELETE) plus the SDP answer to ship back in the `201 Created` body. */
+    data class WhepSession(val id: String, val answerSdp: String)
+
+    /**
+     * WHEP (draft-ietf-wish-whep) session create. Same handshake as [createAnswer], but the
+     * resulting PeerConnection is registered under a generated id so the player can later
+     * `DELETE /whep/<id>` to tear it down. Returns null if WebRTC isn't running.
+     */
+    fun createWhepSession(offerSdp: String, remoteHostPort: String): WhepSession? {
+        val (pc, answer) = buildPeer(offerSdp, remoteHostPort) ?: return null
+        val id = UUID.randomUUID().toString()
+        whepSessions[id] = pc
+        Log.i(TAG, "WHEP session $id created for $remoteHostPort")
+        return WhepSession(id, answer)
+    }
+
+    /** WHEP resource teardown. Closes the PeerConnection behind [id] and forgets it. Returns
+     *  false when no live session matches (already gone, or a stale id). */
+    fun closeWhepSession(id: String): Boolean {
+        val pc = whepSessions.remove(id) ?: return false
+        try { peerDataChannels.remove(pc)?.close() } catch (_: Throwable) {}
+        clientAddrMap.remove(pc)
+        peers.remove(pc)
+        try { pc.close() } catch (_: Throwable) {}
+        Log.i(TAG, "WHEP session $id deleted")
+        return true
+    }
+
+    /**
      * Builds a PeerConnection for an incoming SDP offer and returns the SDP answer (with
      * all ICE candidates inlined). Returns null if creation fails or the factory isn't up.
      */
-    fun createAnswer(offerSdp: String, remoteHostPort: String): String? {
+    fun createAnswer(offerSdp: String, remoteHostPort: String): String? =
+        buildPeer(offerSdp, remoteHostPort)?.second
+
+    private fun buildPeer(offerSdp: String, remoteHostPort: String): Pair<PeerConnection, String>? {
         val f = factory ?: return null
         val track = videoTrack ?: return null
 
@@ -202,10 +271,13 @@ class WebRtcManager(
                 if (newState == PeerConnection.IceConnectionState.CLOSED ||
                     newState == PeerConnection.IceConnectionState.FAILED ||
                     newState == PeerConnection.IceConnectionState.DISCONNECTED) {
-                    // Peer is gone — remove from the list so /status reflects it.
-                    peers.firstOrNull { it.iceConnectionState() == newState }?.let {
-                        clientAddrMap.remove(it)
-                        peers.remove(it)
+                    // Peer is gone — remove from the list so /status reflects it, and drop any
+                    // WHEP resource that pointed at it so a later DELETE 404s cleanly.
+                    peers.firstOrNull { it.iceConnectionState() == newState }?.let { gone ->
+                        clientAddrMap.remove(gone)
+                        peerDataChannels.remove(gone)
+                        whepSessions.entries.removeIf { e -> e.value === gone }
+                        peers.remove(gone)
                     }
                 }
             }
@@ -271,7 +343,10 @@ class WebRtcManager(
         try { gathered.get(iceGatherTimeoutMs, TimeUnit.MILLISECONDS) } catch (_: Throwable) {
             Log.w(TAG, "ICE gathering didn't complete within ${iceGatherTimeoutMs}ms — returning what we have")
         }
-        return pc.localDescription?.description
+        val answerSdp = pc.localDescription?.description ?: run {
+            pc.close(); peers.remove(pc); return null
+        }
+        return pc to answerSdp
     }
 
     /**

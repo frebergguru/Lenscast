@@ -381,7 +381,8 @@ fun MainScreen(
                         // only when the swap can't be served in place.
                         if (streaming &&
                             (cur.protocol == guru.freberg.lenscast.prefs.Protocol.SRT ||
-                                cur.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP)) {
+                                cur.protocol == guru.freberg.lenscast.prefs.Protocol.RTSP ||
+                                cur.protocol == guru.freberg.lenscast.prefs.Protocol.WEBRTC)) {
                             val refreshed = repo.flow.first()
                             val seamless = service?.switchLensSeamless(refreshed) ?: false
                             if (!seamless) service?.restartStreaming(refreshed)
@@ -449,18 +450,14 @@ fun MainScreen(
                         // bound to one CameraDevice), so lens switching there goes through
                         // restartStreaming() — a brief stop + start with the new lens. The
                         // receiver disconnects and well-behaved clients reconnect.
-                        // WebRTC stays hidden: the signalling session would need to be
-                        // renegotiated, which we haven't wired up yet.
-                        val cameraLocked = st.streaming &&
-                            st.protocol == guru.freberg.lenscast.prefs.Protocol.WEBRTC
-                        if (!cameraLocked) {
-                            OverlayIconButton(
-                                icon = Icons.Outlined.Cameraswitch,
-                                contentDescription = stringResource(R.string.action_switch_camera),
-                                enabled = true,
-                                onClick = st.onSwitchCamera,
-                            )
-                        }
+                        // WebRTC swaps the camera in place via CameraVideoCapturer.switchCamera
+                        // (no renegotiation, no peer drop), so the button is available there too.
+                        OverlayIconButton(
+                            icon = Icons.Outlined.Cameraswitch,
+                            contentDescription = stringResource(R.string.action_switch_camera),
+                            enabled = true,
+                            onClick = st.onSwitchCamera,
+                        )
                         OverlayIconButton(
                             icon = if (st.torchOn) Icons.Outlined.FlashOn else Icons.Outlined.FlashOff,
                             contentDescription = if (st.torchOn) stringResource(R.string.cd_turn_flash_off) else stringResource(R.string.cd_turn_flash_on),

@@ -41,6 +41,10 @@ import javax.net.ssl.SSLContext
  *  - `POST /control/quality?v=10..95` — MJPEG only
  *  - `POST /control/resolution?v=720p|...`
  *  - `POST /control/fps?v=30|60|...`
+ *  - `POST   /webrtc/offer`     — bespoke WebRTC handshake (offer SDP in, answer SDP out)
+ *  - `POST   /whep`             — WHEP egress: offer SDP in, 201 + answer + `Location` out
+ *  - `DELETE /whep/<id>`        — WHEP resource teardown
+ *  - `GET    /webrtc/view`      — standalone full-screen WebRTC viewer page
  *
  * The page's JS shows/hides protocol-specific blocks based on the `protocol` field in
  * `/status` — RTSP-only fields don't appear when MJPEG is active and vice versa.
@@ -311,13 +315,16 @@ class WebControlServer(
             val reader = BufferedReader(InputStreamReader(socket.getInputStream()))
             val requestLine = reader.readLine() ?: return@withContext
             var contentLength = 0
-            // Drain headers, but capture Content-Length so we can read the body when
-            // the route needs one (only /import today).
+            var contentType = ""
+            // Drain headers, but capture Content-Length (so we can read the body when the
+            // route needs one) and Content-Type (so the WHEP endpoint can reject non-SDP).
             while (true) {
                 val line = reader.readLine() ?: break
                 if (line.isEmpty()) break
                 if (line.startsWith("Content-Length:", ignoreCase = true)) {
                     contentLength = line.substringAfter(':').trim().toIntOrNull() ?: 0
+                } else if (line.startsWith("Content-Type:", ignoreCase = true)) {
+                    contentType = line.substringAfter(':').trim()
                 }
             }
             val parts = requestLine.split(' ')
@@ -427,6 +434,52 @@ class WebControlServer(
                     }
                 }
                 pathOnly == "/webrtc/view"        && method == "GET"  -> writeWebRtcViewer(out)
+                // ── WHEP (WebRTC-HTTP Egress Protocol, draft-ietf-wish-whep) ──────────────
+                // Standard egress signalling so OBS / GStreamer / browser WHEP players can
+                // pull the stream without our bespoke /webrtc/offer dance. POST an SDP offer,
+                // get a 201 with the answer + a Location resource to DELETE when done.
+                pathOnly == "/whep"               && method == "OPTIONS" ->
+                    writeCorsPreflight(out, "POST, OPTIONS")
+                pathOnly == "/whep"               && method == "POST" -> {
+                    if (!contentType.startsWith("application/sdp", ignoreCase = true)) {
+                        writePlain(out, "415 Unsupported Media Type",
+                            "WHEP requires Content-Type: application/sdp")
+                    } else {
+                        val offerSdp = readBody()
+                        val peerHostPort = (socket.remoteSocketAddress as? java.net.InetSocketAddress)
+                            ?.let { "${it.address.hostAddress}:${it.port}" } ?: "?:?"
+                        val session = control.webRtcWhepCreate(offerSdp, peerHostPort)
+                        if (session == null) {
+                            writePlain(out, "503 Service Unavailable",
+                                "WebRTC not running — start the stream in WebRTC mode first.")
+                        } else {
+                            val (id, answer) = session
+                            val body = answer.toByteArray(Charsets.UTF_8)
+                            // Relative Location is a valid URI reference (RFC 7231 §7.1.2);
+                            // WHEP players resolve it against the request URL. Expose-Headers
+                            // lets browser fetch() read it under CORS.
+                            out.write(("HTTP/1.0 201 Created\r\n" +
+                                "Content-Type: application/sdp\r\n" +
+                                "Location: /whep/$id\r\n" +
+                                "Access-Control-Allow-Origin: *\r\n" +
+                                "Access-Control-Expose-Headers: Location\r\n" +
+                                "Content-Length: ${body.size}\r\n\r\n").toByteArray(Charsets.US_ASCII))
+                            out.write(body); out.flush()
+                        }
+                    }
+                }
+                pathOnly.startsWith("/whep/")     && method == "OPTIONS" ->
+                    writeCorsPreflight(out, "DELETE, PATCH, OPTIONS")
+                pathOnly.startsWith("/whep/")     && method == "DELETE" -> {
+                    val id = pathOnly.removePrefix("/whep/")
+                    val ok = control.webRtcWhepDelete(id)
+                    if (ok) writePlain(out, "200 OK", "")
+                    else writePlain(out, "404 Not Found", "no such WHEP session")
+                }
+                pathOnly.startsWith("/whep/")     && method == "PATCH" ->
+                    // Trickle ICE / ICE restart is optional in WHEP. We gather every candidate
+                    // before returning the answer, so there's nothing to patch.
+                    writePlain(out, "405 Method Not Allowed", "trickle ICE not supported")
                 pathOnly == "/speedtest"          && method == "GET"  -> writeSpeedTest(out, query)
                 pathOnly == "/sftp/status"        && method == "GET"  -> {
                     val body = control.sftpStatusJson().toByteArray(Charsets.UTF_8)
@@ -599,6 +652,29 @@ class WebControlServer(
               </script>
             </body></html>
         """.trimIndent()
+    }
+
+    /** Bare-bones text/plain response with permissive CORS — used by the WHEP routes for
+     *  errors and the empty-bodied DELETE ack. */
+    private fun writePlain(out: OutputStream, status: String, msg: String) {
+        val body = msg.toByteArray(Charsets.UTF_8)
+        val header = ("HTTP/1.0 $status\r\n" +
+            "Content-Type: text/plain; charset=utf-8\r\n" +
+            "Access-Control-Allow-Origin: *\r\n" +
+            "Content-Length: ${body.size}\r\n\r\n").toByteArray(Charsets.US_ASCII)
+        try { out.write(header); out.write(body); out.flush() } catch (_: IOException) {}
+    }
+
+    /** CORS preflight reply for the WHEP endpoint/resource, so browser-based players can
+     *  POST `application/sdp` and DELETE the resource cross-origin. */
+    private fun writeCorsPreflight(out: OutputStream, allowMethods: String) {
+        val header = ("HTTP/1.0 204 No Content\r\n" +
+            "Access-Control-Allow-Origin: *\r\n" +
+            "Access-Control-Allow-Methods: $allowMethods\r\n" +
+            "Access-Control-Allow-Headers: Content-Type\r\n" +
+            "Access-Control-Max-Age: 86400\r\n" +
+            "Content-Length: 0\r\n\r\n").toByteArray(Charsets.US_ASCII)
+        try { out.write(header); out.flush() } catch (_: IOException) {}
     }
 
     private fun writeStatus(out: OutputStream) {
@@ -994,6 +1070,7 @@ class WebControlServer(
                     </div>
                     <div class="links">
                       <a id="webrtc-view-link" href="/webrtc/view" target="_blank">${i.webrtcViewLink}</a>
+                      <code id="webrtc-whep-url"></code>
                     </div>
                   </div>
                 </section>
@@ -1454,6 +1531,10 @@ class WebControlServer(
                 const rtspScheme = ${if (mjpegIsHttps()) "'rtsps'" else "'rtsp'"};
                 document.getElementById('rtsp-url').textContent =
                   rtspScheme + '://' + host + ':' + rtspPort + '/lenscast';
+                // WHEP egress URL — paste into any WHEP player (OBS WHEP source, GStreamer
+                // whepsrc, browser WHEP clients). Served off this same control port.
+                document.getElementById('webrtc-whep-url').textContent =
+                  window.location.origin + '/whep';
                 document.getElementById('footer-text').textContent =
                   'Lenscast ${if (version.isEmpty()) "" else "v$version "}· ${i.footerPanel} · ' + host;
 
