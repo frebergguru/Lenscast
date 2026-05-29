@@ -173,11 +173,14 @@ class SrtPublisher(
         var bytesSentLog = 0L
         try {
             while (running.get() && s.isValid) {
-                // 1 ms poll — keeps the bundle-flush loop tight at high bitrates. The
-                // previous 5 ms gave us 200 polls/sec while a 16 Mbps stream produces
-                // ~10 600 packets/sec, so we'd burst-send dozens of bundles per poll
-                // window. SRT's send buffer pacing didn't love it.
-                val pkt = try { queue.poll(1, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { return }
+                // Poll just long enough to ride out a Wi-Fi inter-packet gap. The flush-
+                // partial-bundle path below kicks in on timeout, but we want it to fire
+                // rarely — partial UDP sends are smaller and seem to get deprioritised on
+                // some access points (the audio-vs-video asymmetric loss pattern wireshark
+                // showed). 20 ms is a good balance: at the slowest audio rate (86 pps) we
+                // still collect ~2 audio packets per window, so they ride out in a bundle
+                // with whatever video happens to be nearby.
+                val pkt = try { queue.poll(20, TimeUnit.MILLISECONDS) } catch (_: InterruptedException) { return }
                 if (pkt != null) {
                     if (bundleOffset + 188 > bundle.size) {
                         // Defensive: should never happen with the size check below, but if
