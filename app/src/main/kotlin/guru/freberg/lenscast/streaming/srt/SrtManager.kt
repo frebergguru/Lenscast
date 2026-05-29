@@ -48,6 +48,7 @@ class SrtManager(private val context: Context) {
     private var camera: RtspCameraDriver? = null
     private var muxer: MpegTsMuxer? = null
     private var publisher: SrtPublisher? = null
+    private var rotator: guru.freberg.lenscast.streaming.GlRotator? = null
     @Volatile private var state: SrtPublisher.State = SrtPublisher.State.IDLE
 
     fun state(): SrtPublisher.State = state
@@ -59,7 +60,22 @@ class SrtManager(private val context: Context) {
             Log.e(TAG, "No camera plan for SRT path")
             return null
         }
-        val encoderRotation = ((plan.sensorOrientation - config.deviceRotationDegrees) + 360) % 360
+        // Rotation the GL stage must apply to make the stream upright in the world frame.
+        //
+        // The camera content arriving in the SurfaceTexture is already corrected for the
+        // sensor mount (its transform matrix bakes in sensorOrientation). The fully-upright
+        // rotation is the usual (sensorOrientation - deviceRotation); subtract the baked-in
+        // sensorOrientation and only the device term remains:
+        //
+        //     glRotation = (sensorOrientation - deviceRotation) - sensorOrientation
+        //                = -deviceRotation   (mod 360)
+        //
+        // sensorOrientation cancels, so this is correct on any phone regardless of how its
+        // front/back sensors are mounted — verified on-device by capturing the SRT output
+        // for both lenses in portrait and landscape. (The RTSP path still uses the raw
+        // sensorOrientation-based value via MediaFormat.KEY_ROTATION, because it does no GL
+        // pass and lets the decoder rotate.)
+        val glRotation = (360 - config.deviceRotationDegrees) % 360
 
         // Forward-declared so the publisher's onState callback can reset the muxer +
         // request a fresh keyframe the moment a new receiver connects.
@@ -106,13 +122,25 @@ class SrtManager(private val context: Context) {
         val videoPtsOffsetUs = java.util.concurrent.atomic.AtomicLong(Long.MIN_VALUE)
         val audioPtsOffsetUs = java.util.concurrent.atomic.AtomicLong(Long.MIN_VALUE)
 
+        // Output dimensions follow how the phone is held: portrait device orientation
+        // (0° / 180°) → portrait frame, landscape (90° / 270°) → landscape frame. The GL
+        // renderer rotates the sensor-corrected camera content into this frame; the encoder
+        // is configured with the swapped (portrait) dimensions when needed.
+        val portraitOutput = config.deviceRotationDegrees == 0 || config.deviceRotationDegrees == 180
+        val encoderW = if (portraitOutput) plan.size.height else plan.size.width
+        val encoderH = if (portraitOutput) plan.size.width else plan.size.height
+
         // Video pipeline — pump every NAL into the muxer.
         val ve = H264Encoder(
-            width = plan.size.width,
-            height = plan.size.height,
+            width = encoderW,
+            height = encoderH,
             frameRate = plan.fpsRange.upper,
             bitrateBps = config.videoBitrateBps,
-            rotationDegrees = encoderRotation,
+            // KEY_ROTATION on a Surface encoder only embeds metadata for MP4 muxers; for
+            // raw H.264 in MPEG-TS it's a no-op. GlRotator below does a real pixel-level
+            // rotation, so the encoder itself sees an upright (already-rotated) frame and
+            // doesn't need to advertise any rotation.
+            rotationDegrees = 0,
             // Override the encoder's 2 s default. SRT receivers (ffmpeg/OBS) can't decode
             // until they see an IDR, so worst-case mid-stream sync is one full GOP — and
             // ffmpeg's analyzeduration probe sees codec parameters twice as often at 1 s.
@@ -121,6 +149,18 @@ class SrtManager(private val context: Context) {
             iFrameIntervalSeconds = 1,
         ).also { videoEncoder = it }
         val encoderSurface = ve.prepare()
+        // Insert the GL rotator between Camera2 and the encoder. The camera writes into
+        // the rotator's intermediate SurfaceTexture, the rotator draws into the encoder's
+        // input Surface with the chosen rotation applied. We hand `rotator.cameraSurface`
+        // to the camera driver instead of `encoderSurface`.
+        val glRotator = guru.freberg.lenscast.streaming.GlRotator(
+            encoderSurface = encoderSurface,
+            encoderWidth = encoderW,
+            encoderHeight = encoderH,
+            cameraBufferWidth = plan.size.width,
+            cameraBufferHeight = plan.size.height,
+            rotationDegrees = glRotation,
+        ).also { rotator = it }
         ve.start { nal, ptsUs, isKey ->
             val ps = ve.parameterSets
             if (ps != null) {
@@ -160,7 +200,7 @@ class SrtManager(private val context: Context) {
             }
         }
 
-        camDriver.start(plan, encoderSurface, previewSurface)
+        camDriver.start(plan, glRotator.cameraSurface, previewSurface)
         // Force an IDR ~immediately so receivers don't have to wait for the encoder's
         // natural GOP boundary (usually 2–5 s). VLC's TSBPD window otherwise starts ticking
         // before the first decodable frame arrives, and the "non-existing PPS 0 referenced"
@@ -177,8 +217,12 @@ class SrtManager(private val context: Context) {
     fun connectionState(): SrtPublisher.State = state
 
     fun stop() {
+        // Tear down camera first so it stops writing into the rotator's SurfaceTexture
+        // before we release the GL context.
         try { camera?.stop() } catch (_: Throwable) {}
         camera = null
+        try { rotator?.release() } catch (_: Throwable) {}
+        rotator = null
         try { videoEncoder?.stop() } catch (_: Throwable) {}
         try { videoEncoder?.shutdown() } catch (_: Throwable) {}
         videoEncoder = null

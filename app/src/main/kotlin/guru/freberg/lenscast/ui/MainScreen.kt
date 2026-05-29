@@ -129,7 +129,13 @@ fun MainScreen(
     // Live service state (default IDLE when service not bound yet).
     val statusFlow = service?.status ?: remember { MutableStateFlow(StreamingService.Status()) }
     val status by statusFlow.collectAsStateWithLifecycle()
-    val streaming = status.state == StreamingService.State.STREAMING || status.state == StreamingService.State.STARTING
+    // Treat the "restarting" window (rotate-phone-triggered stop+start) as still-streaming
+    // so the CameraX rebind effect below doesn't fire and race Camera2's teardown.
+    val restartingFlow = service?.restarting ?: remember { MutableStateFlow(false) }
+    val restarting by restartingFlow.collectAsStateWithLifecycle()
+    val streaming = restarting ||
+        status.state == StreamingService.State.STREAMING ||
+        status.state == StreamingService.State.STARTING
 
     // Surface startStreaming failures we couldn't pre-validate (camera busy, RTSP port in use,
     // USB unplug, etc.). The Settings sheet hides options the planner already knows can't work,

@@ -340,8 +340,10 @@ class StreamingService : LifecycleService() {
                     Protocol.SRT    -> startSrt(settings)
                 }
                 _status.value = _status.value.copy(state = State.STREAMING, errorMessage = null)
+                _restarting.value = false
             } catch (t: Throwable) {
                 Log.e(TAG, "Start failed", t)
+                _restarting.value = false
                 // Tear down half-started resources first — stopStreaming() ends with state=IDLE
                 // and clears errorMessage. Re-publish the ERROR state afterwards so the UI can
                 // observe it and surface the message (otherwise the user sees a brief "Starting"
@@ -1251,6 +1253,16 @@ class StreamingService : LifecycleService() {
         (w.toLong() * h * fps * 0.07).toInt().coerceIn(500_000, 16_000_000)
 
     @Volatile private var currentRotation: Int = android.view.Surface.ROTATION_0
+    /** Debounce job for "rotate phone → restart SRT/RTSP" — see [setDeviceRotation]. */
+    private var rotationRestartJob: kotlinx.coroutines.Job? = null
+    /**
+     * True while [restartStreaming] is mid-flight (between stopStreaming and the next
+     * startStreaming reaching STREAMING). The UI observes this to avoid a CameraX rebind
+     * race: without the flag, the brief STREAMING → IDLE flicker triggers MainScreen's
+     * "bind CameraX preview" effect, which then collides with Camera2 still tearing down.
+     */
+    private val _restarting = MutableStateFlow(false)
+    val restarting: StateFlow<Boolean> = _restarting.asStateFlow()
 
     /**
      * Binds the camera with preview + ImageAnalysis. The analysis stream feeds the MJPEG
@@ -1334,9 +1346,28 @@ class StreamingService : LifecycleService() {
      * Surface directly; see Roadmap), so this gating is a no-op there.
      */
     fun setDeviceRotation(rotation: Int) {
+        val prev = currentRotation
         currentRotation = rotation
-        if (_status.value.state == State.STREAMING) return
-        cameraController?.setTargetRotation(rotation)
+        if (_status.value.state != State.STREAMING) {
+            cameraController?.setTargetRotation(rotation)
+            return
+        }
+        if (prev == rotation) return
+        // MJPEG already rolls with rotation changes mid-stream because each JPEG carries
+        // its own dimensions. SRT/RTSP encode H.264 with frame dimensions baked into the
+        // SPS, so a rotation change there means tearing the pipeline down and starting
+        // a new one. Debounce 500 ms so a quick tilt doesn't thrash the receiver.
+        val proto = _status.value.settings.protocol
+        if (proto != guru.freberg.lenscast.prefs.Protocol.SRT &&
+            proto != guru.freberg.lenscast.prefs.Protocol.RTSP) return
+        rotationRestartJob?.cancel()
+        rotationRestartJob = lifecycleScope.launch {
+            kotlinx.coroutines.delay(500)
+            if (_status.value.state == State.STREAMING) {
+                Log.i(TAG, "Auto-restart $proto stream for rotation change")
+                restartStreaming(_status.value.settings)
+            }
+        }
     }
 
     /** Last FPS upper bound the camera accepted — may be lower than requested if the lens caps out. */
@@ -1468,6 +1499,7 @@ class StreamingService : LifecycleService() {
      * than asking the user to Stop / change settings / Start manually.
      */
     fun restartStreaming(newSettings: Settings) {
+        _restarting.value = true
         if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) {
             stopStreaming()
         }
@@ -1475,6 +1507,8 @@ class StreamingService : LifecycleService() {
     }
 
     fun stopStreaming() {
+        rotationRestartJob?.cancel()
+        rotationRestartJob = null
         try { mjpegServer?.stop() } catch (_: Throwable) {}
         mjpegServer = null
         tearDownSidecar()
@@ -1508,20 +1542,28 @@ class StreamingService : LifecycleService() {
         try { cameraController?.unbind() } catch (_: Throwable) {}
         previewBoundKey = null
         releaseWakeLock()
-        // After streaming, decide where the service goes next: persistent web control
-        // foreground (if the user opted in) or out of foreground entirely.
-        val s = _status.value.settings
-        val wantPersistent = s.persistentWebControl && s.webControlEnabled
-        if (wantPersistent) {
-            // Reuse the foreground state by swapping the notification to the web one.
-            persistWebForeground = false  // will be re-set inside showWebControlForeground
-            showWebControlForeground()
-        } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                stopForeground(STOP_FOREGROUND_REMOVE)
+        // During a restart (rotate-phone → rebuild pipeline) we must NOT drop the service
+        // out of foreground. startStreaming() will immediately call startForeground() again,
+        // but Android 12+ forbids *starting* a foreground service from the background — and a
+        // device rotation puts the activity mid-recreate, which counts as background. Leaving
+        // the existing FGS up means the follow-up startForeground() is an allowed *update*,
+        // not a forbidden fresh start. Crash was ForegroundServiceStartNotAllowedException.
+        if (!_restarting.value) {
+            // After streaming, decide where the service goes next: persistent web control
+            // foreground (if the user opted in) or out of foreground entirely.
+            val s = _status.value.settings
+            val wantPersistent = s.persistentWebControl && s.webControlEnabled
+            if (wantPersistent) {
+                // Reuse the foreground state by swapping the notification to the web one.
+                persistWebForeground = false  // will be re-set inside showWebControlForeground
+                showWebControlForeground()
             } else {
-                @Suppress("DEPRECATION")
-                stopForeground(true)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
             }
         }
         _status.value = Status(state = State.IDLE, settings = _status.value.settings)

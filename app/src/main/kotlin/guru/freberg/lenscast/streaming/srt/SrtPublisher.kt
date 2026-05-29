@@ -2,8 +2,10 @@ package guru.freberg.lenscast.streaming.srt
 
 import android.util.Log
 import io.github.thibaultbee.srtdroid.core.Srt
+import io.github.thibaultbee.srtdroid.core.enums.EpollOpt
 import io.github.thibaultbee.srtdroid.core.enums.SockOpt
 import io.github.thibaultbee.srtdroid.core.enums.Transtype
+import io.github.thibaultbee.srtdroid.core.models.Epoll
 import io.github.thibaultbee.srtdroid.core.models.SrtSocket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +13,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import java.net.InetSocketAddress
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -57,6 +61,7 @@ class SrtPublisher(
     @Volatile private var currentState: State = State.IDLE
     @Volatile private var socket: SrtSocket? = null
     @Volatile private var clientSocket: SrtSocket? = null
+    @Volatile private var acceptEpoll: Epoll? = null
     @Volatile private var bytesSent: Long = 0L
 
     fun state(): State = currentState
@@ -106,28 +111,53 @@ class SrtPublisher(
         socket = s
         s.bind(InetSocketAddress("0.0.0.0", config.port))
         s.listen(1)
+        // Non-blocking accept. With the default (blocking) accept, the call parks in
+        // native libsrt; a concurrent socket.close() from stop()/restart then frees the
+        // socket's condvar under the blocked call and aborts the whole process (SIGABRT
+        // in CUDTUnited::accept — confirmed in a crash trace). Instead we poll accept-
+        // readiness via epoll with a short timeout so the loop keeps returning to check
+        // `running`, and [stop] joins this loop *before* closing the socket.
+        s.setSockFlag(SockOpt.RCVSYN, false)
+        val epoll = Epoll().also { acceptEpoll = it }
+        epoll.addUSock(s, listOf(EpollOpt.IN, EpollOpt.ERR))
         Log.i(TAG, "SRT listening on 0.0.0.0:${config.port}")
-        while (running.get()) {
-            val accepted = try { s.accept() } catch (_: Throwable) { break }
-            val client = accepted.first
-            Log.i(TAG, "SRT accepted client from ${client.peerName}")
-            clientSocket = client
-            currentState = State.CONNECTED
-        // Drop everything the muxer queued while we were waiting for a client.
-        // Those packets reference an IDR the new client will never see (queue
-        // wrap-around silently evicts the oldest = the keyframe). Starting from
-        // an empty queue lets the muxer's next IDR-aligned write be the first
-        // thing the client sees.
-        queue.clear()
-        onState(State.CONNECTED)
-            // Single-client listener: drain the queue into this client until it disconnects,
-            // then loop back to accept another. This matches the typical OBS workflow where
-            // only one receiver pulls at a time.
-            pumpUntilClosed(client)
-            try { client.close() } catch (_: Throwable) {}
-            clientSocket = null
-            currentState = State.CONNECTING
-        onState(State.CONNECTING)
+        try {
+            while (running.get()) {
+                val ready = try {
+                    epoll.uWait(ACCEPT_POLL_MS.toLong())
+                } catch (_: Throwable) {
+                    emptyList()
+                }
+                if (!running.get()) break
+                // Only the listener socket is registered, so any IN event = a pending
+                // connection ready to accept.
+                val acceptable = ready.any { EpollOpt.IN in it.events }
+                if (!acceptable) continue
+                val client = try { s.accept().first } catch (_: Throwable) { continue }
+                Log.i(TAG, "SRT accepted client from ${client.peerName}")
+                clientSocket = client
+                currentState = State.CONNECTED
+                // Drop everything the muxer queued while we were waiting for a client.
+                // Those packets reference an IDR the new client will never see (queue
+                // wrap-around silently evicts the oldest = the keyframe). Starting from
+                // an empty queue lets the muxer's next IDR-aligned write be the first
+                // thing the client sees.
+                queue.clear()
+                onState(State.CONNECTED)
+                // Single-client listener: drain the queue into this client until it
+                // disconnects, then loop back to accept another. This matches the typical
+                // OBS workflow where only one receiver pulls at a time.
+                pumpUntilClosed(client)
+                try { client.close() } catch (_: Throwable) {}
+                clientSocket = null
+                if (running.get()) {
+                    currentState = State.CONNECTING
+                    onState(State.CONNECTING)
+                }
+            }
+        } finally {
+            try { epoll.release() } catch (_: Throwable) {}
+            acceptEpoll = null
         }
     }
 
@@ -246,6 +276,19 @@ class SrtPublisher(
 
     fun stop() {
         if (!running.compareAndSet(true, false)) return
+        // CRITICAL ordering: wait for the accept + pump loops to observe running=false
+        // and return *before* closing any socket. libsrt aborts the process if a socket
+        // is closed while another thread is parked inside it (accept/recv). The accept
+        // loop wakes every ACCEPT_POLL_MS; the pump every ~20 ms. Bounded join so a wedged
+        // native call can't hang the caller (this runs on the restart path).
+        try {
+            runBlocking {
+                withTimeoutOrNull(ACCEPT_POLL_MS + 700L) {
+                    pumpJob?.join()
+                    connectJob?.join()
+                }
+            }
+        } catch (_: Throwable) {}
         stopInternal()
         currentState = State.CLOSED
         onState(State.CLOSED)
@@ -270,5 +313,9 @@ class SrtPublisher(
         private const val MAX_QUEUE = 20_000
         // 7 × 188 = 1316. The default SRT_PAYLOAD_SIZE for LIVE mode.
         private const val TS_BUNDLE_BYTES = 7 * 188
+        // Accept-readiness poll interval. Short enough that stop() returns promptly (it
+        // joins the accept loop, which can only exit between polls); long enough to not
+        // busy-spin the listener thread while idle.
+        private const val ACCEPT_POLL_MS = 100
     }
 }
