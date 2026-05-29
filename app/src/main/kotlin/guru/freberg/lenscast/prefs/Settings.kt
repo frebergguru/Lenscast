@@ -207,10 +207,10 @@ data class Settings(
     val mjpegSidecar: Boolean = false,
     /**
      * Where to send the SRT stream (`Protocol.SRT`):
-     *  - **CALLER** (default): the phone dials out to a remote SRT listener at
-     *    [srtHost]:[srtPort]. Easiest path through NAT.
-     *  - **LISTENER**: the phone listens on [srtPort]; receivers (OBS, ffmpeg)
+     *  - **LISTENER** (default): the phone listens on [srtPort]; receivers (OBS, ffmpeg)
      *    pull via `srt://<phone-ip>:<port>`.
+     *  - **CALLER**: the phone dials out to a remote SRT listener at
+     *    [srtHost]:[srtPort]. Easiest path through NAT.
      */
     val srtMode: SrtMode = SrtMode.LISTENER,
     val srtHost: String = "",

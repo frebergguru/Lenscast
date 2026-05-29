@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import guru.freberg.lenscast.streaming.StreamingService
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import guru.freberg.lenscast.ui.MainScreen
@@ -54,7 +55,7 @@ class MainActivity : ComponentActivity() {
         // with ACTION_PERSIST_WEB so the service stays alive past Activity unbind. The
         // service itself reconciles the actual foreground state via its Settings flow
         // observer; this is just to start it from cold.
-        kotlinx.coroutines.MainScope().launch {
+        lifecycleScope.launch {
             val s = guru.freberg.lenscast.prefs.SettingsRepository(this@MainActivity).flow.first()
             if (s.persistentWebControl && s.webControlEnabled) {
                 val persistIntent = Intent(this@MainActivity, StreamingService::class.java)

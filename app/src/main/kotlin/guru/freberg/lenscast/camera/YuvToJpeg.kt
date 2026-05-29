@@ -27,11 +27,16 @@ import java.util.Locale
  *      consumers (e.g. OBS) always receive an upright frame regardless of how the phone
  *      is physically held.
  *
- * **Threading:** the only caller is CameraX's `ImageAnalysis` analyzer, which runs on a
- * dedicated single-thread executor (see `CameraController.analysisExecutor`). That lets
- * us hold large reusable scratch buffers as plain object fields — no synchronization,
- * no per-frame allocations once the resolution stabilises. Re-checking these caller
- * assumptions matters: a second caller from another thread would corrupt the pool.
+ * **Threading:** the shared scratch buffers below are NOT synchronized, so this object
+ * must only ever be driven by one thread at a time. There are two callers:
+ *   - CameraX's `ImageAnalysis` analyzer (MJPEG path), on its dedicated single-thread
+ *     executor (see `CameraController.analysisExecutor`);
+ *   - the RTSP/SRT MJPEG-sidecar listener (`StreamingService.makeSidecarListener`), on its
+ *     own HandlerThread.
+ * These never run concurrently because the RTSP path unbinds the CameraX `ImageAnalysis`
+ * use case before the sidecar starts — the single-threaded invariant is enforced by that
+ * sequencing, not by this class. If you ever keep the analyzer alive alongside a sidecar
+ * session, add a lock here or the shared `jpegOut`/buffers will corrupt across threads.
  */
 object YuvToJpeg {
 

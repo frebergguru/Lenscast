@@ -138,7 +138,9 @@ fun ConnectionInfoCard(
                 UrlRow(
                     icon = Icons.Outlined.Wifi,
                     label = stringResource(R.string.card_connection_audio),
-                    value = "$scheme://$wifiIp:$mjpegPort/audio",
+                    // /audio is gated by the same Basic auth as /video, so embed the same
+                    // credentials — otherwise a copied audio URL fails auth while video works.
+                    value = "$scheme://$auth$wifiIp:$mjpegPort/audio",
                     copyable = true,
                 )
             }

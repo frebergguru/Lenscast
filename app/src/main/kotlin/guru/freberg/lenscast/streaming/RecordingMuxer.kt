@@ -41,6 +41,11 @@ class RecordingMuxer private constructor(
     /** Pts of the first written video sample; used to rebase audio onto the same timeline. */
     private var videoStartPtsUs = -1L
     private var audioStartPtsUs = -1L
+    /** The muxer may flip [started] mid-GOP (e.g. a late audio track completes the start
+     *  between a keyframe and the next), so gate the first written video sample on an IDR —
+     *  otherwise the MP4 opens on a P-frame referencing a dropped keyframe and shows garbage
+     *  until the next GOP. */
+    @Volatile private var sawFirstKeyFrame = false
 
     fun addVideoTrack(width: Int, height: Int, sps: ByteArray, pps: ByteArray): Boolean {
         if (videoTrack >= 0) return true
@@ -97,6 +102,11 @@ class RecordingMuxer private constructor(
      */
     fun writeVideo(nalNoStartCode: ByteArray, ptsUs: Long, isKey: Boolean) {
         if (!started || videoTrack < 0) return
+        // Drop leading P-frames until the first keyframe so the file head is decodable.
+        if (!sawFirstKeyFrame) {
+            if (!isKey) return
+            sawFirstKeyFrame = true
+        }
         val m = muxer ?: return
         if (videoStartPtsUs < 0) videoStartPtsUs = ptsUs
         val pts = ptsUs - videoStartPtsUs
@@ -129,9 +139,17 @@ class RecordingMuxer private constructor(
     fun stop(): Uri? {
         val m = muxer ?: return null
         muxer = null
-        try { if (started) m.stop() } catch (t: Throwable) { Log.w(TAG, "muxer.stop: ${t.message}") }
+        val didStart = started
+        try { if (didStart) m.stop() } catch (t: Throwable) { Log.w(TAG, "muxer.stop: ${t.message}") }
         try { m.release() } catch (_: Throwable) {}
         try { pfd.close() } catch (_: Throwable) {}
+        if (!didStart) {
+            // The muxer never started (track add / start failed), so no samples were written.
+            // Delete the empty MediaStore entry rather than publishing a 0-byte MP4 the user
+            // would see as a valid recording.
+            try { context.contentResolver.delete(uri, null, null) } catch (_: Throwable) {}
+            return null
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
                 val resolver = context.contentResolver

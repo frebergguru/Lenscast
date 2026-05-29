@@ -13,7 +13,9 @@ import org.json.JSONObject
  * older exports. Reads tolerate missing fields (uses the [Settings] defaults).
  */
 object SettingsCodec {
-    private const val VERSION = 1
+    // v2 added the watermark / SFTP / SRT / language / sidecar fields. Reads remain
+    // backward-compatible: missing keys fall back to [Settings] defaults.
+    private const val VERSION = 2
 
     fun toJson(s: Settings): String {
         val o = JSONObject().apply {
@@ -67,6 +69,22 @@ object SettingsCodec {
             put("httpsEnabled", s.httpsEnabled)
             put("callBehavior", s.callBehavior.name)
             put("persistentWebControl", s.persistentWebControl)
+            put("watermarkText", s.watermarkText)
+            put("sftpEnabled", s.sftpEnabled)
+            put("sftpHost", s.sftpHost)
+            put("sftpPort", s.sftpPort)
+            put("sftpUser", s.sftpUser)
+            put("sftpPassword", s.sftpPassword)
+            put("sftpRemoteDir", s.sftpRemoteDir)
+            put("sftpHostKeyFingerprint", s.sftpHostKeyFingerprint)
+            put("languageTag", s.languageTag)
+            put("mjpegSidecar", s.mjpegSidecar)
+            put("srtMode", s.srtMode.name)
+            put("srtHost", s.srtHost)
+            put("srtPort", s.srtPort)
+            put("srtPassphrase", s.srtPassphrase)
+            put("srtLatencyMs", s.srtLatencyMs)
+            put("srtStreamId", s.srtStreamId)
         }
         return o.toString(2)
     }
@@ -119,6 +137,22 @@ object SettingsCodec {
             httpsEnabled = o.optBoolean("httpsEnabled", d.httpsEnabled),
             callBehavior = enumByName(o, "callBehavior", d.callBehavior),
             persistentWebControl = o.optBoolean("persistentWebControl", d.persistentWebControl),
+            watermarkText = o.optString("watermarkText", d.watermarkText).take(120),
+            sftpEnabled = o.optBoolean("sftpEnabled", d.sftpEnabled),
+            sftpHost = o.optString("sftpHost", d.sftpHost).trim().take(255),
+            sftpPort = o.optInt("sftpPort", d.sftpPort).coerceIn(1, 65535),
+            sftpUser = o.optString("sftpUser", d.sftpUser).trim().take(120),
+            sftpPassword = o.optString("sftpPassword", d.sftpPassword),
+            sftpRemoteDir = o.optString("sftpRemoteDir", d.sftpRemoteDir).trim().take(255),
+            sftpHostKeyFingerprint = o.optString("sftpHostKeyFingerprint", d.sftpHostKeyFingerprint).trim().take(120),
+            languageTag = o.optString("languageTag", d.languageTag).trim().take(16),
+            mjpegSidecar = o.optBoolean("mjpegSidecar", d.mjpegSidecar),
+            srtMode = enumByName(o, "srtMode", d.srtMode),
+            srtHost = o.optString("srtHost", d.srtHost).trim().take(255),
+            srtPort = o.optInt("srtPort", d.srtPort).coerceIn(1, 65535),
+            srtPassphrase = o.optString("srtPassphrase", d.srtPassphrase).take(79),
+            srtLatencyMs = o.optInt("srtLatencyMs", d.srtLatencyMs).coerceIn(20, 8000),
+            srtStreamId = o.optString("srtStreamId", d.srtStreamId).trim().take(512),
         )
     }
 

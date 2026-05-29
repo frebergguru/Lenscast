@@ -25,8 +25,14 @@ internal fun CoroutineScope.launchHttpAcceptLoop(
     serviceName: String,
     isRunning: () -> Boolean,
     onBound: (ServerSocket) -> Unit,
+    /** Hard cap on concurrent client coroutines — a connection-exhaustion backstop. Streaming
+     *  endpoints (/video, /audio) are long-lived, so without a cap an attacker could open
+     *  sockets faster than they close and spawn unbounded coroutines. 64 is far above any
+     *  realistic viewer count for a phone. */
+    maxClients: Int = 64,
     handle: suspend (Socket) -> Unit,
 ): Job = launch {
+    val activeClients = java.util.concurrent.atomic.AtomicInteger(0)
     try {
         val s = if (sslContext != null) {
             sslContext.serverSocketFactory.createServerSocket().also {
@@ -47,7 +53,15 @@ internal fun CoroutineScope.launchHttpAcceptLoop(
             // TLS sockets need TCP_NODELAY set before the handshake.
             client.tcpNoDelay = true
             client.soTimeout = 5_000
-            launch { handle(client) }
+            if (activeClients.get() >= maxClients) {
+                Log.w(logTag, "$serviceName at client cap ($maxClients); dropping connection")
+                try { client.close() } catch (_: Throwable) {}
+                continue
+            }
+            activeClients.incrementAndGet()
+            launch {
+                try { handle(client) } finally { activeClients.decrementAndGet() }
+            }
         }
     } catch (t: Throwable) {
         Log.e(logTag, "$serviceName accept loop crashed", t)

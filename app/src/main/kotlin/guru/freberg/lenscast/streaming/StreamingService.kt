@@ -293,6 +293,8 @@ class StreamingService : LifecycleService() {
                 control = mjpegControl,
                 mjpegPort = { _status.value.settings.mjpegPort },
                 rtspPort = { _status.value.settings.rtspPort },
+                authUsername = { _status.value.settings.streamUsername },
+                authPassword = { _status.value.settings.streamPassword },
                 sslContext = if (httpsEnabled) TlsManager.forContext(this).sslContext() else null,
                 mjpegIsHttps = { _status.value.settings.httpsEnabled },
                 appVersion = {

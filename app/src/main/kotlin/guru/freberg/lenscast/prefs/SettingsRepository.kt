@@ -135,11 +135,11 @@ class SettingsRepository(private val context: Context) {
         sftpHostKeyFingerprint = (p[K_SFTP_FP] ?: "").trim(),
         languageTag = (p[K_LANG] ?: "").trim(),
         mjpegSidecar = p[K_MJPEG_SIDECAR] ?: false,
-        srtMode = SrtMode.entries.getOrNull(p[K_SRT_MODE] ?: 0) ?: SrtMode.CALLER,
+        srtMode = SrtMode.entries.getOrNull(p[K_SRT_MODE] ?: SrtMode.LISTENER.ordinal) ?: SrtMode.LISTENER,
         srtHost = (p[K_SRT_HOST] ?: "").trim(),
         srtPort = (p[K_SRT_PORT] ?: 9710).coerceIn(1, 65535),
         srtPassphrase = p[K_SRT_PASS] ?: "",
-        srtLatencyMs = (p[K_SRT_LATENCY] ?: 500).coerceIn(20, 8000),
+        srtLatencyMs = (p[K_SRT_LATENCY] ?: 200).coerceIn(20, 8000),
         srtStreamId = (p[K_SRT_STREAMID] ?: "").trim(),
     )
 

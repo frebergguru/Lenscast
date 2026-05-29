@@ -280,8 +280,10 @@ class RtspSession(
                 if (channel == 1 || channel == 3) {
                     var o = 0
                     while (o + 4 <= len) {
-                        val subLen = (((payload[o + 2].toInt() and 0xFF) shl 8) or
-                            (payload[o + 3].toInt() and 0xFF) + 1) * 4
+                        // (((hi shl 8) or lo) + 1) * 4 — the `+ 1` applies to the full 16-bit
+                        // length word, not folded into `lo` (infix `or` binds looser than `+`).
+                        val subLen = ((((payload[o + 2].toInt() and 0xFF) shl 8) or
+                            (payload[o + 3].toInt() and 0xFF)) + 1) * 4
                         if (o + subLen > len) break
                         for (r in Rtcp.parseReceiverReports(payload, o, subLen)) provider.onReceiverReport(r)
                         o += subLen
@@ -542,7 +544,9 @@ class RtspSession(
                     var o = packet.offset
                     val end = packet.offset + packet.length
                     while (o + 4 <= end) {
-                        val len = (((buf[o + 2].toInt() and 0xFF) shl 8) or (buf[o + 3].toInt() and 0xFF) + 1) * 4
+                        // `+ 1` applies to the full 16-bit length word, not folded into the
+                        // low byte (infix `or` binds looser than `+`).
+                        val len = ((((buf[o + 2].toInt() and 0xFF) shl 8) or (buf[o + 3].toInt() and 0xFF)) + 1) * 4
                         if (o + len > end) break
                         for (r in Rtcp.parseReceiverReports(buf, o, len)) provider.onReceiverReport(r)
                         o += len

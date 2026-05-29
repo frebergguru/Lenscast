@@ -59,6 +59,11 @@ class WebControlServer(
     /** Phone-side port the MJPEG server listens on. The page builds the URL from this. */
     private val mjpegPort: () -> Int,
     private val rtspPort: () -> Int,
+    /** HTTP Basic auth username/password, read live (the server outlives credential edits —
+     *  it is only recreated on port/https/enabled changes). Empty password = open access,
+     *  mirroring [MjpegServer]. */
+    private val authUsername: () -> String = { "Lenscast" },
+    private val authPassword: () -> String = { "" },
     private val sslContext: SSLContext? = null,
     /** True when MJPEG is also serving HTTPS; the page uses https:// for the preview URL. */
     private val mjpegIsHttps: () -> Boolean = { false },
@@ -295,8 +300,10 @@ class WebControlServer(
             val requestLine = reader.readLine() ?: return@withContext
             var contentLength = 0
             var contentType = ""
+            var authorization: String? = null
             // Drain headers, but capture Content-Length (so we can read the body when the
-            // route needs one) and Content-Type (so the WHEP endpoint can reject non-SDP).
+            // route needs one), Content-Type (so the WHEP endpoint can reject non-SDP), and
+            // Authorization (Basic auth, when a stream password is configured).
             while (true) {
                 val line = reader.readLine() ?: break
                 if (line.isEmpty()) break
@@ -304,6 +311,8 @@ class WebControlServer(
                     contentLength = line.substringAfter(':').trim().toIntOrNull() ?: 0
                 } else if (line.startsWith("Content-Type:", ignoreCase = true)) {
                     contentType = line.substringAfter(':').trim()
+                } else if (line.startsWith("Authorization:", ignoreCase = true)) {
+                    authorization = line.substringAfter(':').trim()
                 }
             }
             val parts = requestLine.split(' ')
@@ -312,6 +321,25 @@ class WebControlServer(
             val out = socket.getOutputStream()
             val pathOnly = target.substringBefore('?')
             val query = if ('?' in target) target.substringAfter('?') else ""
+
+            // Gate the whole control surface behind Basic auth whenever the user set a stream
+            // password — the same credential that protects the MJPEG media port. OPTIONS is
+            // exempt so browser CORS preflights (WHEP) still succeed; the credentialed real
+            // request is then checked normally. With no password set, access stays open
+            // (default), so this is a no-op for users who never configured one.
+            val pwd = authPassword()
+            if (pwd.isNotEmpty() && method != "OPTIONS" && !isAuthorized(authorization, pwd)) {
+                writeUnauthorized(out)
+                return@withContext
+            }
+
+            // Reject an over-large declared body before allocating for it — an unauthenticated
+            // (or authenticated) client could otherwise force a multi-GB allocation and OOM the
+            // service. SDP offers and settings JSON are well under this cap.
+            if (contentLength > MAX_BODY_BYTES) {
+                writePlain(out, "413 Payload Too Large", "body exceeds ${MAX_BODY_BYTES} bytes")
+                return@withContext
+            }
 
             // Lazy-read the body so we don't stall on routes that don't need it.
             fun readBody(): String {
@@ -388,8 +416,8 @@ class WebControlServer(
                     }
                 }
                 pathOnly == "/control/kick"       && method == "POST" -> handleControl(out) {
-                    val r = queryParam(query, "remote")?.let { java.net.URLDecoder.decode(it, "UTF-8") }
-                        ?: error("missing remote=")
+                    // queryParam already percent-decodes, so the host:port arrives intact.
+                    val r = queryParam(query, "remote") ?: error("missing remote=")
                     val ok = control.kickClient(r)
                     if (!ok) error("no client matches $r")
                 }
@@ -482,7 +510,11 @@ class WebControlServer(
         for (kv in query.split('&')) {
             val eq = kv.indexOf('=')
             if (eq < 0) continue
-            if (kv.substring(0, eq) == key) return kv.substring(eq + 1)
+            // The browser panel percent-encodes values (encodeURIComponent), so a watermark,
+            // SFTP path, or password with spaces/`&`/`=` arrives encoded — decode it here.
+            if (kv.substring(0, eq) == key) return try {
+                java.net.URLDecoder.decode(kv.substring(eq + 1), "UTF-8")
+            } catch (_: Throwable) { kv.substring(eq + 1) }
         }
         return null
     }
@@ -1941,8 +1973,35 @@ class WebControlServer(
         """.trimIndent()
     }
 
+    /** HTTP Basic auth check, mirroring [MjpegServer.isAuthorized]. [pwd] is the live
+     *  password (already known non-empty by the caller). */
+    private fun isAuthorized(headerValue: String?, pwd: String): Boolean {
+        if (headerValue == null) return false
+        if (!headerValue.startsWith("Basic ", ignoreCase = true)) return false
+        val decoded = try {
+            val raw = headerValue.substringAfter(' ').trim()
+            String(android.util.Base64.decode(raw, android.util.Base64.NO_WRAP))
+        } catch (_: Throwable) { return false }
+        val colon = decoded.indexOf(':')
+        if (colon < 0) return false
+        val user = decoded.substring(0, colon)
+        val pass = decoded.substring(colon + 1)
+        return user == authUsername() && pass == pwd
+    }
+
+    private fun writeUnauthorized(out: OutputStream) {
+        val body = "Authentication required".toByteArray(Charsets.US_ASCII)
+        val header = ("HTTP/1.0 401 Unauthorized\r\n" +
+            "WWW-Authenticate: Basic realm=\"Lenscast\", charset=\"UTF-8\"\r\n" +
+            "Content-Type: text/plain\r\n" +
+            "Content-Length: ${body.size}\r\n" +
+            "Connection: close\r\n\r\n").toByteArray(Charsets.US_ASCII)
+        try { out.write(header); out.write(body); out.flush() } catch (_: IOException) {}
+    }
+
     companion object {
         private const val TAG = "WebControlServer"
-
+        /** Upper bound on a request body we'll buffer (SDP offers / settings JSON are tiny). */
+        private const val MAX_BODY_BYTES = 4 * 1024 * 1024
     }
 }

@@ -1094,6 +1094,48 @@ private fun PortField(
     )
 }
 
+/**
+ * Numeric field clamped to [range]. Mirrors [PortField]'s local-string-state pattern so the
+ * user can clear and retype; out-of-range input shows an error outline and is never
+ * propagated upstream (so an invalid port/latency can't reach Settings, matching the
+ * repository's coercion). [errorHint]/[normalHint] are optional supporting text.
+ */
+@Composable
+private fun ValidatedIntField(
+    label: String,
+    value: Int,
+    range: IntRange,
+    enabled: Boolean,
+    onValueChange: (Int) -> Unit,
+    errorHint: String? = null,
+    normalHint: String? = null,
+) {
+    var text by remember(value) { mutableStateOf(value.toString()) }
+    val parsed = text.toIntOrNull()
+    val isValid = parsed != null && parsed in range
+    OutlinedTextField(
+        value = text,
+        onValueChange = { new ->
+            val cleaned = new.filter { it.isDigit() }.take(5)
+            text = cleaned
+            cleaned.toIntOrNull()?.takeIf { it in range }?.let {
+                if (it != value) onValueChange(it)
+            }
+        },
+        label = { Text(label) },
+        singleLine = true,
+        enabled = enabled,
+        isError = !isValid,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        supportingText = when {
+            !isValid && errorHint != null -> { { Text(errorHint) } }
+            normalHint != null -> { { Text(normalHint) } }
+            else -> null
+        },
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
 @Composable
 private fun PresetsSection(
     settings: Settings,
@@ -1133,7 +1175,9 @@ private fun PresetsSection(
         } else {
             stringResource(R.string.settings_preset_lens_front)
         }
-        val protoLabel = if (preset.protocol == Protocol.MJPEG) "MJPEG" else "RTSP"
+        // Enum name covers all protocols (MJPEG/RTSP/SRT/WEBRTC) — the old MJPEG-vs-RTSP
+        // ternary mislabelled SRT and WebRTC presets as "RTSP".
+        val protoLabel = preset.protocol.name
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.padding(vertical = 4.dp),
@@ -1229,13 +1273,13 @@ private fun SrtSection(settings: Settings, onChange: (Settings) -> Unit, streami
         )
         Spacer(Modifier.height(8.dp))
     }
-    OutlinedTextField(
-        value = settings.srtPort.toString(),
-        onValueChange = { onChange(settings.copy(srtPort = it.toIntOrNull() ?: settings.srtPort)) },
-        label = { Text(stringResource(R.string.settings_srt_port)) },
-        singleLine = true,
+    ValidatedIntField(
+        label = stringResource(R.string.settings_srt_port),
+        value = settings.srtPort,
+        range = 1024..65535,
         enabled = !streaming,
-        modifier = Modifier.fillMaxWidth(),
+        onValueChange = { onChange(settings.copy(srtPort = it)) },
+        errorHint = stringResource(R.string.settings_port_range_hint),
     )
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
@@ -1248,14 +1292,13 @@ private fun SrtSection(settings: Settings, onChange: (Settings) -> Unit, streami
         modifier = Modifier.fillMaxWidth(),
     )
     Spacer(Modifier.height(8.dp))
-    OutlinedTextField(
-        value = settings.srtLatencyMs.toString(),
-        onValueChange = { onChange(settings.copy(srtLatencyMs = it.toIntOrNull() ?: settings.srtLatencyMs)) },
-        label = { Text(stringResource(R.string.settings_srt_latency)) },
-        singleLine = true,
+    ValidatedIntField(
+        label = stringResource(R.string.settings_srt_latency),
+        value = settings.srtLatencyMs,
+        range = 20..8000,
         enabled = !streaming,
-        supportingText = { Text(stringResource(R.string.settings_srt_latency_hint)) },
-        modifier = Modifier.fillMaxWidth(),
+        onValueChange = { onChange(settings.copy(srtLatencyMs = it)) },
+        normalHint = stringResource(R.string.settings_srt_latency_hint),
     )
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
@@ -1293,12 +1336,12 @@ private fun SftpSection(settings: Settings, onChange: (Settings) -> Unit) {
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            value = settings.sftpPort.toString(),
-            onValueChange = { onChange(settings.copy(sftpPort = it.toIntOrNull() ?: settings.sftpPort)) },
-            label = { Text(stringResource(R.string.settings_sftp_port)) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+        ValidatedIntField(
+            label = stringResource(R.string.settings_sftp_port),
+            value = settings.sftpPort,
+            range = 1..65535,
+            enabled = true,
+            onValueChange = { onChange(settings.copy(sftpPort = it)) },
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(

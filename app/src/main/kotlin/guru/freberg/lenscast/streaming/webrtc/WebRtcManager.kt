@@ -183,9 +183,8 @@ class WebRtcManager(
     fun clientCount(): Int = peers.count { it.connectionState() != PeerConnection.PeerConnectionState.NEW }
 
     fun clientAddresses(): List<String> = peers.mapNotNull { peer ->
-        peer.getStats { _ -> }
-        // The PC doesn't expose the remote address directly without an async stats call;
-        // the offer endpoint stashes the peer's HTTP remote address in `clientAddrMap`.
+        // The PC doesn't expose the remote address directly; the offer endpoint stashes the
+        // peer's HTTP remote address in `clientAddrMap` at creation time.
         clientAddrMap[peer]
     }
 
@@ -264,6 +263,11 @@ class WebRtcManager(
         }
 
         val gathered = CompletableFuture<Unit>()
+        // The observer fires for its own PeerConnection, but the callback has no `this`
+        // handle to it (the PC is the createPeerConnection return value). Capture it in a
+        // holder so the disconnect handler removes *exactly* the gone peer — matching by
+        // state instead would drop the wrong PC when several share a state.
+        val pcHolder = arrayOfNulls<PeerConnection>(1)
         val pc = f.createPeerConnection(rtcConfig, object : PeerConnection.Observer {
             override fun onSignalingChange(newState: PeerConnection.SignalingState?) {}
             override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState?) {
@@ -271,13 +275,16 @@ class WebRtcManager(
                 if (newState == PeerConnection.IceConnectionState.CLOSED ||
                     newState == PeerConnection.IceConnectionState.FAILED ||
                     newState == PeerConnection.IceConnectionState.DISCONNECTED) {
-                    // Peer is gone — remove from the list so /status reflects it, and drop any
-                    // WHEP resource that pointed at it so a later DELETE 404s cleanly.
-                    peers.firstOrNull { it.iceConnectionState() == newState }?.let { gone ->
+                    val gone = pcHolder[0] ?: return
+                    // Remove from the list so /status reflects it, and drop any WHEP resource
+                    // that pointed at it so a later DELETE 404s cleanly. Gate the teardown on
+                    // the atomic list removal so a concurrent closeWhepSession() (which also
+                    // triggers a CLOSED callback) can't double-close the native PC.
+                    if (peers.remove(gone)) {
                         clientAddrMap.remove(gone)
-                        peerDataChannels.remove(gone)
+                        try { peerDataChannels.remove(gone)?.close() } catch (_: Throwable) {}
                         whepSessions.entries.removeIf { e -> e.value === gone }
-                        peers.remove(gone)
+                        try { gone.close() } catch (_: Throwable) {}
                     }
                 }
             }
@@ -297,6 +304,7 @@ class WebRtcManager(
             override fun onRenegotiationNeeded() {}
             override fun onAddTrack(p0: org.webrtc.RtpReceiver?, p1: Array<out org.webrtc.MediaStream>?) {}
         }) ?: return null
+        pcHolder[0] = pc
 
         pc.addTrack(track, listOf("lenscast"))
         audioTrack?.let { pc.addTrack(it, listOf("lenscast")) }

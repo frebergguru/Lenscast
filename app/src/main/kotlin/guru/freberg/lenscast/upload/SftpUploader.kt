@@ -156,7 +156,7 @@ class SftpUploader(private val context: Context) {
      *     care about MITM are expected to pin.
      */
     private fun verifierFor(pin: String): HostKeyVerifier {
-        val target = pin.substringAfter(':').trim().lowercase().replace(":", "")
+        val target = normalizePin(pin)
         return object : HostKeyVerifier {
             override fun verify(hostname: String?, port: Int, key: PublicKey): Boolean {
                 if (target.isEmpty()) return true
@@ -169,6 +169,25 @@ class SftpUploader(private val context: Context) {
             }
             override fun findExistingAlgorithms(hostname: String?, port: Int): List<String> = emptyList()
         }
+    }
+
+    /**
+     * Normalise a pasted host-key fingerprint for comparison. Strips an optional algorithm
+     * prefix (`SHA256:`/`SHA1:`/`MD5:`) and any colon byte-separators, lower-casing the rest.
+     * Critically, a bare colon-separated hex fingerprint (`aa:bb:cc:…`, the classic
+     * `ssh-keygen` MD5 form without a prefix) has NO prefix, so we must not blindly drop
+     * everything before the first colon — the old `substringAfter(':')` did exactly that and
+     * silently mangled the first byte, making such pins never match.
+     */
+    private fun normalizePin(pin: String): String {
+        var p = pin.trim()
+        val lower = p.lowercase()
+        for (prefix in listOf("sha256:", "sha1:", "md5:")) {
+            if (lower.startsWith(prefix)) { p = p.substring(prefix.length); break }
+        }
+        // Hex fingerprints use ':' as a byte separator; base64 SHA-256 contains no ':' so
+        // this is a no-op there.
+        return p.trim().lowercase().replace(":", "")
     }
 
     private fun hashKeyHex(key: PublicKey, algo: String): String {

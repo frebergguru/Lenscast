@@ -155,12 +155,20 @@ fun MainScreen(
         }
     }
 
-    // When a recording stop transitions IDLE, surface the saved-file Toast.
+    // When a recording stop transitions IDLE, surface the saved-file Toast — but only for a
+    // genuinely new file. `lastRecordingUri()` keeps the previous session's URI, so we track
+    // which one we've already announced; and we skip the transient IDLE during a rotate
+    // restart (`restarting`), where the stream is about to resume with the same recording.
     var prevState by remember { mutableStateOf(status.state) }
+    var lastAnnouncedRecording by remember { mutableStateOf<android.net.Uri?>(null) }
     LaunchedEffect(status.state) {
-        if (prevState == StreamingService.State.STREAMING && status.state == StreamingService.State.IDLE) {
+        if (!restarting &&
+            prevState == StreamingService.State.STREAMING &&
+            status.state == StreamingService.State.IDLE
+        ) {
             val uri = service?.lastRecordingUri()
-            if (uri != null) {
+            if (uri != null && uri != lastAnnouncedRecording) {
+                lastAnnouncedRecording = uri
                 android.widget.Toast.makeText(
                     ctx, ctx.getString(R.string.recording_saved), android.widget.Toast.LENGTH_LONG,
                 ).show()

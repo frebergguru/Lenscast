@@ -8,6 +8,7 @@ import guru.freberg.lenscast.prefs.SettingsRepository
 import guru.freberg.lenscast.streaming.StreamingService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -28,8 +29,10 @@ class BootReceiver : BroadcastReceiver() {
         ) return
         val pending = goAsync()
         // Kotlin goAsync() requires us to call finish() eventually. Use a short-lived
-        // GlobalScope-ish CoroutineScope on IO; we just need the suspending DataStore read.
-        CoroutineScope(Dispatchers.IO).launch {
+        // CoroutineScope on IO for the suspending DataStore read, then cancel it so the
+        // scope isn't orphaned if the receiver is invoked repeatedly.
+        val scope = CoroutineScope(Dispatchers.IO)
+        scope.launch {
             try {
                 val settings = SettingsRepository(context).flow.first()
                 if (settings.startOnBoot) {
@@ -48,6 +51,7 @@ class BootReceiver : BroadcastReceiver() {
                 // Silent failure is fine; the user will notice the stream isn't up.
             } finally {
                 pending.finish()
+                scope.cancel()
             }
         }
     }
