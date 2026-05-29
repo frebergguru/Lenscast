@@ -148,6 +148,13 @@ fun MainScreen(
         }
     }
 
+    // One-shot transient messages from the service (e.g. "RTSP orientation locked").
+    LaunchedEffect(service) {
+        service?.messages?.collect { msg ->
+            android.widget.Toast.makeText(ctx, msg, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
     // When a recording stop transitions IDLE, surface the saved-file Toast.
     var prevState by remember { mutableStateOf(status.state) }
     LaunchedEffect(status.state) {

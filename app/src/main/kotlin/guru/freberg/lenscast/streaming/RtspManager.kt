@@ -241,49 +241,13 @@ class RtspManager(
         try { videoEncoder?.requestKeyframe() } catch (_: Throwable) {}
     }
 
-    /**
-     * Rotate the RTSP stream mid-session without dropping connected clients. Rebuilds only the
-     * camera + GL rotator + video encoder; the RTSP server, the client's RTSP/RTP session, the
-     * RTP sequence/SSRC state, and audio all keep running. The new encoder's SPS/PPS ship
-     * in-band on the forced keyframe, so a client re-initialises its decoder inline. Video RTP
-     * timestamps stay continuous because the Camera2 input-surface PTS is the monotonic system
-     * clock, unaffected by the encoder swap.
-     *
-     * Returns true if it handled the rotation; false means the caller should fall back to a
-     * full restart. We bail to a restart in two cases the in-place swap can't serve cleanly:
-     *  - High-speed sessions never GL-rotate (return true = no-op; orientation is fixed).
-     *  - Local recording is active: MediaMuxer can't change a track's dimensions mid-file, so
-     *    a portrait↔landscape change needs a fresh file (return false).
-     */
-    suspend fun reconfigureVideo(deviceRotationDegrees: Int): Boolean {
-        val plan = currentPlan ?: return false
-        val config = currentConfig ?: return false
-        if (camera == null) return false
-        if (plan.highSpeed) return true            // landscape-only; nothing to rotate
-        if (recorder != null) return false         // can't change MP4 track dims mid-file
-        if (config.deviceRotationDegrees == deviceRotationDegrees) return true
-        // RTSP clients fix their decoder dimensions from the SDP at SETUP and do NOT re-init
-        // on an in-band SPS change (unlike MPEG-TS/SRT). So an aspect-changing rotation
-        // (portrait↔landscape, i.e. the encoded resolution flips) can't be served in-place —
-        // it needs a re-DESCRIBE, i.e. a full restart so the client reconnects with the new
-        // SDP. Only same-aspect rotations (e.g. 180° flips) keep the resolution and can be
-        // swapped seamlessly.
-        val oldPortrait = config.deviceRotationDegrees == 0 || config.deviceRotationDegrees == 180
-        val newPortrait = deviceRotationDegrees == 0 || deviceRotationDegrees == 180
-        if (oldPortrait != newPortrait) return false
-        Log.i(TAG, "Seamless RTSP rotation → device=$deviceRotationDegrees")
-        // Tear down video only. Camera first so it stops feeding the rotator's SurfaceTexture
-        // before we release the GL context.
-        try { camera?.stop() } catch (_: Throwable) {}
-        try { rotator?.release() } catch (_: Throwable) {}
-        rotator = null
-        try { videoEncoder?.stop() } catch (_: Throwable) {}
-        try { videoEncoder?.shutdown() } catch (_: Throwable) {}
-        videoEncoder = null
-        currentConfig = config.copy(deviceRotationDegrees = deviceRotationDegrees)
-        startVideoPipeline(deviceRotationDegrees)
-        return true
-    }
+    // RTSP orientation is locked at Start (StreamingService.setDeviceRotation ignores
+    // mid-stream rotation for RTSP and tells the user why). Reason: RTSP clients fix their
+    // decoder dimensions from the SDP at SETUP and never re-read them, so a portrait↔landscape
+    // turn would need every client to reconnect (re-DESCRIBE) — there's no clean in-stream
+    // change. SRT (MPEG-TS) doesn't have this constraint and rotates live; see
+    // SrtManager.reconfigureVideo. startVideoPipeline() above is therefore only called once,
+    // from start(), with the orientation chosen at Start.
 
     /**
      * Simple AIMD on the H.264 bitrate driven by per-stream RTCP RR fraction-lost.

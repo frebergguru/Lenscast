@@ -40,6 +40,7 @@ import guru.freberg.lenscast.prefs.WhiteBalance
 import guru.freberg.lenscast.streaming.rtsp.AacEncoder
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
@@ -66,6 +67,12 @@ class StreamingService : LifecycleService() {
 
     private val _status = MutableStateFlow(Status())
     val status: StateFlow<Status> = _status.asStateFlow()
+
+    // One-shot transient user messages (shown as a Toast by the UI). SharedFlow rather than a
+    // status field so each emission fires exactly once and repeats aren't deduped away.
+    private val _messages = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 8)
+    val messages: kotlinx.coroutines.flow.SharedFlow<String> = _messages.asSharedFlow()
+    private fun emitMessage(message: String) { _messages.tryEmit(message) }
 
     val broadcaster = FrameBroadcaster()
     private var cameraController: CameraController? = null
@@ -1253,8 +1260,10 @@ class StreamingService : LifecycleService() {
         (w.toLong() * h * fps * 0.07).toInt().coerceIn(500_000, 16_000_000)
 
     @Volatile private var currentRotation: Int = android.view.Surface.ROTATION_0
-    /** Debounce job for "rotate phone → restart SRT/RTSP" — see [setDeviceRotation]. */
+    /** Debounce job for "rotate phone → reconfigure SRT" — see [setDeviceRotation]. */
     private var rotationRestartJob: kotlinx.coroutines.Job? = null
+    /** Throttle for the "RTSP orientation locked" Toast — see [setDeviceRotation]. */
+    @Volatile private var lastRtspLockMsgMs: Long = 0L
     /**
      * True while [restartStreaming] is mid-flight (between stopStreaming and the next
      * startStreaming reaching STREAMING). The UI observes this to avoid a CameraX rebind
@@ -1353,8 +1362,6 @@ class StreamingService : LifecycleService() {
             return
         }
         if (prev == rotation) return
-        // MJPEG already rolls with rotation changes mid-stream because each JPEG carries
-        // its own dimensions. Debounce 500 ms so a quick tilt doesn't thrash the receiver.
         val proto = _status.value.settings.protocol
         val rotationDegrees = when (rotation) {
             android.view.Surface.ROTATION_90 -> 90
@@ -1362,40 +1369,38 @@ class StreamingService : LifecycleService() {
             android.view.Surface.ROTATION_270 -> 270
             else -> 0
         }
-        rotationRestartJob?.cancel()
-        rotationRestartJob = lifecycleScope.launch {
-            kotlinx.coroutines.delay(500)
-            if (_status.value.state != State.STREAMING) return@launch
-            when (proto) {
-                // SRT rebuilds only the camera/encoder/rotator in place — the SRT socket and
-                // the connected receiver stay up (the receiver re-inits on the new SPS). No
-                // disconnect, unlike a full restart.
-                guru.freberg.lenscast.prefs.Protocol.SRT -> {
+        when (proto) {
+            // SRT rebuilds only the camera/encoder/rotator in place — the SRT socket and the
+            // connected receiver stay up (it re-inits on the new SPS), so rotation is seamless.
+            // MPEG-TS allows the inline resolution change a 90° turn implies. Debounced so a
+            // quick tilt doesn't thrash the pipeline.
+            guru.freberg.lenscast.prefs.Protocol.SRT -> {
+                rotationRestartJob?.cancel()
+                rotationRestartJob = lifecycleScope.launch {
+                    kotlinx.coroutines.delay(500)
+                    if (_status.value.state != State.STREAMING) return@launch
                     Log.i(TAG, "Seamless SRT rotation → $rotationDegrees")
                     try { srtManager?.reconfigureVideo(rotationDegrees) } catch (t: Throwable) {
                         Log.w(TAG, "Seamless rotation failed; falling back to restart", t)
                         restartStreaming(_status.value.settings)
                     }
                 }
-                // RTSP rebuilds the camera/encoder/rotator in place too, keeping the RTSP
-                // server and the client's session up (new SPS ships in-band). Falls back to a
-                // full restart only when the in-place swap can't serve it cleanly — high-speed
-                // sessions (no-op, handled=true) or active local recording (handled=false,
-                // needs a fresh MP4).
-                guru.freberg.lenscast.prefs.Protocol.RTSP -> {
-                    val handled = try {
-                        rtspManager?.reconfigureVideo(rotationDegrees) ?: false
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "Seamless RTSP rotation failed; falling back to restart", t)
-                        false
-                    }
-                    if (!handled) {
-                        Log.i(TAG, "Full RTSP restart for rotation change")
-                        restartStreaming(_status.value.settings)
-                    }
-                }
-                else -> { /* MJPEG / WEBRTC: no action */ }
             }
+            // RTSP locks orientation at Start. Unlike SRT, RTSP clients fix their decoder
+            // dimensions from the SDP at connect time and never re-read them, so a portrait↔
+            // landscape turn can't be applied mid-session without forcing every client to
+            // reconnect. Rather than silently ignore the turn or disrupt receivers, we keep the
+            // orientation chosen at Start and tell the user why (once per actual turn).
+            guru.freberg.lenscast.prefs.Protocol.RTSP -> {
+                // Rate-limit: the accelerometer can flip-flop at an orientation boundary, and
+                // we don't want a stack of Toasts. One message per 5 s of turning is plenty.
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastRtspLockMsgMs > 5_000) {
+                    lastRtspLockMsgMs = now
+                    emitMessage(getString(R.string.rtsp_rotation_locked_toast))
+                }
+            }
+            else -> { /* MJPEG rolls with rotation already; WebRTC: no action */ }
         }
     }
 

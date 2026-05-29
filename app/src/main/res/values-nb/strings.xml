@@ -64,8 +64,9 @@
     <string name="settings_rtsp_port">RTSP-port</string>
     <string name="settings_port_section">Tjenerport</string>
     <string name="settings_port_range_hint">Porten må være 1024–65535</string>
-    <string name="settings_rtsp_landscape_note">RTSP følger telefonens retning ved 30 bps og lavere. Ved 60 bps og høyere (høyhastighetsmodus) sendes kun liggende.</string>
+    <string name="settings_rtsp_landscape_note">Velg retning før du starter — RTSP låser den for hele strømmen (klienter fastsetter bildestørrelsen når de kobler til, og kan ikke endre den underveis). 60 bps og høyere er kun liggende. Bruk SRT hvis du vil rotere mens du sender.</string>
     <string name="settings_srt_rotation_note">Rotasjonen følger telefonen direkte — snu enheten mens du strømmer, og bildet roterer med.</string>
+    <string name="rtsp_rotation_locked_toast">RTSP-retningen er låst mens du strømmer. Stopp, snu telefonen, og start på nytt — eller bruk SRT for å rotere direkte.</string>
     <string name="settings_mjpeg_rotation_note">Rotasjonen låses ved Start. For å endre orientering: Stopp strømmen, snu telefonen, og Start på nytt.</string>
 
     <string name="settings_system_webcam_title">Bruk som USB-webkamera (system)</string>
