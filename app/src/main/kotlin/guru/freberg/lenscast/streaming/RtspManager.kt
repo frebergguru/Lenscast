@@ -63,6 +63,16 @@ class RtspManager(
     @Volatile private var heldSidecarSurface: Surface? = null
     @Volatile private var lastRecordedUri: android.net.Uri? = null
 
+    // Recording-only A/V anchor. The RTP wire keeps the encoders' raw PTS (audio = sample
+    // counter, video = camera CLOCK_MONOTONIC) — its A/V sync rides the RTCP sender reports.
+    // The MP4 muxer can't re-anchor like that, so for the recorder feed only we map each
+    // stream's first sample onto a shared wall-clock origin (recStreamStartNs), exactly like
+    // the SRT/RIST MPEG-TS path. Leaving the RTP timestamps untouched keeps that path
+    // byte-identical to the verified behaviour.
+    private var recStreamStartNs: Long = 0L
+    private val recVideoPtsOffsetUs = java.util.concurrent.atomic.AtomicLong(Long.MIN_VALUE)
+    private val recAudioPtsOffsetUs = java.util.concurrent.atomic.AtomicLong(Long.MIN_VALUE)
+
     private val videoStream = RtpStream(payloadType = 96, ssrc = Random.nextInt(), clockHz = 90_000)
     private var audioStream: RtpStream? = null
 
@@ -104,6 +114,9 @@ class RtspManager(
 
         // Set up local recording before encoders start so we don't miss SPS/PPS arrival.
         if (config.recordLocally) {
+            recStreamStartNs = System.nanoTime()
+            recVideoPtsOffsetUs.set(Long.MIN_VALUE)
+            recAudioPtsOffsetUs.set(Long.MIN_VALUE)
             recorder = RecordingMuxer.create(context, expectAudio = config.audioEnabled)
             if (recorder == null) {
                 Log.w(TAG, "Local recording requested but MediaStore insert failed; stream continues without recording")
@@ -123,7 +136,11 @@ class RtspManager(
                 if (rec != null) {
                     val asc = ae.asc
                     if (asc != null) rec.addAudioTrack(ae.sampleRate, ae.channelCount, asc)
-                    rec.writeAudio(au, ptsUs)
+                    recAudioPtsOffsetUs.compareAndSet(
+                        Long.MIN_VALUE,
+                        (System.nanoTime() - recStreamStartNs) / 1000L - ptsUs,
+                    )
+                    rec.writeAudio(au, ptsUs + recAudioPtsOffsetUs.get())
                 }
                 val stream = audioStream ?: return@start
                 val ts = stream.timestampFromUs(ptsUs)
@@ -221,7 +238,13 @@ class RtspManager(
                 val ps = ve.parameterSets
                 if (ps != null) rec.addVideoTrack(encoderW, encoderH, ps.sps, ps.pps)
                 val nalType = nal[0].toInt() and 0x1F
-                if (nalType in 1..5) rec.writeVideo(nal, ptsUs, isKey)
+                if (nalType in 1..5) {
+                    recVideoPtsOffsetUs.compareAndSet(
+                        Long.MIN_VALUE,
+                        (System.nanoTime() - recStreamStartNs) / 1000L - ptsUs,
+                    )
+                    rec.writeVideo(nal, ptsUs + recVideoPtsOffsetUs.get(), isKey)
+                }
             }
 
             val ts = videoStream.timestampFromUs(ptsUs)

@@ -39,9 +39,13 @@ class RecordingMuxer private constructor(
     private var videoTrack = -1
     private var audioTrack = -1
     @Volatile private var started = false
-    /** Pts of the first written video sample; used to rebase audio onto the same timeline. */
-    private var videoStartPtsUs = -1L
-    private var audioStartPtsUs = -1L
+    /** Pts of the first written sample on EITHER track. Both tracks rebase against this single
+     *  shared origin so the real audio↔video capture offset is preserved in the file. Rebasing
+     *  each track to its own first sample (what this used to do) zeroed that offset and shifted
+     *  audio against video by however long the two encoders took to deliver their first sample.
+     *  This requires callers feed both tracks PTS in one common clock domain — the managers
+     *  anchor audio + video to a shared wall-clock origin before calling in. */
+    @Volatile private var startPtsUs = -1L
     /** The muxer may flip [started] mid-GOP (e.g. a late audio track completes the start
      *  between a keyframe and the next), so gate the first written video sample on an IDR —
      *  otherwise the MP4 opens on a P-frame referencing a dropped keyframe and shows garbage
@@ -112,8 +116,11 @@ class RecordingMuxer private constructor(
             sawFirstKeyFrame = true
         }
         val m = muxer ?: return
-        if (videoStartPtsUs < 0) videoStartPtsUs = ptsUs
-        val pts = ptsUs - videoStartPtsUs
+        if (startPtsUs < 0) startPtsUs = ptsUs
+        // Clamp so cross-thread callback skew (the other track's sample setting the shared
+        // origin a hair later than this one's capture time) can't emit a negative PTS, which
+        // MediaMuxer rejects. Worst case pins one leading sample to 0 — sub-frame, inaudible.
+        val pts = (ptsUs - startPtsUs).coerceAtLeast(0L)
         val buf = ByteBuffer.allocate(4 + nalNoStartCode.size)
         buf.put(START_CODE).put(nalNoStartCode).flip()
         val info = MediaCodec.BufferInfo().apply {
@@ -129,8 +136,8 @@ class RecordingMuxer private constructor(
     fun writeAudio(au: ByteArray, ptsUs: Long) {
         if (!started || audioTrack < 0) return
         val m = muxer ?: return
-        if (audioStartPtsUs < 0) audioStartPtsUs = ptsUs
-        val pts = ptsUs - audioStartPtsUs
+        if (startPtsUs < 0) startPtsUs = ptsUs
+        val pts = (ptsUs - startPtsUs).coerceAtLeast(0L)
         val buf = ByteBuffer.wrap(au)
         val info = MediaCodec.BufferInfo().apply { set(0, au.size, pts, 0) }
         try {

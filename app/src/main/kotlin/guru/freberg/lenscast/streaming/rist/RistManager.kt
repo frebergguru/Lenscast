@@ -111,8 +111,9 @@ class RistManager(private val context: Context) {
         audioPtsOffsetUs.set(Long.MIN_VALUE)
 
         // Set up local recording before the encoders start so we don't miss SPS/PPS arrival.
-        // The MP4 muxer rebases each track's PTS to its own first sample (see RecordingMuxer),
-        // so it takes the raw encoder PTS — NOT the MPEG-TS wall-clock-anchored values.
+        // The MP4 muxer is fed the SAME wall-clock-anchored PTS as the MPEG-TS muxer (audio and
+        // video share the streamStartNs origin), so the recording preserves the true A/V offset
+        // — RecordingMuxer rebases both tracks against one shared origin, not per-track.
         if (config.recordLocally) {
             recorder = RecordingMuxer.create(context, expectAudio = config.audioEnabled)
             if (recorder == null) {
@@ -133,15 +134,16 @@ class RistManager(private val context: Context) {
                     tsMuxer.audioSampleRate = ae.sampleRate
                     tsMuxer.audioChannels = ae.channelCount
                 }
-                recorder?.let { rec ->
-                    ae.asc?.let { asc -> rec.addAudioTrack(ae.sampleRate, ae.channelCount, asc) }
-                    rec.writeAudio(au, ptsUs)
-                }
                 audioPtsOffsetUs.compareAndSet(
                     Long.MIN_VALUE,
                     (System.nanoTime() - streamStartNs) / 1000L - ptsUs,
                 )
-                tsMuxer.writeAudioAu(au, ptsUs + audioPtsOffsetUs.get())
+                val anchoredPtsUs = ptsUs + audioPtsOffsetUs.get()
+                recorder?.let { rec ->
+                    ae.asc?.let { asc -> rec.addAudioTrack(ae.sampleRate, ae.channelCount, asc) }
+                    rec.writeAudio(au, anchoredPtsUs)
+                }
+                tsMuxer.writeAudioAu(au, anchoredPtsUs)
             }
         }
 
@@ -187,15 +189,16 @@ class RistManager(private val context: Context) {
             }
             val nalType = nal[0].toInt() and 0x1F
             if (nalType in 1..5) {
-                recorder?.let { rec ->
-                    if (ps != null) rec.addVideoTrack(encoderW, encoderH, ps.sps, ps.pps)
-                    rec.writeVideo(nal, ptsUs, isKey)
-                }
                 videoPtsOffsetUs.compareAndSet(
                     Long.MIN_VALUE,
                     (System.nanoTime() - streamStartNs) / 1000L - ptsUs,
                 )
-                tsMuxer.writeVideoAu(listOf(nal), ptsUs + videoPtsOffsetUs.get(), isKey)
+                val anchoredPtsUs = ptsUs + videoPtsOffsetUs.get()
+                recorder?.let { rec ->
+                    if (ps != null) rec.addVideoTrack(encoderW, encoderH, ps.sps, ps.pps)
+                    rec.writeVideo(nal, anchoredPtsUs, isKey)
+                }
+                tsMuxer.writeVideoAu(listOf(nal), anchoredPtsUs, isKey)
             }
         }
 
