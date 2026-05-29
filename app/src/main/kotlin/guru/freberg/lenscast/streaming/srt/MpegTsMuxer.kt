@@ -285,10 +285,31 @@ class MpegTsMuxer(
         pmtCc = (pmtCc + 1) and 0x0F
         pkt[3] = (0x10 or pmtCc).toByte()
         pkt[4] = 0x00
+        // AVC_video_descriptor (ISO 13818-1 §2.6.64) — when SPS is known, advertise
+        // profile_idc / constraint_set / level_idc in the PMT. ffmpeg's mpegts demuxer
+        // (libavformat) sets codecpar->profile and ->level on first PMT parse, which
+        // lets it identify the stream without waiting for an in-band SPS — that's the
+        // dominant chunk of OBS Media Source's startup latency for live MPEG-TS.
+        // SPS layout: byte 0 = NAL header (0x67), 1 = profile_idc, 2 = constraint_set,
+        // 3 = level_idc. We pull straight from those positions.
+        val spsLocal = sps
+        val videoDescriptor: ByteArray = if (spsLocal != null && spsLocal.size >= 4) {
+            byteArrayOf(
+                0x28,                       // descriptor_tag = AVC_video_descriptor
+                4,                          // descriptor_length
+                spsLocal[1],                // profile_idc
+                spsLocal[2],                // AVC_compatible_flags (constraint_set bits)
+                spsLocal[3],                // level_idc
+                0x3F,                       // still=0, 24h=0, frame_packing_SEI_not_present=0, reserved=111111
+            )
+        } else ByteArray(0)
+        val videoEsInfoLen = videoDescriptor.size
         val streams = byteArrayOf(
             0x1B,                                            // stream_type = H.264
             ((0xE0 or ((VIDEO_PID ushr 8) and 0x1F))).toByte(), (VIDEO_PID and 0xFF).toByte(),
-            0xF0.toByte(), 0x00,                             // ES_info_length=0
+            (0xF0 or ((videoEsInfoLen ushr 8) and 0xF)).toByte(),
+            (videoEsInfoLen and 0xFF).toByte(),
+        ) + videoDescriptor + byteArrayOf(
             0x0F,                                            // stream_type = AAC ADTS
             ((0xE0 or ((AUDIO_PID ushr 8) and 0x1F))).toByte(), (AUDIO_PID and 0xFF).toByte(),
             0xF0.toByte(), 0x00,

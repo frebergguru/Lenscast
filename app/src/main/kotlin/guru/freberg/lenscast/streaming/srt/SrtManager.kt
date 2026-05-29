@@ -113,6 +113,12 @@ class SrtManager(private val context: Context) {
             frameRate = plan.fpsRange.upper,
             bitrateBps = config.videoBitrateBps,
             rotationDegrees = encoderRotation,
+            // Override the encoder's 2 s default. SRT receivers (ffmpeg/OBS) can't decode
+            // until they see an IDR, so worst-case mid-stream sync is one full GOP — and
+            // ffmpeg's analyzeduration probe sees codec parameters twice as often at 1 s.
+            // RTSP doesn't need this because we deliver SPS/PPS in the SDP up-front and
+            // force a keyframe on every client connect, hiding the GOP wait.
+            iFrameIntervalSeconds = 1,
         ).also { videoEncoder = it }
         val encoderSurface = ve.prepare()
         ve.start { nal, ptsUs, isKey ->
