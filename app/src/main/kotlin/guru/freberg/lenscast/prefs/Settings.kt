@@ -129,8 +129,11 @@ data class Settings(
     val manualFocusCentidiopters: Int = 0,
     val startOnBoot: Boolean = false,
     val micSource: MicSource = MicSource.VOICE_RECOGNITION,
-    /** Software audio gain in dB, clamped at apply time. 0 = unity. */
-    val audioGainDb: Int = 0,
+    /** Software audio gain in dB, clamped at apply time. 0 = unity. Default +12 dB (4×):
+     *  the VOICE_RECOGNITION mic source captures conservatively (measured peaks ~-45 dBFS at
+     *  unity), so a default lift makes the live/recorded audio audible while leaving headroom
+     *  before clipping for close-mic users. */
+    val audioGainDb: Int = 12,
     val noiseSuppress: Boolean = false,
     val echoCancel: Boolean = false,
     val presets: List<Preset> = emptyList(),

@@ -119,7 +119,9 @@ class SettingsRepository(private val context: Context) {
         startOnBoot = p[K_BOOT] ?: false,
         micSource = MicSource.entries.getOrNull(p[K_MIC_SOURCE] ?: MicSource.VOICE_RECOGNITION.ordinal)
             ?: MicSource.VOICE_RECOGNITION,
-        audioGainDb = (p[K_AUDIO_GAIN] ?: 0).coerceIn(-24, 24),
+        // Absent-key default must mirror Settings.audioGainDb (+12 dB) — this is the value a
+        // fresh install / cleared DataStore actually gets, the data-class default never applies here.
+        audioGainDb = (p[K_AUDIO_GAIN] ?: 12).coerceIn(-24, 24),
         noiseSuppress = p[K_NS] ?: false,
         echoCancel = p[K_AEC] ?: false,
         presets = decodePresets(p[K_PRESETS] ?: ""),
