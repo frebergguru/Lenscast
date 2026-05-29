@@ -324,15 +324,15 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
       zoom, EV, snapshot) send `{"cmd":"…"}` JSON over it and bypass the
       HTTP endpoints. The Kotlin side routes those commands through the same
       `MjpegControl` surface the web HTTP path already uses.
-- [ ] **WHEP-compliant `/webrtc/offer` endpoint.** Today's signalling is
-      WHEP-shaped (POST `application/sdp`, get `application/sdp` back) but
-      not RFC-conformant: we return `200 OK` instead of `201 Created`, we
-      don't emit a `Location:` header pointing at a per-resource URL, and
-      we don't implement `DELETE <resource>` for graceful teardown. Trickle
-      ICE via `PATCH <resource>` would also be a follow-up — today we block
-      the answer on ICE-gathering complete (non-trickle). Closing this lets
-      strict WHEP clients (OBS WHIP/WHEP plugin, future receivers) connect
-      without the workarounds the in-house viewer needs. Half-day of work.
+- [x] **WHEP-compliant endpoint.** Shipped as a dedicated `POST /whep` on the
+      web-control port (the WHEP-shaped `/webrtc/offer` stays for the in-house
+      viewer): offer `application/sdp` in, `201 Created` + answer SDP +
+      `Location: /whep/<id>` out, and `DELETE /whep/<id>` for graceful teardown
+      (`webRtcWhepCreate` / `webRtcWhepDelete`). `OPTIONS` is handled for CORS.
+      Trickle ICE / ICE restart via `PATCH <resource>` is deliberately **not**
+      supported (returns `405`) — we gather every candidate before returning the
+      answer, so there's nothing to patch. Strict WHEP clients (OBS WHIP/WHEP
+      plugin, future receivers) connect without the in-house viewer's workarounds.
 - [x] **SRT (Secure Reliable Transport) — `Protocol.SRT`.** Uses
       `io.github.thibaultbee.srtdroid:srtdroid-core:1.9.5` (the ThibaultBee
       Android wrapper around libsrt) for the socket layer; ~600 KB .so per

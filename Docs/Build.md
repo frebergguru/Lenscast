@@ -6,7 +6,7 @@ Lenscast is built with Gradle from the command line. You do not need Android Stu
 
 | Tool          | Tested version       | Where to get it on Manjaro/Arch                  |
 |---------------|----------------------|--------------------------------------------------|
-| JDK           | 17 or 21             | `pacman -S jdk21-openjdk` (or `jdk17-openjdk`)   |
+| JDK           | 21 (pinned; AGP 8.5 supports 17–21) | `pacman -S jdk21-openjdk`         |
 | Android SDK   | `platforms;android-35`, `build-tools;35.0.0` | AUR `android-sdk-cmdline-tools-latest` + manual `sdkmanager` |
 | adb           | Any recent           | `pacman -S android-tools`                        |
 

@@ -1,7 +1,7 @@
 # Lenscast — Claude orientation
 
 Lenscast turns an Android phone into a network camera that OBS Studio (and any HTTP
-client) can consume directly. Two streaming protocols are live today:
+client) can consume directly. Four streaming protocols are live today:
 
 - **MJPEG over HTTP** (default port 4747) — works in any orientation, up to 30 fps.
 - **RTSP** (H.264 + AAC, default port 5540) — orientation-correct (portrait/landscape) at
@@ -9,8 +9,15 @@ client) can consume directly. Two streaming protocols are live today:
   sensor's native landscape (constrained Camera2 can't take the GL SurfaceTexture).
 - **SRT** (H.264 + AAC over MPEG-TS, default port 9710) — orientation-correct via the same
   GL rotation stage, and rotates seamlessly mid-stream without dropping the receiver.
+- **WebRTC** — browser playback at `/webrtc/view` plus a WHEP endpoint
+  (`POST`/`DELETE /whep/<id>`), both served off the **web-control port** (default 8080),
+  not a port of its own. Owns Camera2 directly like RTSP (via `Camera2Capturer`).
 
-Both ports are user-editable in the Settings sheet (range 1024–65535). For
+The MJPEG, RTSP, and SRT ports are user-editable in the Settings sheet (range
+1024–65535). Beyond streaming, the app also runs a **web control panel**
+(`WebControlServer`, default port 8080) with full settings parity and start/stop, plus
+optional **local MP4 recording**, **SFTP upload**, a **text watermark**, and
+**HTTPS / RTSPS** (self-signed RSA-2048, Bouncy Castle PKCS12). For
 "phone-as-regular-webcam" use cases (Zoom, Chrome, Discord) there's an optional Linux
 helper at `pc/lenscast-virtualcam` and a DeviceAsWebcam nudge in the Settings sheet for
 Android 14+ devices that ship the system service. OBS users don't need either —
@@ -52,13 +59,25 @@ Build environment quirks (full detail in [Docs/Build.md](Docs/Build.md)):
 - **`FrameBroadcaster`** is a single `AtomicReference<ByteArray>` holding the latest
   JPEG. Lock-free, no per-client queues.
 - **`MjpegServer`** is a hand-rolled `ServerSocket` + coroutine-per-client. Serves
-  `/video`, `/shot.jpg`, and `/` (browser-friendly landing page).
+  `/video`, `/shot.jpg`, `/` (landing page), the `/audio` PCM-WAV sidecar, and the
+  WebRTC/WHEP handshake routes (`webRtcAnswer`, `webRtcWhepCreate`, `webRtcWhepDelete`).
 - **`streaming/rtsp/`** is the parallel RTSP path: `RtspServer` (sockets + RTSP verbs),
   `RtspCameraDriver` (Camera2 high-speed session), `H264Encoder` + `AacEncoder`, RTP
   packetizers, SDP builder. Owns Camera2 directly while streaming, so CameraX is bypassed
   and the screen falls back to a `SurfaceView` for preview.
+- **`streaming/srt/`** is the SRT path: `SrtManager` (lifecycle + in-place
+  `reconfigureVideo` on rotation), `SrtPublisher`, `MpegTsMuxer`. Shares the `GlRotator`
+  EGL stage and the H.264/AAC encoders.
+- **`streaming/webrtc/WebRtcManager`** drives the WebRTC/WHEP egress (also Camera2-owning).
+- **`WebControlServer`** is an independent HTTP control panel on its own port (default
+  8080) — start/stop and full settings parity from a browser; runs whenever the app is up.
+- **`GlRotator`** (in `streaming/`) is the shared EGL/GL rotation stage for the RTSP/SRT
+  H.264 paths. `RecordingMuxer` is the optional MP4 sink; `upload/SftpUploader` ships
+  snapshots/recordings; `net/TlsManager` backs the HTTPS/RTSPS toggle.
 - **Settings** live in DataStore, exposed as a `Flow<Settings>` via `SettingsRepository`.
-  Includes `mjpegPort` / `rtspPort` (user-editable, validated to 1024–65535 in the repo).
+  Ports include `mjpegPort` / `rtspPort` / `srtPort` / `webControlPort` (user-editable,
+  validated to 1024–65535 in the repo), plus a large feature surface (recording, SFTP,
+  watermark, manual exposure, effects, scene modes, audio processing, presets, …).
 
 Full breakdown: [Docs/Architecture.md](Docs/Architecture.md).
 
@@ -129,6 +148,7 @@ adb shell am force-stop guru.freberg.lenscast
 
 - [Docs/Build.md](Docs/Build.md) — JDK / SDK / build setup
 - [Docs/OBS-Integration.md](Docs/OBS-Integration.md) — OBS source config + troubleshooting
+- [Docs/USB.md](Docs/USB.md) — streaming over USB via `adb forward` (no Wi-Fi)
 - [Docs/Webcam.md](Docs/Webcam.md) — Lenscast as a regular system webcam (Linux helper + OBS Virtual Camera)
 - [Docs/Architecture.md](Docs/Architecture.md) — full design rationale
 - [Docs/Roadmap.md](Docs/Roadmap.md) — what's planned and how to add it

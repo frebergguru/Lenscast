@@ -3,9 +3,12 @@
 Turn an Android phone into a network camera for OBS Studio (and any other HTTP client).
 Free, no watermark.
 
-The phone runs a tiny **MJPEG-over-HTTP** server (default port 4747) and an optional
-**RTSP** server (H.264 + AAC, default port 5540, landscape only). OBS connects directly
-via its built-in **Media Source** — no plugin, no helper app. Wi-Fi and USB (via
+The phone runs a tiny **MJPEG-over-HTTP** server (default port 4747) and three H.264
+options: **RTSP** (H.264 + AAC, default port 5540), **SRT** (H.264 + AAC over MPEG-TS,
+default port 9710), and **WebRTC** for browser playback (served off the web-control port,
+with a WHEP endpoint for WHEP-aware players). RTSP and SRT are orientation-correct
+(portrait/landscape) at ≤30 fps; SRT also rotates seamlessly mid-stream. OBS connects
+directly via its built-in **Media Source** — no plugin, no helper app. Wi-Fi and USB (via
 `adb forward`) are both supported.
 
 For apps that don't take a URL (Zoom, Chrome, Discord, Meet) Lenscast can also act as
@@ -34,11 +37,19 @@ Full setup, USB tethering, and troubleshooting are in
 **Streaming**
 
 - **MJPEG-over-HTTP** (default 4747, any orientation, up to 30 fps) and **RTSP** (H.264 +
-  AAC, default 5540, landscape only, up to 240 fps via Camera2 high-speed sessions)
-- **Audio sidecar** on both transports — RTSP carries audio in-session; MJPEG exposes a
-  PCM-16LE WAV stream at `/audio` with near-zero receiver-side buffering
-- **Local recording** — RTSP-only toggle that mirrors the live encoders to an MP4 in
-  `Movies/Lenscast/` while you stream
+  AAC, default 5540, up to 240 fps via Camera2 high-speed sessions; orientation-correct at
+  ≤30 fps, sensor-native landscape for high-speed)
+- **SRT** (H.264 + AAC over MPEG-TS, default 9710) — listener or caller mode, optional AES
+  passphrase, tunable latency; orientation-correct and rotates seamlessly mid-stream
+- **WebRTC** browser playback at `/webrtc/view`, plus a **WHEP** endpoint
+  (`POST`/`DELETE /whep/<id>`) for WHEP-aware players — both served off the web-control port
+- **Audio sidecar** on the network transports — RTSP and SRT carry audio in-session; MJPEG
+  exposes a PCM-16LE WAV stream at `/audio` with near-zero receiver-side buffering
+- **Local recording** — RTSP-path toggle that mirrors the live H.264/AAC encoders to an
+  MP4 in `Movies/Lenscast/` while you stream
+- **SFTP upload** — push snapshots / recordings to a server, with host-key fingerprint
+  pinning
+- **Watermark** — optional text overlay burned into the streamed frames
 - **HTTPS toggle** — self-signed RSA-2048 cert generated with Bouncy Castle and
   persisted as PKCS12 in app-private storage; SHA-256 fingerprint shown in the app
   and on the web panel
@@ -52,7 +63,8 @@ Full setup, USB tethering, and troubleshooting are in
 **Web control panel** (`http://<phone-ip>:8080/`)
 
 - Independent HTTP server, configurable port, runs whenever the app is alive
-- Pick MJPEG or RTSP and **Start streaming** straight from a browser
+- Pick the protocol (MJPEG / RTSP / SRT / WebRTC) and **Start streaming** straight from a
+  browser
 - Full Settings parity with the app — camera / image / audio / stream / UX / automation
   / server ports / security
 - Live preview embedded for MJPEG; RTSP URL hint for the OBS-side workflow
@@ -73,7 +85,7 @@ Full setup, USB tethering, and troubleshooting are in
 - **Picture-in-picture** when you press Home while streaming
 - **Battery-saver** blank-preview mode
 
-**Audio polish (RTSP path)**
+**Audio polish (RTSP / SRT path)**
 
 - Microphone source picker (Camcorder / Default / Voice recog / Voice comm / Unprocessed)
 - Software gain stage (-24 to +24 dB), noise suppression and echo-cancel toggles, live
@@ -110,9 +122,10 @@ if you're a human reader.
 ## Status
 
 This is a working hobby project. Tested on the developer's own Android phone, used as a
-free DroidCam replacement. MJPEG works in any orientation; RTSP currently streams in the
-sensor's native landscape orientation only (see
-[Docs/Roadmap.md](Docs/Roadmap.md) for the GL pipeline that would lift this).
+free DroidCam replacement. MJPEG works in any orientation; RTSP and SRT are
+orientation-correct at ≤30 fps via an EGL/GL rotation stage (SRT also rotates mid-stream).
+The one landscape-only case left is high-speed RTSP (60/120/240 fps) — see
+[Docs/Roadmap.md](Docs/Roadmap.md).
 
 ## License
 

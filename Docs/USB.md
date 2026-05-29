@@ -1,8 +1,9 @@
 # Streaming to a PC over USB
 
-Lenscast's MJPEG and RTSP servers bind on all interfaces, so you can reach them from a
-PC over a plain USB cable using `adb forward` — no Wi-Fi needed. Useful when the LAN is
-flaky, when you don't trust the network, or when you want the lowest possible latency.
+Lenscast's MJPEG, RTSP, SRT, and web-control servers bind on all interfaces, so you can
+reach them from a PC over a plain USB cable using `adb forward` — no Wi-Fi needed. Useful
+when the LAN is flaky, when you don't trust the network, or when you want the lowest
+possible latency.
 
 ## Prerequisites
 
@@ -18,6 +19,8 @@ flaky, when you don't trust the network, or when you want the lowest possible la
 ```bash
 adb forward tcp:4747 tcp:4747   # MJPEG
 adb forward tcp:5540 tcp:5540   # RTSP
+adb forward tcp:9710 tcp:9710   # SRT
+adb forward tcp:8080 tcp:8080   # web control panel (optional)
 ```
 
 After that, the streams are reachable on the PC as if they were local:
@@ -25,6 +28,8 @@ After that, the streams are reachable on the PC as if they were local:
 ```
 http://127.0.0.1:4747/video      # MJPEG
 rtsp://127.0.0.1:5540/lenscast   # RTSP
+srt://127.0.0.1:9710             # SRT (listener mode)
+http://127.0.0.1:8080/           # web control panel
 ```
 
 Use those URLs in OBS (Media Source → uncheck "Local File" → paste), VLC (Media → Open

@@ -1,7 +1,8 @@
 # Using Lenscast with OBS Studio
 
-Lenscast exposes the phone's camera as an MJPEG-over-HTTP stream. OBS consumes it through
-its built-in Media Source — no custom OBS plugin and no PC-side helper app required.
+Lenscast exposes the phone's camera as an MJPEG-over-HTTP, RTSP, or SRT stream. OBS
+consumes any of them through its built-in Media Source — no custom OBS plugin and no
+PC-side helper app required.
 
 ## Flow
 
@@ -25,15 +26,16 @@ http://192.168.1.42:4747/video
 Phone and PC must be on the same Wi-Fi network. If the URL doesn't load, check that the
 LAN doesn't have client isolation enabled (common on guest networks).
 
-## USB via `adb reverse`
+## USB via `adb forward`
 
 When you'd rather not depend on Wi-Fi:
 
 1. Connect the phone via USB with USB debugging enabled.
-2. On the PC, set up an `adb forward` so the PC can reach the phone's RTSP/MJPEG port:
+2. On the PC, set up an `adb forward` so the PC can reach the phone's MJPEG/RTSP/SRT port:
    ```
    adb forward tcp:4747 tcp:4747   # MJPEG
    adb forward tcp:5540 tcp:5540   # RTSP
+   adb forward tcp:9710 tcp:9710   # SRT
    ```
 3. In OBS / VLC / ffplay, use `http://localhost:4747/video` or `rtsp://localhost:5540/`.
 

@@ -4,6 +4,21 @@
 
 - MJPEG-over-HTTP server, Wi-Fi + USB transports
 - RTSP server (H.264 + optional AAC) with Camera2 high-speed sessions for 60/120/240 fps
+- **SRT server** (H.264 + AAC over MPEG-TS, default port 9710) — listener or caller mode,
+  optional AES passphrase, tunable latency
+- **WebRTC egress** — browser playback at `/webrtc/view` plus a WHEP endpoint
+  (`POST`/`DELETE /whep/<id>`) for WHEP-aware players, served off the web-control port
+- **Real portrait/landscape orientation for RTSP and SRT** via an EGL/GL rotation stage
+  (`streaming/GlRotator.kt`) — frames are upright on the wire, no receiver-side rotation.
+  SRT rotates seamlessly mid-stream; RTSP restarts on rotation. (High-speed 60/120/240 fps
+  RTSP is still sensor-native landscape — see the note below.)
+- **Web control panel** (`WebControlServer.kt`, default port 8080) — start/stop and full
+  settings parity from a browser, `GET /export` + `POST /import`
+- **HTTPS / RTSPS** — self-signed RSA-2048 cert (Bouncy Castle, PKCS12), SHA-256
+  fingerprint shown in-app and on the panel
+- **Local recording** to MP4 (`Movies/Lenscast/`) mirrored off the live encoders
+- **SFTP upload** of snapshots/recordings, with host-key fingerprint pinning
+- **On-frame watermark** text overlay
 - CameraX preview before streaming, switchable lens mid-stream
 - Foreground service that survives screen-lock
 - Tap-to-copy connection URLs, settings sheet, Material 3 UI
@@ -224,32 +239,36 @@ There are two ways past it, both significant:
 
 For now, the FPS picker exposes 15 / 24 / 30 only. Higher rates will arrive with RTSP.
 
-## Known limitation: RTSP stream is locked to sensor orientation (landscape)
+## Solved: RTSP/SRT orientation (the EGL/GL rotation pipeline)
 
-The Settings sheet surfaces this directly under the Protocol picker — selecting RTSP
-shows a note that only landscape orientation is supported, so users know to rotate the
-phone before tapping Start.
+This used to be the headline RTSP limitation; it shipped in
+[`streaming/GlRotator.kt`](../app/src/main/kotlin/guru/freberg/lenscast/streaming/GlRotator.kt).
 
 The MJPEG path rotates each frame per `imageProxy.imageInfo.rotationDegrees` in
 [`YuvToJpeg`](../app/src/main/kotlin/guru/freberg/lenscast/camera/YuvToJpeg.kt), so MJPEG output
 is always upright regardless of how the phone is held.
 
-The RTSP path doesn't, because the H.264 encoder is fed by the camera's Surface
-directly with no opportunity to apply per-frame rotation. We currently set
-`MediaFormat.KEY_ROTATION` as metadata, but this only embeds the rotation in the H.264
-bitstream's Display Orientation SEI — most live-stream decoders ignore SEI and render
-the bitstream as-is. So RTSP comes out in the sensor's native orientation (landscape).
-
-The proper fix is an **EGL/GL pipeline**: camera writes into a `SurfaceTexture`, a small
-fragment-shader pass rotates the texture by `(sensorOrientation - deviceRotation)` and
-draws into the encoder's input Surface. Adds ~200 LOC and one EGL context. Roughly:
+The H.264 paths (RTSP and SRT) feed the encoder from a camera Surface, so they can't
+rotate per-frame in the JPEG sense. The fix is an **EGL/GL stage**: the camera writes into
+a `SurfaceTexture`, a fragment-shader pass rotates by `glRotation = (360 - deviceRotation)
+% 360` (the SurfaceTexture transform already cancels `sensorOrientation`, so it's
+device-independent) and draws into the encoder's input Surface, which gets
+`KEY_ROTATION = 0`:
 
 ```
 Camera2 ─→ SurfaceTexture ─→ glDraw(rotation matrix) ─→ MediaCodec input Surface
 ```
 
-Workaround until that lands: rotate in the receiver. In OBS, right-click the
-Media Source → Transform → Rotate 90° CW (or use a filter). Lossless for the user.
+SRT reconfigures this pipeline in place on rotation without dropping the receiver
+(`SrtManager.reconfigureVideo`); RTSP does a full restart. SRT is ≤30 fps so it always
+rotates.
+
+**Remaining exception — high-speed RTSP (60/120/240 fps).** Constrained Camera2 high-speed
+sessions only accept MediaCodec/preview Surfaces, not the GL `SurfaceTexture`, so those
+sessions fall back to sensor-native landscape plus a `KEY_ROTATION` hint
+(`useGlRotation = !plan.highSpeed`). The Settings sheet still warns when a high-speed RTSP
+plan will be landscape. Receiver-side workaround for that case: in OBS, right-click the
+Media Source → Transform → Rotate 90° CW.
 
 ## Planned
 
@@ -278,13 +297,13 @@ A real Windows / macOS virtual-camera driver (signed DirectShow filter or macOS
 System Extension) would extend the PC-side approach to those platforms but
 brings a code-signing/notarization yak-shave that's deliberately out of scope.
 
-### RTSP portrait support
+### High-speed RTSP portrait support
 
-The RTSP server itself is shipped (hand-rolled on top of `MediaCodec`, see
-`streaming/rtsp/`). What's missing is an EGL/GL rotation pass between the camera and the
-H.264 encoder so the stream isn't pinned to the sensor's landscape orientation. Sketch
-above in *Known limitation: RTSP stream is locked to sensor orientation*. Until that
-lands, the Settings sheet shows users a note that RTSP is landscape-only.
+Standard-rate (≤30 fps) RTSP and all SRT now stream upright via the GL stage — see *Solved:
+RTSP/SRT orientation* above. The remaining gap is high-speed (60/120/240 fps) RTSP, which
+can't take the GL `SurfaceTexture` through a constrained Camera2 high-speed session and so
+stays sensor-native landscape. Lifting it needs a different capture path (e.g. a normal
+session reading the high-speed output, where the device allows it) and is not yet started.
 
 ### Minor polish
 

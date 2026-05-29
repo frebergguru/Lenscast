@@ -197,5 +197,5 @@ URL in a browser first; you should see a tiny Lenscast landing page with the liv
 feed embedded.
 
 **Choppy / dropped frames** — Wi-Fi is the usual culprit. Try `--fps 24` to give
-the network some slack, or use USB tethering (`adb reverse tcp:4747 tcp:4747` then
-`lenscast-virtualcam http://127.0.0.1:4747/video`).
+the network some slack, or go over USB (`adb forward tcp:4747 tcp:4747` then
+`lenscast-virtualcam http://127.0.0.1:4747/video`). See [../Docs/USB.md](../Docs/USB.md).
