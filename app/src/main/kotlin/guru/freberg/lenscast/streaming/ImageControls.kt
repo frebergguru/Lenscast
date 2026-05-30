@@ -42,7 +42,10 @@ data class ImageControls(
         b.set(CaptureRequest.CONTROL_AWB_MODE, awbMode())
         b.set(CaptureRequest.CONTROL_AF_MODE, afMode())
         b.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, antiBandingMode())
-        b.set(CaptureRequest.CONTROL_EFFECT_MODE, effectMode())
+        // Colour effects are applied in GlRotator's fragment shader on this path, not via the
+        // ISP — the legacy CONTROL_EFFECT_MODE is unreliable across vendors (advertised but
+        // no-op / broken on some HALs). Keep the ISP at OFF so the two never double up.
+        b.set(CaptureRequest.CONTROL_EFFECT_MODE, CaptureRequest.CONTROL_EFFECT_MODE_OFF)
         val scene = sceneModeInt()
         if (scene >= 0) {
             // Engaging a scene mode requires CONTROL_MODE = USE_SCENE_MODE.
@@ -89,18 +92,6 @@ data class ImageControls(
         AntiBanding.HZ50 -> CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_50HZ
         AntiBanding.HZ60 -> CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_60HZ
         AntiBanding.OFF  -> CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_OFF
-    }
-
-    private fun effectMode(): Int = when (effect) {
-        CameraEffect.NONE       -> CaptureRequest.CONTROL_EFFECT_MODE_OFF
-        CameraEffect.MONO       -> CaptureRequest.CONTROL_EFFECT_MODE_MONO
-        CameraEffect.NEGATIVE   -> CaptureRequest.CONTROL_EFFECT_MODE_NEGATIVE
-        CameraEffect.SEPIA      -> CaptureRequest.CONTROL_EFFECT_MODE_SEPIA
-        CameraEffect.AQUA       -> CaptureRequest.CONTROL_EFFECT_MODE_AQUA
-        CameraEffect.SOLARIZE   -> CaptureRequest.CONTROL_EFFECT_MODE_SOLARIZE
-        CameraEffect.POSTERIZE  -> CaptureRequest.CONTROL_EFFECT_MODE_POSTERIZE
-        CameraEffect.BLACKBOARD -> CaptureRequest.CONTROL_EFFECT_MODE_BLACKBOARD
-        CameraEffect.WHITEBOARD -> CaptureRequest.CONTROL_EFFECT_MODE_WHITEBOARD
     }
 
     /** -1 = "Disabled" so the caller leaves CONTROL_MODE at AUTO. */

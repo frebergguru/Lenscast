@@ -230,6 +230,7 @@ class RtspManager(
                 cameraBufferHeight = plan.size.height,
                 rotationDegrees = glRotation,
                 mirror = config.imageControls.mirror,
+                effect = config.imageControls.effect,
             ).also { rotator = it }.cameraSurface
         } else {
             encoderInputSurface
@@ -372,6 +373,7 @@ class RtspManager(
         currentConfig = currentConfig?.copy(imageControls = controls)
         camera?.setImageControls(controls)
         rotator?.setMirror(controls.mirror)
+        rotator?.setEffect(controls.effect)
     }
 
     fun setAudioGainDb(db: Int) { audioEncoder?.setGainDb(db) }

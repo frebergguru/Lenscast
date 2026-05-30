@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import android.view.Surface
+import guru.freberg.lenscast.prefs.CameraEffect
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
@@ -47,6 +48,7 @@ class GlRotator(
     cameraBufferHeight: Int,
     private val rotationDegrees: Int,
     mirror: Boolean = false,
+    effect: CameraEffect = CameraEffect.NONE,
 ) {
 
     /** Surface to hand the Camera2 driver. The camera writes frames here; we rotate them. */
@@ -65,8 +67,16 @@ class GlRotator(
     private var aPosLoc: Int = -1
     private var aTexLoc: Int = -1
     private var uMatLoc: Int = -1
+    private var uEffectLoc: Int = -1
     private var oesTextureId: Int = 0
     private var surfaceTexture: SurfaceTexture? = null
+
+    // Colour effects (mono/negative/sepia/…) are done here in the fragment shader rather than
+    // via Camera2's CONTROL_EFFECT_MODE: the legacy ISP effects are unreliable across vendors
+    // (some HALs advertise them in availableEffects yet no-op or black out the frame), whereas a
+    // GL transform is device-independent and applies identically to RTSP/SRT/RIST. Read/written
+    // only on [handler]'s thread (renderFrame + setEffect). Codes must match the shader's uEffect.
+    @Volatile private var effectCode: Int = effectToCode(effect)
 
     private val stMatrix = FloatArray(16)
 
@@ -120,6 +130,14 @@ class GlRotator(
         }
     }
 
+    /** Live colour-effect change — composes with rotation/mirror without rebuilding the pipeline. */
+    fun setEffect(effect: CameraEffect) {
+        handler.post {
+            if (released.get()) return@post
+            effectCode = effectToCode(effect)
+        }
+    }
+
     fun release() {
         if (!released.compareAndSet(false, true)) return
         val latch = CountDownLatch(1)
@@ -165,6 +183,7 @@ class GlRotator(
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTextureId)
             GLES20.glUniformMatrix4fv(uMatLoc, 1, false, stMatrix, 0)
+            GLES20.glUniform1i(uEffectLoc, effectCode)
             GLES20.glEnableVertexAttribArray(aPosLoc)
             GLES20.glVertexAttribPointer(aPosLoc, 2, GLES20.GL_FLOAT, false, 0, vertexBuffer)
             GLES20.glEnableVertexAttribArray(aTexLoc)
@@ -225,19 +244,46 @@ class GlRotator(
                 vTexCoord = (uTexMatrix * aTexCoord).xy;
             }
         """.trimIndent()
+        // uEffect selects a per-pixel colour transform (see [effectToCode]). Branching on a
+        // uniform is cheap — every fragment takes the same path. The luma weights are BT.601.
         val fragSrc = """
             #extension GL_OES_EGL_image_external : require
             precision mediump float;
             varying vec2 vTexCoord;
             uniform samplerExternalOES sTexture;
+            uniform int uEffect;
             void main() {
-                gl_FragColor = texture2D(sTexture, vTexCoord);
+                vec4 src = texture2D(sTexture, vTexCoord);
+                vec3 c = src.rgb;
+                float g = dot(c, vec3(0.299, 0.587, 0.114));
+                if (uEffect == 1) {            // MONO
+                    c = vec3(g);
+                } else if (uEffect == 2) {     // NEGATIVE
+                    c = vec3(1.0) - c;
+                } else if (uEffect == 3) {     // SEPIA
+                    c = vec3(
+                        dot(c, vec3(0.393, 0.769, 0.189)),
+                        dot(c, vec3(0.349, 0.686, 0.168)),
+                        dot(c, vec3(0.272, 0.534, 0.131)));
+                } else if (uEffect == 4) {     // AQUA (cyan tint of luma)
+                    c = vec3(0.0, g, g);
+                } else if (uEffect == 5) {     // SOLARIZE (fold the upper tonal half)
+                    c = mix(c, vec3(1.0) - c, step(vec3(0.5), c));
+                } else if (uEffect == 6) {     // POSTERIZE (4 levels per channel)
+                    c = floor(c * 4.0) / 3.0;
+                } else if (uEffect == 7) {     // BLACKBOARD (dark field, light strokes)
+                    c = vec3(1.0 - smoothstep(0.3, 0.6, g));
+                } else if (uEffect == 8) {     // WHITEBOARD (light field, dark strokes)
+                    c = vec3(smoothstep(0.3, 0.6, g));
+                }
+                gl_FragColor = vec4(clamp(c, 0.0, 1.0), src.a);
             }
         """.trimIndent()
         program = createProgram(vertSrc, fragSrc)
         aPosLoc = GLES20.glGetAttribLocation(program, "aPosition")
         aTexLoc = GLES20.glGetAttribLocation(program, "aTexCoord")
         uMatLoc = GLES20.glGetUniformLocation(program, "uTexMatrix")
+        uEffectLoc = GLES20.glGetUniformLocation(program, "uEffect")
 
         val texIds = IntArray(1)
         GLES20.glGenTextures(1, texIds, 0)
@@ -280,6 +326,19 @@ class GlRotator(
 
     companion object {
         private const val TAG = "GlRotator"
+
+        /** Maps a [CameraEffect] to the integer the fragment shader's `uEffect` branches on. */
+        private fun effectToCode(e: CameraEffect): Int = when (e) {
+            CameraEffect.NONE       -> 0
+            CameraEffect.MONO       -> 1
+            CameraEffect.NEGATIVE   -> 2
+            CameraEffect.SEPIA      -> 3
+            CameraEffect.AQUA       -> 4
+            CameraEffect.SOLARIZE   -> 5
+            CameraEffect.POSTERIZE  -> 6
+            CameraEffect.BLACKBOARD -> 7
+            CameraEffect.WHITEBOARD -> 8
+        }
 
         private fun floatBufferOf(vararg v: Float): FloatBuffer =
             ByteBuffer.allocateDirect(v.size * 4).order(ByteOrder.nativeOrder())

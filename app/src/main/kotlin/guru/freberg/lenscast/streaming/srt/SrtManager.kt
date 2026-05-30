@@ -235,6 +235,7 @@ class SrtManager(private val context: Context) {
             cameraBufferHeight = plan.size.height,
             rotationDegrees = glRotation,
             mirror = config.imageControls.mirror,
+            effect = config.imageControls.effect,
         ).also { rotator = it }
         ve.start { nal, ptsUs, isKey ->
             val ps = ve.parameterSets
@@ -349,6 +350,7 @@ class SrtManager(private val context: Context) {
         currentConfig = currentConfig?.copy(imageControls = controls)
         camera?.setImageControls(controls)
         rotator?.setMirror(controls.mirror)
+        rotator?.setEffect(controls.effect)
     }
 
     fun setAudioMuted(muted: Boolean) { audioEncoder?.muted = muted }
