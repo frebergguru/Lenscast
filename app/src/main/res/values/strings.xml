@@ -5,6 +5,8 @@
     <string name="title_main">Lenscast</string>
     <string name="subtitle_idle">Ready to stream</string>
     <string name="subtitle_streaming">Live</string>
+    <string name="stat_pill_ready">READY</string>
+    <string name="stat_pill_live">LIVE</string>
 
     <string name="action_start">Start streaming</string>
     <string name="action_stop">Stop streaming</string>

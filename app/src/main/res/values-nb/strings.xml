@@ -5,6 +5,8 @@
     <string name="title_main">Lenscast</string>
     <string name="subtitle_idle">Klar til å strømme</string>
     <string name="subtitle_streaming">Direkte</string>
+    <string name="stat_pill_ready">KLAR</string>
+    <string name="stat_pill_live">DIREKTE</string>
 
     <string name="action_start">Start strømming</string>
     <string name="action_stop">Stopp strømming</string>
@@ -43,9 +45,9 @@
 
     <string name="settings_srt_section">SRT-transport</string>
     <string name="settings_srt_mode">Modus</string>
-    <string name="settings_srt_mode_caller">Caller (ring ut)</string>
-    <string name="settings_srt_mode_listener">Listener (mottakere henter)</string>
-    <string name="settings_srt_mode_caller_hint">Telefonen ringer ut til en ekstern SRT-listener. Enkleste vei gjennom NAT — mottakeren må ha en offentlig listener-adresse.</string>
+    <string name="settings_srt_mode_caller">Oppringer (ring ut)</string>
+    <string name="settings_srt_mode_listener">Lytter (mottakere henter)</string>
+    <string name="settings_srt_mode_caller_hint">Telefonen ringer ut til en ekstern SRT-lytter. Enkleste vei gjennom NAT — mottakeren må ha en offentlig lytteradresse.</string>
     <string name="settings_srt_mode_listener_hint">Telefonen lytter på porten under. Mottakere (VLC, ffmpeg, sendeprogramvare) henter via srt://&lt;telefon-ip&gt;:&lt;port&gt;.</string>
     <string name="settings_srt_host">Ekstern vert</string>
     <string name="settings_srt_port">Port</string>
@@ -53,8 +55,8 @@
     <string name="settings_srt_passphrase_hint">10–79 ASCII-tegn. Tom = ingen kryptering. Mottakere må bruke samme passord.</string>
     <string name="settings_srt_latency">Latensvindu (ms)</string>
     <string name="settings_srt_latency_hint">SRT ARQ-vindu. Lavere = mindre forsinkelse; høyere = bedre toleranse for pakketap. 120–300 ms vanlig.</string>
-    <string name="settings_srt_streamid">Stream-ID (valgfritt)</string>
-    <string name="settings_srt_streamid_hint">Sendes ved tilkobling (CALLER). Mottakere bruker det til å rute tilkoblingen. La det stå tomt for de fleste oppsett.</string>
+    <string name="settings_srt_streamid">Strøm-ID (valgfritt)</string>
+    <string name="settings_srt_streamid_hint">Sendes ved tilkobling (oppringer). Mottakere bruker det til å rute tilkoblingen. La det stå tomt for de fleste oppsett.</string>
     <string name="settings_protocol_rist">RIST (H.264 + AAC over MPEG-TS)</string>
     <string name="settings_rist_section">RIST-transport</string>
     <string name="settings_rist_mode">Modus</string>
@@ -92,7 +94,7 @@
     <string name="settings_rtsp_port">RTSP-port</string>
     <string name="settings_port_section">Tjenerport</string>
     <string name="settings_port_range_hint">Porten må være 1024–65535</string>
-    <string name="settings_rtsp_landscape_note">Velg retning før du starter — RTSP låser den for hele strømmen (klienter fastsetter bildestørrelsen når de kobler til, og kan ikke endre den underveis). 60 bps og høyere er kun liggende. Bruk SRT hvis du vil rotere mens du sender.</string>
+    <string name="settings_rtsp_landscape_note">Velg retning før du starter — RTSP låser den for hele strømmen (klienter fastsetter bildestørrelsen når de kobler til, og kan ikke endre den underveis). 60 fps og høyere er kun liggende. Bruk SRT hvis du vil rotere mens du sender.</string>
     <string name="settings_srt_rotation_note">Rotasjonen følger telefonen direkte — snu enheten mens du strømmer, og bildet roterer med.</string>
     <string name="rtsp_rotation_locked_toast">RTSP-retningen er låst mens du strømmer. Stopp, snu telefonen, og start på nytt — eller bruk SRT for å rotere direkte.</string>
     <string name="camera_switch_blocked_rtsp_resolution">Kan ikke bytte kamera på RTSP — det andre kameraet støtter ikke %1$s, og RTSP kan ikke endre oppløsning underveis. Stopp og bytt, senk oppløsningen, eller bruk SRT.</string>
@@ -142,7 +144,7 @@
     <string name="settings_watermark">Vannmerke</string>
     <string name="settings_watermark_hint">Tegnes på hver MJPEG-ramme. La det stå tomt for å deaktivere. `%t` byttes ut med klokkeslettet HH:mm:ss.</string>
     <string name="settings_manual_exposure">Manuell eksponering (ISO + lukker)</string>
-    <string name="settings_manual_exposure_unavailable">Ikke støttet på denne linsen (mangler MANUAL_SENSOR).</string>
+    <string name="settings_manual_exposure_unavailable">Ikke støttet på denne linsen (mangler MANUAL_SENSOR-funksjon).</string>
     <string name="settings_iso">ISO</string>
     <string name="settings_shutter">Lukker (µs)</string>
 
@@ -246,15 +248,15 @@
     <string name="settings_preset_lens_front">front</string>
 
     <string name="settings_mjpeg_sidecar">MJPEG-sidekanal (nettleserforhåndsvisning)</string>
-    <string name="settings_mjpeg_sidecar_hint">Eksponerer /video på MJPEG-porten slik at en nettleser-&lt;img&gt; fungerer parallelt med RTSP/SRT/RIST-strømmen. Samme kamera; maks 15 fps for sidekanalen.</string>
+    <string name="settings_mjpeg_sidecar_hint">Eksponerer /video på MJPEG-porten slik at en nettleser-&lt;img&gt; fungerer parallelt med RTSP/SRT/RIST-strømmen. Samme kamera; maks 15 fps for sidekanalen, for å holde koderen kjølig.</string>
     <string name="settings_mjpeg_sidecar_highspeed_note">Kun tilgjengelig ved ≤30 fps — Camera2 høyhastighetsøkter avviser ekstra utganger.</string>
-    <string name="settings_record_locally">Lagre til MP4 mens du strømmer (kun RTSP)</string>
-    <string name="settings_record_locally_hint">Lagres i Movies/Lenscast/. Kodes én gang; ingen ekstra batterikostnad utover filskrivingen.</string>
+    <string name="settings_record_locally">Ta opp til MP4 mens du strømmer (RTSP/SRT/RIST)</string>
+    <string name="settings_record_locally_hint">Lagres i Movies/Lenscast/. Kodes én gang; ingen ekstra batterikostnad utover filskrivingen. Ikke tilgjengelig på MJPEG eller WebRTC.</string>
     <string name="recording_saved">Opptak lagret i Movies/Lenscast</string>
 
     <string name="settings_sftp_section">SFTP-opplasting</string>
     <string name="settings_sftp_enabled">Last opp ferdige opptak automatisk</string>
-    <string name="settings_sftp_hint">Hvert opptak legges i kø og lastes opp når strømmen stopper. Feil prøves på nytt 3 ganger.</string>
+    <string name="settings_sftp_hint">Hvert opptak legges i kø og lastes opp når strømmen stopper. Feil prøves på nytt inntil 3 ganger med økende ventetid.</string>
     <string name="settings_sftp_host">Vert</string>
     <string name="settings_sftp_port">Port</string>
     <string name="settings_sftp_user">Brukernavn</string>
@@ -375,7 +377,7 @@
     <string name="web_lbl_mjpeg_sidecar">MJPEG-sidekanal</string>
     <string name="web_hint_mjpeg_sidecar">RTSP/SRT/RIST · ≤30 fps · /video serveres også parallelt med strømmen</string>
     <string name="web_lbl_record_mp4">Ta opp til MP4 mens du strømmer</string>
-    <string name="web_hint_record_rtsp_only">Kun RTSP · lagres i Movies/Lenscast/</string>
+    <string name="web_hint_record_rtsp_only">RTSP/SRT/RIST · lagres i Movies/Lenscast/</string>
     <string name="web_lbl_sftp_auto_upload">SFTP automatisk opplasting</string>
     <string name="web_hint_sftp_auto_upload">Opptak legges i kø når strømmen stopper.</string>
     <string name="web_lbl_sftp_host">SFTP-vert</string>
@@ -453,7 +455,7 @@
     <string name="web_lbl_rist_aes">AES-nøkkellengde</string>
     <string name="web_lbl_language">Appspråk</string>
     <string name="web_lang_system">Følg systemet</string>
-    <string name="web_lang_en">English</string>
+    <string name="web_lang_en">Engelsk</string>
     <string name="web_lang_nb">Norsk (Bokmål)</string>
     <string name="web_lbl_web_control_port">Kontrollpanel-port</string>
     <string name="web_hint_web_control_port">Endring laster panelet på nytt på den nye porten</string>

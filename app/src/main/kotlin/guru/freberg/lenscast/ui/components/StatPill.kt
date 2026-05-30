@@ -26,8 +26,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import guru.freberg.lenscast.R
 import kotlinx.coroutines.delay
 
 @Composable
@@ -60,7 +62,7 @@ fun LiveStatusPill(streaming: Boolean) {
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                text = if (streaming) "LIVE" else "READY",
+                text = stringResource(if (streaming) R.string.stat_pill_live else R.string.stat_pill_ready),
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = if (streaming) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
