@@ -581,7 +581,7 @@
     <string name="settings_web_control_port">Web control port</string>
     <string name="settings_web_control_hint">Open <code>http://&lt;phone-ip&gt;:%1$d/</code> on any LAN device to start/stop and tune the stream.</string>
     <string name="settings_persist_web">Keep web panel reachable in background</string>
-    <string name="settings_persist_web_hint">Adds a persistent low-priority notification so the panel keeps working when you switch to another app. Without this, the OS can kill the server within seconds.</string>
+    <string name="settings_persist_web_hint">Keeps the web panel and REST API reachable in the background and with the screen off — a small persistent notification plus a CPU/Wi-Fi lock so the phone still answers LAN requests when idle. On by default; turn it off if you only use the panel with the app open and the screen on.</string>
     <string name="settings_group_api">REST API</string>
     <string name="settings_api_section">REST API</string>
     <string name="settings_api_explainer">A JSON HTTP API on its own port for building your own control app or plugin. It mirrors the web panel\'s actions and obeys the same locks (e.g. transport settings can\'t change mid-stream). See Docs/API.md.</string>

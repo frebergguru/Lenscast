@@ -571,7 +571,7 @@
     <string name="settings_web_control_port">Webkontrollport</string>
     <string name="settings_web_control_hint">Åpne <code>http://&lt;telefon-ip&gt;:%1$d/</code> på en hvilken som helst LAN-enhet for å starte/stoppe og justere strømmen.</string>
     <string name="settings_persist_web">Hold webpanelet tilgjengelig i bakgrunnen</string>
-    <string name="settings_persist_web_hint">Legger til et vedvarende varsel med lav prioritet slik at panelet fortsetter å fungere når du bytter app. Uten dette kan OS-en avslutte tjeneren etter få sekunder.</string>
+    <string name="settings_persist_web_hint">Holder webpanelet og REST-API-et tilgjengelig i bakgrunnen og med skjermen av — et lite vedvarende varsel pluss en CPU-/Wi-Fi-lås slik at telefonen fortsatt svarer på LAN-forespørsler når den er inaktiv. På som standard; slå det av hvis du bare bruker panelet med appen åpen og skjermen på.</string>
     <string name="settings_group_api">REST-API</string>
     <string name="settings_api_section">REST-API</string>
     <string name="settings_api_explainer">Et JSON-HTTP-API på sin egen port for å bygge din egen kontrollapp eller plugin. Det speiler webpanelets handlinger og følger de samme låsene (f.eks. kan transportinnstillinger ikke endres midt i en strøm). Se Docs/API.md.</string>

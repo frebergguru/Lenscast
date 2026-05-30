@@ -138,7 +138,7 @@ class SettingsRepository(private val context: Context) {
         recordLocally = p[K_RECORD] ?: false,
         webControlEnabled = p[K_WC_ENABLED] ?: true,
         webControlPort = (p[K_WC_PORT] ?: 8080).coerceIn(1024, 65535),
-        persistentWebControl = p[K_WC_PERSIST] ?: false,
+        persistentWebControl = p[K_WC_PERSIST] ?: true,
         apiEnabled = p[K_API_ENABLED] ?: false,
         apiPort = (p[K_API_PORT] ?: 8088).coerceIn(1024, 65535),
         apiToken = SecretCipher.open(p[K_API_TOKEN] ?: ""),

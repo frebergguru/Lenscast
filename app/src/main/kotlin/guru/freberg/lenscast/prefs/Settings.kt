@@ -150,11 +150,16 @@ data class Settings(
     val webControlPort: Int = 8080,
     /**
      * When true, the streaming service stays in the foreground (low-priority notification,
-     * SPECIAL_USE type) any time the web control panel is enabled — even when no stream is
-     * running. Without this, the OS can reap the service shortly after the user
-     * backgrounds the app and the panel goes silent. Cost: a persistent notification.
+     * SPECIAL_USE type) any time the web control panel (or REST API) is enabled — even when no
+     * stream is running — and holds a CPU + Wi-Fi lock so it keeps answering with the screen
+     * off. Without this, the OS reaps the service after the app is backgrounded *and*, even
+     * while it lives, the screen-off Wi-Fi power-save parks the radio so LAN requests never
+     * arrive — the panel goes silent. **On by default**: a control panel you can't reach when
+     * the phone's screen is off isn't much use. Cost: a persistent notification and the small
+     * idle battery draw of the locks; turn this off if you only ever use the panel with the
+     * app open and the screen on.
      */
-    val persistentWebControl: Boolean = false,
+    val persistentWebControl: Boolean = true,
     /**
      * Machine REST API (see Docs/API.md) — an independent JSON-over-HTTP control surface on
      * its own port, meant for third-party control apps / plugins that drive Lenscast without

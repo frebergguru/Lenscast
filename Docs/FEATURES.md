@@ -112,10 +112,12 @@ Everything Lenscast can do today, grouped by area. For *planned* features see
 ## Background, power & system integration
 
 - **Foreground service** — streaming survives screen-lock and backgrounding.
-- **Background reachability** — the web panel and REST API keep serving **with the screen
-  off**: a persistent foreground notification plus a partial wake lock and a high-perf Wi-Fi
-  lock keep the CPU/radio awake so connections are answered (opt-in via "keep web panel
-  reachable" or by enabling the REST API).
+- **Background reachability (on by default)** — the web panel and REST API keep serving **with
+  the screen off**: a persistent foreground notification plus a partial wake lock and a
+  high-perf Wi-Fi lock keep the CPU and radio awake so LAN connections are still answered when
+  the phone is idle. Without these the screen-off Wi-Fi power-save parks the radio and the
+  panel goes silent. Toggle it off ("keep web panel reachable") if you only use the panel with
+  the app open.
 - **Keep screen on while streaming** (optional).
 - **Battery saver / blank preview** — hide the on-screen preview while streaming.
 - **Auto-start on app launch** and **start-on-boot** (`BOOT_COMPLETED`).

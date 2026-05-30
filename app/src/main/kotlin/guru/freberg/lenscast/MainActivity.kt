@@ -59,13 +59,17 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(this, StreamingService::class.java)
         bindService(intent, connection, Context.BIND_AUTO_CREATE)
 
-        // If the user has opted into a persistent web panel, fire startForegroundService
-        // with ACTION_PERSIST_WEB so the service stays alive past Activity unbind. The
-        // service itself reconciles the actual foreground state via its Settings flow
-        // observer; this is just to start it from cold.
+        // If a background-reachable control surface is enabled — the persistent web panel or
+        // the REST API — fire startForegroundService with ACTION_PERSIST_WEB so the service
+        // becomes a *started* foreground service (surviving Activity unbind) and is promoted
+        // from the foreground, where the FGS start is legal. This must run here (the app is
+        // foreground): the service's own Settings-flow observer can't legally promote itself
+        // once the app is backgrounded with the screen off. The service reconciles the rest.
         lifecycleScope.launch {
             val s = guru.freberg.lenscast.prefs.SettingsRepository(this@MainActivity).flow.first()
-            if (s.persistentWebControl && s.webControlEnabled) {
+            val wantPersistent = (s.persistentWebControl && s.webControlEnabled) ||
+                (s.apiEnabled && s.apiToken.isNotBlank())
+            if (wantPersistent) {
                 val persistIntent = Intent(this@MainActivity, StreamingService::class.java)
                     .setAction(StreamingService.ACTION_PERSIST_WEB)
                 ContextCompat.startForegroundService(this@MainActivity, persistIntent)
