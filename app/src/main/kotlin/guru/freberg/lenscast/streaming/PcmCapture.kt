@@ -54,58 +54,95 @@ class PcmCapture(
     @SuppressLint("MissingPermission")
     fun start(onPcm: (ByteArray) -> Unit) {
         if (running) return
+        running = true
+        // The mic is opened inside the capture thread and reopened if lost, so a mic that's
+        // unavailable at start — or grabbed mid-stream by a phone call — degrades to silence and
+        // recovers on its own instead of throwing.
+        captureThread = Thread({ captureLoop(onPcm) }, "LenscastPcmCapture").also { it.start() }
+    }
+
+    /** Open (and start) the mic. Returns null if it's unavailable (e.g. a call holds it); the
+     *  capture loop retries so audio resumes once it's released. */
+    @SuppressLint("MissingPermission")
+    private fun openRecorder(): AudioRecord? {
         val channelConfig = if (channels == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
         // Use the minimum buffer — anything larger just adds capture latency without
         // affecting throughput on a mic that already delivers samples in real time.
         val minBuf = AudioRecord.getMinBufferSize(sampleRateHz, channelConfig, AudioFormat.ENCODING_PCM_16BIT)
             .coerceAtLeast(2 * 1024)
-        val ar = AudioRecord(
-            audioSource,
-            sampleRateHz, channelConfig, AudioFormat.ENCODING_PCM_16BIT,
-            minBuf,
-        )
-        if (ar.state != AudioRecord.STATE_INITIALIZED) {
-            Log.e(TAG, "AudioRecord init failed (state=${ar.state})")
-            try { ar.release() } catch (_: Throwable) {}
-            return
-        }
-        recorder = ar
-        AudioUtils.attachAudioEffects(ar.audioSessionId, enableNoiseSuppress, enableEchoCancel)
-            .let { (noiseSuppressor, echoCanceler) -> ns = noiseSuppressor; aec = echoCanceler }
-        ar.startRecording()
-        running = true
-        // Emit in ~10 ms chunks (441 samples mono) for a tight latency profile. Chosen
-        // by reading at half minBuf — any smaller and we waste CPU on syscalls, any
-        // larger and we add audible delay.
-        val readSize = minOf(minBuf / 2, 882 * channels)
-        captureThread = Thread({
-            val buf = ByteArray(readSize)
-            while (running) {
-                val n = try { ar.read(buf, 0, buf.size) } catch (_: Throwable) { -1 }
-                if (n <= 0) continue
-                if (muted) java.util.Arrays.fill(buf, 0, n, 0)
-                peakDbfs.set(AudioUtils.applyGainAndMeter(buf, n, gainLinear))
-                if (n == buf.size) onPcm(buf.copyOf())
-                else onPcm(buf.copyOf(n))
+        return try {
+            val ar = AudioRecord(audioSource, sampleRateHz, channelConfig, AudioFormat.ENCODING_PCM_16BIT, minBuf)
+            if (ar.state != AudioRecord.STATE_INITIALIZED) {
+                try { ar.release() } catch (_: Throwable) {}
+                return null
             }
-        }, "LenscastPcmCapture").also { it.start() }
+            AudioUtils.attachAudioEffects(ar.audioSessionId, enableNoiseSuppress, enableEchoCancel)
+                .let { (noiseSuppressor, echoCanceler) -> ns = noiseSuppressor; aec = echoCanceler }
+            ar.startRecording()
+            recorder = ar
+            ar
+        } catch (t: Throwable) {
+            Log.w(TAG, "AudioRecord open failed: ${t.message}")
+            null
+        }
     }
 
-    fun stop() {
-        running = false
-        try { captureThread?.join(200) } catch (_: Throwable) {}
-        captureThread = null
+    private fun releaseRecorder() {
         try { ns?.release() } catch (_: Throwable) {}
         ns = null
         try { aec?.release() } catch (_: Throwable) {}
         aec = null
-        try { recorder?.stop() } catch (_: Throwable) {}
-        try { recorder?.release() } catch (_: Throwable) {}
+        val r = recorder
         recorder = null
+        try { r?.stop() } catch (_: Throwable) {}
+        try { r?.release() } catch (_: Throwable) {}
+    }
+
+    private fun captureLoop(onPcm: (ByteArray) -> Unit) {
+        val channelConfig = if (channels == 2) AudioFormat.CHANNEL_IN_STEREO else AudioFormat.CHANNEL_IN_MONO
+        val minBuf = AudioRecord.getMinBufferSize(sampleRateHz, channelConfig, AudioFormat.ENCODING_PCM_16BIT)
+            .coerceAtLeast(2 * 1024)
+        // Emit in ~10 ms chunks (441 samples mono) for a tight latency profile — read at half
+        // minBuf: smaller wastes CPU on syscalls, larger adds audible delay.
+        val readSize = minOf(minBuf / 2, 882 * channels)
+        val buf = ByteArray(readSize)
+        var readFailures = 0
+        while (running) {
+            val ar = recorder ?: openRecorder()
+            if (ar == null) {
+                // Mic unavailable (e.g. a call holds it). Wait and retry; audio resumes by itself.
+                peakDbfs.set(-90f)
+                try { Thread.sleep(200) } catch (_: InterruptedException) {}
+                continue
+            }
+            val n = try { ar.read(buf, 0, buf.size) } catch (_: Throwable) { -1 }
+            if (n <= 0) {
+                // Sustained failure means the mic was taken — drop + reopen on the next iteration.
+                if (++readFailures >= READ_FAIL_REOPEN) { releaseRecorder(); readFailures = 0 }
+                else try { Thread.sleep(20) } catch (_: InterruptedException) {}
+                continue
+            }
+            readFailures = 0
+            if (muted) java.util.Arrays.fill(buf, 0, n, 0)
+            peakDbfs.set(AudioUtils.applyGainAndMeter(buf, n, gainLinear))
+            if (n == buf.size) onPcm(buf.copyOf())
+            else onPcm(buf.copyOf(n))
+        }
+    }
+
+    fun stop() {
+        running = false
+        // Join first so the loop can't reopen the mic after we release it (it may be sleeping up
+        // to 200 ms on the mic-unavailable backoff).
+        try { captureThread?.join(300) } catch (_: Throwable) {}
+        captureThread = null
+        releaseRecorder()
         peakDbfs.set(-90f)
     }
 
     companion object {
         private const val TAG = "PcmCapture"
+        /** Consecutive failed mic reads before the recorder is dropped + reopened (~0.5 s). */
+        private const val READ_FAIL_REOPEN = 25
     }
 }

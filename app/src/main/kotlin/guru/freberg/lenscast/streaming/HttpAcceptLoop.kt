@@ -31,39 +31,46 @@ internal fun CoroutineScope.launchHttpAcceptLoop(
      *  realistic viewer count for a phone. */
     maxClients: Int = 64,
     handle: suspend (Socket) -> Unit,
-): Job = launch {
+): Job {
+    // Bind synchronously, before launching the accept loop, so a bind failure propagates to the
+    // caller (already wrapped in try/catch — it can surface or retry) instead of being swallowed
+    // inside the coroutine, which would leave the service "running" with no listening socket.
+    // That silent-failure mode showed up when a bind was disrupted during bring-up (e.g. the
+    // scheduling pressure around an incoming call).
+    val s = if (sslContext != null) {
+        sslContext.serverSocketFactory.createServerSocket().also {
+            it.reuseAddress = true
+            it.bind(InetSocketAddress(port))
+        }
+    } else {
+        ServerSocket().also {
+            it.reuseAddress = true
+            it.bind(InetSocketAddress(port))
+        }
+    }
+    onBound(s)
+    val scheme = if (sslContext != null) "https" else "http"
+    Log.i(logTag, "$serviceName $scheme listening on 0.0.0.0:$port")
     val activeClients = java.util.concurrent.atomic.AtomicInteger(0)
-    try {
-        val s = if (sslContext != null) {
-            sslContext.serverSocketFactory.createServerSocket().also {
-                it.reuseAddress = true
-                it.bind(InetSocketAddress(port))
+    return launch {
+        try {
+            while (isRunning() && isActive) {
+                val client = try { s.accept() } catch (e: IOException) { break }
+                // TLS sockets need TCP_NODELAY set before the handshake.
+                client.tcpNoDelay = true
+                client.soTimeout = 5_000
+                if (activeClients.get() >= maxClients) {
+                    Log.w(logTag, "$serviceName at client cap ($maxClients); dropping connection")
+                    try { client.close() } catch (_: Throwable) {}
+                    continue
+                }
+                activeClients.incrementAndGet()
+                launch {
+                    try { handle(client) } finally { activeClients.decrementAndGet() }
+                }
             }
-        } else {
-            ServerSocket().also {
-                it.reuseAddress = true
-                it.bind(InetSocketAddress(port))
-            }
+        } catch (t: Throwable) {
+            Log.e(logTag, "$serviceName accept loop crashed", t)
         }
-        onBound(s)
-        val scheme = if (sslContext != null) "https" else "http"
-        Log.i(logTag, "$serviceName $scheme listening on 0.0.0.0:$port")
-        while (isRunning() && isActive) {
-            val client = try { s.accept() } catch (e: IOException) { break }
-            // TLS sockets need TCP_NODELAY set before the handshake.
-            client.tcpNoDelay = true
-            client.soTimeout = 5_000
-            if (activeClients.get() >= maxClients) {
-                Log.w(logTag, "$serviceName at client cap ($maxClients); dropping connection")
-                try { client.close() } catch (_: Throwable) {}
-                continue
-            }
-            activeClients.incrementAndGet()
-            launch {
-                try { handle(client) } finally { activeClients.decrementAndGet() }
-            }
-        }
-    } catch (t: Throwable) {
-        Log.e(logTag, "$serviceName accept loop crashed", t)
     }
 }

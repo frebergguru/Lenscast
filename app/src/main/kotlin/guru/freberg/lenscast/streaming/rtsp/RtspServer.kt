@@ -89,22 +89,26 @@ class RtspServer(
 
     fun start() {
         if (running) return
+        // Bind synchronously so a bind failure propagates to RtspManager.start() (and surfaces as
+        // a stream ERROR) instead of being swallowed in the accept coroutine, which would leave
+        // the service reporting "streaming" with nothing listening on the port — the failure seen
+        // when bring-up was disrupted by an incoming call.
+        val s = if (sslContext != null) {
+            sslContext.serverSocketFactory.createServerSocket().apply {
+                reuseAddress = true
+                bind(InetSocketAddress(port))
+            }
+        } else {
+            ServerSocket().apply {
+                reuseAddress = true
+                bind(InetSocketAddress(port))
+            }
+        }
+        server = s
         running = true
+        Log.i(TAG, "RTSP${if (sslContext != null) "S" else ""} listening on 0.0.0.0:$port")
         acceptJob = scope.launch {
             try {
-                val s = if (sslContext != null) {
-                    sslContext.serverSocketFactory.createServerSocket().apply {
-                        reuseAddress = true
-                        bind(InetSocketAddress(port))
-                    }
-                } else {
-                    ServerSocket().apply {
-                        reuseAddress = true
-                        bind(InetSocketAddress(port))
-                    }
-                }
-                server = s
-                Log.i(TAG, "RTSP${if (sslContext != null) "S" else ""} listening on 0.0.0.0:$port")
                 while (running && isActive) {
                     val client = try { s.accept() } catch (_: IOException) { break }
                     client.tcpNoDelay = true
