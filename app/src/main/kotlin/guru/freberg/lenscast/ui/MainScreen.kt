@@ -92,6 +92,7 @@ import guru.freberg.lenscast.ui.components.LiveStatusPill
 import guru.freberg.lenscast.ui.components.PermissionRequestRow
 import guru.freberg.lenscast.ui.components.PreviewSurface
 import guru.freberg.lenscast.ui.components.StatChip
+import guru.freberg.lenscast.ui.components.StartupPermissionRequester
 import guru.freberg.lenscast.ui.components.VuMeter
 import guru.freberg.lenscast.ui.components.rememberPermissionStatus
 import kotlinx.coroutines.delay
@@ -244,6 +245,8 @@ fun MainScreen(
     val perm = rememberPermissionStatus(
         needAudio = settings.audioEnabled,
     )
+    // Proactively prompt for camera/mic/notifications + battery exemption once on launch.
+    StartupPermissionRequester()
 
     var settingsOpen by remember { mutableStateOf(false) }
     var torchOn by remember { mutableStateOf(false) }

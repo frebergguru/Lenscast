@@ -60,7 +60,7 @@ Everything Lenscast can do today, grouped by area. For *planned* features see
 
 ## Audio
 
-- Optional (off by default), gated behind `RECORD_AUDIO`.
+- On by default, gated behind `RECORD_AUDIO` (toggleable in Settings).
 - **Microphone source picker** — Camcorder / Default / Voice-recognition / Voice-comm /
   Unprocessed.
 - **Software gain** (−24…+24 dB), **noise suppression** and **echo cancellation** toggles.

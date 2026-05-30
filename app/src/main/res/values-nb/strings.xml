@@ -105,6 +105,11 @@
     <string name="settings_system_webcam_title">Bruk som USB-webkamera (system)</string>
     <string name="settings_system_webcam_explainer">Enheten din støtter system-modusen DeviceAsWebcam. Koble til via USB, velg deretter \"Webkamera\" i USB-innstillingene — telefonen vises som et vanlig webkamera i Zoom, Chrome osv. Merk: bildet kommer fra Android, ikke fra Lenscast.</string>
     <string name="settings_system_webcam_open">Åpne USB-innstillinger</string>
+
+    <string name="settings_group_background">Pålitelighet i bakgrunnen</string>
+    <string name="settings_battery_opt_title">Tillat ubegrenset batteribruk</string>
+    <string name="settings_battery_opt_explainer">Denne telefonen begrenser Lenscast i bakgrunnen, noe som kan fryse strømmen og web-panelet/API-et når skjermen er av og låst. Sett Lenscast til \"Ubegrenset\" slik at den fortsetter å kjøre med skjermen av.</string>
+    <string name="settings_battery_opt_action">Tillat ubegrenset</string>
     <string name="settings_version">Lenscast v%1$s</string>
 
     <string name="permission_camera_title">Kameratillatelse kreves</string>

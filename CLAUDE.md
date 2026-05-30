@@ -138,9 +138,10 @@ Full breakdown: [Docs/Architecture.md](Docs/Architecture.md).
 - **Mid-stream rotation:** SRT reconfigures the video pipeline in place
   (`SrtManager.reconfigureVideo`) keeping the socket/receiver connected; RTSP still does a
   full restart on rotation. Both are driven by `StreamingService.setDeviceRotation`.
-- **Audio** is optional (off by default), gated behind `RECORD_AUDIO` and the
+- **Audio** is **on by default**, gated behind `RECORD_AUDIO` and the
   `microphone` foreground-service type. Toggling Audio in Settings changes which
-  permissions are requested.
+  permissions are requested; if `RECORD_AUDIO` isn't granted the stream still starts
+  video-only (the `microphone` FGS type is dropped) and the audio path bails.
 - **MJPEG sidecar / preview parity.** All three codec paths share one optional sidecar:
   a second `ImageReader` output on the Camera2 session whose YUV frames are JPEG-encoded
   into `FrameBroadcaster`, serving `/video` on `mjpegPort` for a browser preview *and*

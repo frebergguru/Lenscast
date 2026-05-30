@@ -92,7 +92,7 @@ data class Settings(
     val fps: Fps = Fps.FPS30,
     val jpegQuality: Int = 80,
     val lens: Lens = Lens.BACK,
-    val audioEnabled: Boolean = false,
+    val audioEnabled: Boolean = true,
     val keepScreenOn: Boolean = true,
     val mjpegPort: Int = 4747,
     val rtspPort: Int = 5540,

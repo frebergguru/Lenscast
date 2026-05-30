@@ -105,6 +105,11 @@
     <string name="settings_system_webcam_title">Use as USB webcam (system)</string>
     <string name="settings_system_webcam_explainer">Your device supports the system DeviceAsWebcam mode. Plug in via USB, then enable \"Webcam\" in USB preferences — the phone appears as a regular webcam in Zoom, Chrome, etc. Note: the video comes from Android, not from Lenscast.</string>
     <string name="settings_system_webcam_open">Open USB preferences</string>
+
+    <string name="settings_group_background">Background reliability</string>
+    <string name="settings_battery_opt_title">Allow unrestricted battery use</string>
+    <string name="settings_battery_opt_explainer">This phone is restricting Lenscast in the background, which can freeze the stream and the web panel/API once the screen is off and locked. Set Lenscast to \"Unrestricted\" so it keeps running with the screen off.</string>
+    <string name="settings_battery_opt_action">Allow unrestricted</string>
     <string name="settings_version">Lenscast v%1$s</string>
 
     <string name="permission_camera_title">Camera permission required</string>

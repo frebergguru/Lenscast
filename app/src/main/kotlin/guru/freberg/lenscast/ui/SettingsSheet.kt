@@ -77,6 +77,7 @@ import guru.freberg.lenscast.prefs.SceneMode
 import guru.freberg.lenscast.prefs.Settings
 import guru.freberg.lenscast.prefs.SettingsCodec
 import guru.freberg.lenscast.prefs.WhiteBalance
+import guru.freberg.lenscast.system.BatteryOptimization
 import guru.freberg.lenscast.system.SystemWebcam
 
 @Composable
@@ -951,6 +952,38 @@ fun SettingsSheet(
                     )
                     OutlinedButton(onClick = { SystemWebcam.openUsbSettings(context) }) {
                         Text(stringResource(R.string.settings_system_webcam_open))
+                    }
+                }
+            }
+
+            // Nudge the user to exempt Lenscast from Doze/OEM battery throttling — without it the
+            // stream + panel/API can still freeze with the screen locked even though we hold the
+            // wake + Wi-Fi locks. Shown only while not yet exempt; re-checked on resume so it
+            // clears itself once granted from the system dialog.
+            run {
+                val battLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+                var battExempt by remember { mutableStateOf(BatteryOptimization.isExempt(context)) }
+                DisposableEffect(battLifecycle) {
+                    val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+                        if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                            battExempt = BatteryOptimization.isExempt(context)
+                        }
+                    }
+                    battLifecycle.addObserver(obs)
+                    onDispose { battLifecycle.removeObserver(obs) }
+                }
+                if (!battExempt) {
+                    SettingsGroup(title = stringResource(R.string.settings_group_background)) {
+                        SectionLabel(stringResource(R.string.settings_battery_opt_title))
+                        Text(
+                            text = stringResource(R.string.settings_battery_opt_explainer),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 12.dp),
+                        )
+                        OutlinedButton(onClick = { BatteryOptimization.request(context) }) {
+                            Text(stringResource(R.string.settings_battery_opt_action))
+                        }
                     }
                 }
             }

@@ -90,12 +90,14 @@ class StreamingService : LifecycleService() {
     @Volatile private var currentCallBehavior: CallBehavior = CallBehavior.IGNORE
     /** True while we hold a SPECIAL_USE foreground notification for the web panel. */
     @Volatile private var persistWebForeground: Boolean = false
+    // One CPU + one Wi-Fi lock shared by every background-reachable surface (an active stream,
+    // the persistent web panel, the REST API). The partial wake lock keeps the CPU servicing
+    // sockets with the screen off; the Wi-Fi lock keeps the radio out of power-save so inbound
+    // connections don't stall — a partial wake lock alone does NOT keep Wi-Fi awake, which was
+    // the "panel/stream unreachable once the screen locks" bug. Held whenever any surface is
+    // active, released when none are. Both non-reference-counted and idempotent.
     private var wakeLock: PowerManager.WakeLock? = null
-    // Separate from [wakeLock] (which is streaming-only): these keep the web-control / REST-API
-    // servers reachable while the screen is off in the persistent/background mode. See
-    // [acquireControlLocks].
-    private var controlWakeLock: PowerManager.WakeLock? = null
-    private var controlWifiLock: android.net.wifi.WifiManager.WifiLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
     private var pendingPreviewProvider: androidx.camera.core.Preview.SurfaceProvider? = null
     // (RTSP path runs without an on-device preview; see startRtsp for the reasoning.)
     /** Tracks the camera config we last bound with, so we know when to rebind. */
@@ -180,7 +182,8 @@ class StreamingService : LifecycleService() {
         // demote when off. Triggers on either the web panel's "keep reachable" toggle or the
         // REST API being enabled: both run inside this service and need it kept alive (plus the
         // CPU/Wi-Fi locks in showWebControlForeground) to answer with the screen off. Only acts
-        // while no stream is running — the streaming path manages its own foreground + wakelock.
+        // while no stream is running — the streaming path manages its own foreground + the same
+        // shared power locks (acquirePowerLocks), so it stays reachable with the screen off too.
         lifecycleScope.launch {
             repo.flow
                 .map {
@@ -226,7 +229,7 @@ class StreamingService : LifecycleService() {
             persistWebForeground = true
             // Keep CPU + Wi-Fi awake so the servers actually answer with the screen off — the
             // foreground notification by itself doesn't do this.
-            acquireControlLocks()
+            acquirePowerLocks()
         } catch (t: Throwable) {
             Log.w(TAG, "showWebControlForeground failed: ${t.message}")
         }
@@ -235,11 +238,12 @@ class StreamingService : LifecycleService() {
     private fun hideWebControlForeground() {
         if (!persistWebForeground) return
         persistWebForeground = false
-        releaseControlLocks()
         if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) {
-            // Streaming path is still running — leave foreground; it owns the notif now.
+            // Streaming path is still running — leave the foreground and the shared power locks;
+            // the stream owns them now (it acquired the same locks in startStreaming).
             return
         }
+        releasePowerLocks()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -386,7 +390,7 @@ class StreamingService : LifecycleService() {
         if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return
         _status.value = Status(state = State.STARTING, settings = settings, activeProtocol = settings.protocol)
         startForegroundWithType(settings)
-        acquireWakeLock()
+        acquirePowerLocks()
 
         lifecycleScope.launch {
             try {
@@ -1981,7 +1985,9 @@ class StreamingService : LifecycleService() {
         // Keep the controller around so the UI can immediately re-bind preview after stop.
         try { cameraController?.unbind() } catch (_: Throwable) {}
         previewBoundKey = null
-        releaseWakeLock()
+        // Power locks are released below only when the service is going fully idle. During a
+        // restart (rotate) or a transition into persistent-web mode they stay held — no
+        // release/re-acquire gap that could let Wi-Fi power-save engage mid-handoff.
         // During a restart (rotate-phone → rebuild pipeline) we must NOT drop the service
         // out of foreground. startStreaming() will immediately call startForeground() again,
         // but Android 12+ forbids *starting* a foreground service from the background — and a
@@ -2003,6 +2009,7 @@ class StreamingService : LifecycleService() {
                 persistWebForeground = false  // will be re-set inside showWebControlForeground
                 showWebControlForeground()
             } else {
+                releasePowerLocks()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
                 } else {
@@ -2022,7 +2029,7 @@ class StreamingService : LifecycleService() {
         webControlServer = null
         try { apiServer?.stop() } catch (_: Throwable) {}
         apiServer = null
-        releaseControlLocks()
+        releasePowerLocks()
         try { cameraController?.shutdown() } catch (_: Throwable) {}
         cameraController = null
         super.onDestroy()
@@ -2085,56 +2092,46 @@ class StreamingService : LifecycleService() {
         }
     }
 
-    private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
-        val pm = getSystemService(POWER_SERVICE) as? PowerManager ?: return
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Lenscast:streaming").apply {
-            setReferenceCounted(false)
-            acquire(8 * 60 * 60 * 1000L) // 8 hour safety cap
-        }
-    }
-
-    private fun releaseWakeLock() {
-        try { wakeLock?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
-        wakeLock = null
-    }
-
     /**
-     * Locks that keep the web-control / REST-API servers reachable when the screen is off.
-     * The persistent foreground notification alone only stops the OS from *killing* the
-     * service — with the screen off the CPU suspends and Wi-Fi parks into power-save, so the
-     * socket accept loop never runs and incoming connections time out. (This is the
-     * long-standing "panel unreachable with the screen locked" problem.) A partial wake lock
-     * keeps the CPU servicing sockets; a high-perf Wi-Fi lock keeps the radio from dropping
-     * the connection. Held only while the persistent/background-reachable mode is active
-     * (persistent web panel or the REST API), so there's no idle battery cost otherwise.
-     * Both are non-reference-counted and idempotent — safe to call repeatedly.
+     * Acquire the shared CPU + Wi-Fi locks that keep every background-reachable surface — an
+     * active stream, the persistent web panel, and the REST API — answering with the screen
+     * off. The foreground notification alone only stops the OS from *killing* the service; with
+     * the screen off the CPU suspends and Wi-Fi parks into power-save, so the socket accept loop
+     * stalls and incoming connections time out (the long-standing "panel/stream unreachable once
+     * the screen locks" problem). A partial wake lock keeps the CPU servicing sockets; a Wi-Fi
+     * lock keeps the radio from parking. Called whenever any surface becomes active; both locks
+     * are non-reference-counted and idempotent, so repeated calls are safe.
      */
-    private fun acquireControlLocks() {
-        if (controlWakeLock?.isHeld != true) {
+    private fun acquirePowerLocks() {
+        if (wakeLock?.isHeld != true) {
             val pm = getSystemService(POWER_SERVICE) as? PowerManager
-            controlWakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Lenscast:control")?.apply {
+            wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Lenscast:power")?.apply {
                 setReferenceCounted(false)
-                acquire(8 * 60 * 60 * 1000L) // 8 hour safety cap, re-acquired on each promote
+                acquire(8 * 60 * 60 * 1000L) // 8 hour safety cap, re-acquired on each acquire
             }
         }
-        if (controlWifiLock?.isHeld != true) {
+        if (wifiLock?.isHeld != true) {
             val wm = applicationContext.getSystemService(WIFI_SERVICE) as? android.net.wifi.WifiManager
-            @Suppress("DEPRECATION") // FULL_HIGH_PERF is the right mode for a long-lived LAN server
-            controlWifiLock = wm?.createWifiLock(
-                android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Lenscast:control",
-            )?.apply {
+            // FULL_LOW_LATENCY is the modern strong mode (API 29+) and the documented successor
+            // to the now-deprecated FULL_HIGH_PERF, which is all that's available on API 26–28.
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                @Suppress("DEPRECATION")
+                android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
+            wifiLock = wm?.createWifiLock(mode, "Lenscast:power")?.apply {
                 setReferenceCounted(false)
                 acquire()
             }
         }
     }
 
-    private fun releaseControlLocks() {
-        try { controlWakeLock?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
-        controlWakeLock = null
-        try { controlWifiLock?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
-        controlWifiLock = null
+    private fun releasePowerLocks() {
+        try { wakeLock?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
+        wakeLock = null
+        try { wifiLock?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
+        wifiLock = null
     }
 
     companion object {

@@ -9,6 +9,8 @@ import android.os.Build
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -43,6 +45,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import guru.freberg.lenscast.R
+import guru.freberg.lenscast.system.BatteryOptimization
 
 /**
  * Result of checking whether the user has granted us what we need.
@@ -141,4 +144,46 @@ private fun openAppSettings(ctx: Context) {
         .setData(Uri.fromParts("package", ctx.packageName, null))
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     ctx.startActivity(intent)
+}
+
+/**
+ * One-shot startup prompt for everything the app needs to stream reliably in the background:
+ * the dangerous runtime permissions (camera, notifications, microphone) in a single system
+ * dialog, followed by the battery-optimization exemption nudge. Fires once per process launch
+ * (survives rotation via [rememberSaveable]) and only prompts for what's still missing, so a
+ * fully-granted launch shows nothing. Phone/call permissions are intentionally left out — they
+ * belong to the optional call-behavior feature and are requested when the user enables it.
+ *
+ * Renders no UI itself; drop it once near the top of the main composition.
+ */
+@Composable
+fun StartupPermissionRequester() {
+    val ctx = LocalContext.current
+    var didRun by rememberSaveable { mutableStateOf(false) }
+    val permLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        // Runtime dialog dismissed — chain the battery nudge if we're still optimized.
+        if (!BatteryOptimization.isExempt(ctx)) BatteryOptimization.request(ctx)
+    }
+    LaunchedEffect(Unit) {
+        if (didRun) return@LaunchedEffect
+        didRun = true
+        val missing = startupRuntimePermissions().filter {
+            ContextCompat.checkSelfPermission(ctx, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isNotEmpty()) {
+            permLauncher.launch(missing.toTypedArray())
+        } else if (!BatteryOptimization.isExempt(ctx)) {
+            BatteryOptimization.request(ctx)
+        }
+    }
+}
+
+private fun startupRuntimePermissions(): List<String> = buildList {
+    add(Manifest.permission.CAMERA)
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) add(Manifest.permission.POST_NOTIFICATIONS)
+    // Microphone is requested up front (not gated on the audio toggle) so enabling audio later
+    // is a flip, not a fresh permission round-trip — matches the user's "nudge mic at startup".
+    add(Manifest.permission.RECORD_AUDIO)
 }

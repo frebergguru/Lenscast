@@ -111,7 +111,7 @@ class SettingsRepository(private val context: Context) {
         fps = Fps.fromValue(p[K_FPS] ?: Fps.FPS30.value),
         jpegQuality = (p[K_QUALITY] ?: 80).coerceIn(10, 100),
         lens = Lens.entries.getOrNull(p[K_LENS] ?: 0) ?: Lens.BACK,
-        audioEnabled = p[K_AUDIO] ?: false,
+        audioEnabled = p[K_AUDIO] ?: true,
         keepScreenOn = p[K_KEEP_ON] ?: true,
         mjpegPort = (p[K_MJPEG_PORT] ?: 4747).coerceIn(1024, 65535),
         rtspPort = (p[K_RTSP_PORT] ?: 5540).coerceIn(1024, 65535),
