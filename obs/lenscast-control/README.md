@@ -10,13 +10,20 @@ top of that, driving the same REST API documented in [`Docs/API.md`](../../Docs/
 
 ## What it does
 
-- **Control panel** — Start/Stop, Switch camera, Torch, Snapshot, Zoom ±, Resolution, with a
-  live status line (state · protocol · resolution) polled every 2 s.
-- **Auto Media Source** — creates (or refreshes) an OBS Media Source named `Lenscast` in the
-  current scene, pointing at the phone's current stream URL. Supports **MJPEG, RTSP and SRT**
-  (RIST/WebRTC can't be played by a plain Media Source).
+- **Control panel** — Start/Stop, **Protocol**, Switch camera, **Torch**, **Mirror**,
+  **Autofocus**, **Zoom ±**, **Exposure (EV) ±**, **Snapshot**, **Resolution** and **FPS**, with
+  a live status line (● state · protocol · resolution · fps) polled every 2 s. Toggle buttons
+  (torch/mirror/AF) reflect the phone's live state.
+- **Auto source for every protocol** — creates (or refreshes) a source named `Lenscast` in the
+  current scene pointing at the phone's current stream:
+  - **MJPEG / RTSP / SRT / RIST** → an ffmpeg **Media Source**. SRT and RIST are **mode-aware**
+    (the URL flips caller/listener based on the phone's `srtMode`/`ristMode`).
+  - **WebRTC** → a **Browser Source** on `/webrtc/view` (OBS can't play WHEP via Media Source).
+  - RIST needs OBS' bundled ffmpeg to be built with **librist**; if it isn't, use MJPEG/RTSP/SRT.
 - **Hotkeys** — Start/stop, Switch camera, Toggle torch, Snapshot. Bind them under
   **Settings → Hotkeys** (search "Lenscast").
+- **Remembers your connection** — phone IP, API port and token are saved (on **Connect / Save**)
+  to the module config dir and reloaded on the next OBS launch.
 
 ## Requirements
 
