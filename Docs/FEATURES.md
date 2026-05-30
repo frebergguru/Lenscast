@@ -114,12 +114,20 @@ Everything Lenscast can do today, grouped by area. For *planned* features see
 ## Background, power & system integration
 
 - **Foreground service** — streaming survives screen-lock and backgrounding.
-- **Background reachability (on by default)** — the web panel and REST API keep serving **with
-  the screen off**: a persistent foreground notification plus a partial wake lock and a
-  high-perf Wi-Fi lock keep the CPU and radio awake so LAN connections are still answered when
-  the phone is idle. Without these the screen-off Wi-Fi power-save parks the radio and the
-  panel goes silent. Toggle it off ("keep web panel reachable") if you only use the panel with
-  the app open.
+- **Background reachability (on by default)** — the live stream, the web panel, and the REST
+  API all keep serving **with the screen off**: a persistent foreground notification plus a
+  shared partial wake lock and a `FULL_LOW_LATENCY` Wi-Fi lock keep the CPU and radio awake so
+  LAN connections are still answered when the phone is idle. The locks are held whenever *any*
+  surface is active (streaming, panel, or API), so a plain stream no longer freezes the panel/
+  API once the screen locks. Without them, screen-off Wi-Fi power-save parks the radio and
+  everything goes silent. Toggle the panel's "keep reachable" off if you only use it with the
+  app open.
+- **Battery-optimization exemption** — Lenscast detects when the OS / OEM battery manager is
+  throttling it and nudges you to set it *Unrestricted*, so a foreground stream isn't frozen
+  with the screen off. Prompted at startup and from a Settings "Background reliability" card;
+  always user-granted, never silent.
+- **Proactive startup permissions** — on first launch the app requests camera, microphone, and
+  notifications in one pass, then the battery exemption. Phone/call permission stays contextual.
 - **Keep screen on while streaming** (optional).
 - **Battery saver / blank preview** — hide the on-screen preview while streaming.
 - **Auto-start on app launch** and **start-on-boot** (`BOOT_COMPLETED`).

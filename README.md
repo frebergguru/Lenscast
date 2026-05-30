@@ -24,7 +24,8 @@ platform via OBS Virtual Camera. See [Docs/Webcam.md](Docs/Webcam.md).
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-1. Open Lenscast on the phone, grant camera + notifications permission.
+1. Open Lenscast on the phone and accept the startup prompts (camera, microphone,
+   notifications, and "allow unrestricted battery" so it keeps streaming with the screen off).
 2. Tap **Start streaming** — or open `http://<phone-ip>:8080/` from any browser on the
    LAN and use the web control panel.
 3. In OBS: **Sources → + → Media Source**, uncheck "Local File", paste the URL the app

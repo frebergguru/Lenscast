@@ -160,7 +160,16 @@ granted before the FGS is promoted — the Compose UI gates the Start button beh
 `rememberPermissionStatus`.
 
 `POST_NOTIFICATIONS` (API 33+) is requested alongside CAMERA. Without it the FGS
-notification is silently invisible and the service looks like it crashed.
+notification is silently invisible and the service looks like it crashed. On first launch
+`PermissionGate.StartupPermissionRequester` proactively prompts for CAMERA + `RECORD_AUDIO` +
+`POST_NOTIFICATIONS` in one dialog, then chains the battery-optimization exemption
+(`system/BatteryOptimization`); phone/call permissions stay tied to the call-behaviour feature.
+
+Background reachability uses one shared CPU + Wi-Fi lock pair (`acquirePowerLocks`/
+`releasePowerLocks` in `StreamingService`), held whenever streaming **or** the persistent web
+panel **or** the REST API is active — so a stream stays reachable with the screen off
+independent of the panel/API toggles. The Wi-Fi lock is `WIFI_MODE_FULL_LOW_LATENCY` on API
+29+ (`FULL_HIGH_PERF` on 26–28).
 
 ### 7. Settings live in DataStore, mirrored through a Flow
 

@@ -7,7 +7,8 @@ PC-side helper app required.
 ## Flow
 
 1. On the phone, open Lenscast.
-2. Grant camera + notifications permission on first launch.
+2. Accept the first-launch prompts: camera, microphone, notifications, and the
+   "allow unrestricted battery" nudge (keeps the stream alive with the screen off).
 3. Tap **Start streaming**. The connection card on the home screen shows the URLs that
    work for your current network state.
 4. In OBS: **Sources → +** → **Media Source** → name it → OK.

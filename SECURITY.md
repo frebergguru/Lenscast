@@ -10,8 +10,8 @@ for the current version. The in-app Settings sheet also shows the running versio
 
 | Version  | Supported          |
 |----------|--------------------|
-| 1.1.0    | :white_check_mark: |
-| < 1.1.0  | :x:                |
+| 1.1.1    | :white_check_mark: |
+| < 1.1.1  | :x:                |
 
 ## Reporting a vulnerability
 
@@ -69,8 +69,18 @@ You can expect:
   loopback. The rule applies to all v4l2loopback devices system-wide; if that's
   undesirable, the rule is opt-in (`pc/README.md` and `pc/PipeWire.md` are
   explicit about this).
-- **Lenscast asks for `RECORD_AUDIO` when RTSP audio is enabled.** Not a vuln;
-  it's the documented behaviour and can be toggled off in the Settings sheet.
+- **Lenscast prompts for `CAMERA`, `RECORD_AUDIO`, and `POST_NOTIFICATIONS` at
+  startup, and microphone audio is on by default.** Not a vuln; these are the
+  documented permissions for a camera/mic streaming app, requested through the
+  standard Android runtime dialogs (the user can deny any of them). The stream
+  runs video-only until the mic is granted, and audio can be toggled off in the
+  Settings sheet. Phone/call permissions are only requested if you opt into the
+  call-behaviour feature.
+- **Lenscast offers to exempt itself from battery optimization
+  (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`).** Not a vuln; the exemption is always
+  user-initiated (a startup prompt or the Settings nudge), never silent, and only
+  stops the OS from freezing the foreground streaming service while the screen is
+  off. It grants no access to data and can be revoked in system Settings.
 - **Sideloaded APKs are signed with the debug keystore.** Lenscast is GitHub-only
   for now — not a Play Store app — and the debug keystore is the standard
   hobby-project signing convention. If a real production keystore is ever needed
