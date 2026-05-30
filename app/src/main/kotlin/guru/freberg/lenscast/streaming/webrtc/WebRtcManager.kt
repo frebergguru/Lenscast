@@ -87,6 +87,15 @@ class WebRtcManager(
      *  `/webrtc/offer` peers that have no addressable resource). */
     private val whepSessions = java.util.concurrent.ConcurrentHashMap<String, PeerConnection>()
 
+    /** Serialises WebRTC teardown off the caller's thread. `Camera2Capturer.stopCapture()` (and
+     *  `dispose()`) block until the camera session finishes opening; a stop issued while the
+     *  session is still opening — or one that never opens because the camera is held elsewhere —
+     *  would otherwise hang whoever called [stop] (the control server / StreamingService).
+     *  Single-threaded so repeated teardowns run in order; daemon so it never blocks process exit. */
+    private val teardownExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "WebRtcTeardown").apply { isDaemon = true }
+    }
+
     fun start(lens: Lens, width: Int, height: Int, fps: Int, audioEnabled: Boolean = false): Boolean {
         if (factory != null) return true
         try {
@@ -158,32 +167,41 @@ class WebRtcManager(
     }
 
     fun stop() {
+        // Peer/channel teardown is quick and safe on the caller's thread.
         for ((_, ch) in peerDataChannels) try { ch.close() } catch (_: Throwable) {}
         peerDataChannels.clear()
         whepSessions.clear()
         for (pc in peers) try { pc.close() } catch (_: Throwable) {}
         peers.clear()
         currentLens = null
-        try { capturer?.stopCapture() } catch (_: Throwable) {}
-        try { capturer?.dispose() } catch (_: Throwable) {}
-        capturer = null
-        // Dispose after the capturer (which uses it) to avoid leaking its HandlerThread + texture.
-        try { surfaceTextureHelper?.dispose() } catch (_: Throwable) {}
-        surfaceTextureHelper = null
-        try { videoTrack?.dispose() } catch (_: Throwable) {}
-        videoTrack = null
-        try { videoSource?.dispose() } catch (_: Throwable) {}
-        videoSource = null
-        try { audioTrack?.dispose() } catch (_: Throwable) {}
-        audioTrack = null
-        try { audioSource?.dispose() } catch (_: Throwable) {}
-        audioSource = null
-        try { audioDeviceModule?.release() } catch (_: Throwable) {}
-        audioDeviceModule = null
-        try { factory?.dispose() } catch (_: Throwable) {}
-        factory = null
-        try { eglBase?.release() } catch (_: Throwable) {}
-        eglBase = null
+
+        // Snapshot the heavy handles and clear the fields up front: a follow-up start() then
+        // rebuilds fresh state instead of early-returning on a stale `factory`, and the blocking
+        // disposal runs on the teardown worker rather than the caller's thread (see the executor
+        // doc). Order on the worker matches the old synchronous teardown.
+        val cap = capturer; val sth = surfaceTextureHelper; val vt = videoTrack; val vs = videoSource
+        val at = audioTrack; val asrc = audioSource; val adm = audioDeviceModule
+        val f = factory; val egl = eglBase
+        capturer = null; surfaceTextureHelper = null; videoTrack = null; videoSource = null
+        audioTrack = null; audioSource = null; audioDeviceModule = null; factory = null; eglBase = null
+
+        val teardown = teardownExecutor.submit {
+            try { cap?.stopCapture() } catch (_: Throwable) {}
+            try { cap?.dispose() } catch (_: Throwable) {}
+            // Dispose after the capturer (which uses it) to avoid leaking its HandlerThread + texture.
+            try { sth?.dispose() } catch (_: Throwable) {}
+            try { vt?.dispose() } catch (_: Throwable) {}
+            try { vs?.dispose() } catch (_: Throwable) {}
+            try { at?.dispose() } catch (_: Throwable) {}
+            try { asrc?.dispose() } catch (_: Throwable) {}
+            try { adm?.release() } catch (_: Throwable) {}
+            try { f?.dispose() } catch (_: Throwable) {}
+            try { egl?.release() } catch (_: Throwable) {}
+        }
+        // Normal teardown completes in well under a second, so this preserves the previous
+        // synchronous behaviour. The timeout only bites when stopCapture() is wedged on a session
+        // that won't open — then the caller returns and the worker finishes once it unblocks.
+        try { teardown.get(4, java.util.concurrent.TimeUnit.SECONDS) } catch (_: Throwable) {}
     }
 
     /** Number of peers currently connected (any state above NEW). */
