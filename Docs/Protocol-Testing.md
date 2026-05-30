@@ -96,6 +96,11 @@ curl -s -X POST "$WEB/control/stop"
 > adb shell 'ss -tln' | grep -E ':4747|:5540'    # TCP: MJPEG / RTSP
 > adb shell 'ss -uln' | grep -E ':9710|:5004'    # UDP: SRT / RIST
 > ```
+>
+> If `/status` says `streaming` but the port isn't listening, the server's (asynchronous)
+> bind was disrupted during start — seen around an incoming/outgoing **phone call** or
+> occasionally on a cold first start after a protocol switch. It does not self-recover: just
+> `stop` → `start` again and re-check the port.
 
 Reusable helpers used throughout this doc (note `idle` runs **before** configuring, `go`
 runs after):
