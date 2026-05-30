@@ -15,7 +15,9 @@ Everything Lenscast can do today, grouped by area. For *planned* features see
   optional AES encryption (passphrase), configurable latency window and stream-id.
 - **RIST** (default data port 5004) — pure-Kotlin (no librist/JNI). VSF **Simple** (RTP/MP2T
   + RTCP-NACK retransmit) and **Main** (GRE v2, single UDP port, PSK **AES-CTR** 128/256)
-  profiles. **Caller** and **Listener** modes, configurable buffer window.
+  profiles. **Caller** works on either profile; **Listener** requires Main (a librist
+  caller-receiver can't parent a Simple-profile flow, so Simple forces Caller). Configurable
+  buffer window.
 - **WebRTC** — browser playback at `/webrtc/view` plus a standard **WHEP** endpoint
   (`POST`/`DELETE /whep/<id>`), served off the web-control port. Sub-second latency.
 
