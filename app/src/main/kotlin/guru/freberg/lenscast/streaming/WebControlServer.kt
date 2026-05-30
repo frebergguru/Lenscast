@@ -710,6 +710,10 @@ class WebControlServer(
         val sStreaming = c.getString(R.string.web_viewer_status_streaming)
         val sAnswer = c.getString(R.string.web_viewer_status_answer)
         val sIdle = c.getString(R.string.web_viewer_status_idle)
+        val btnZoomIn = c.getString(R.string.web_btn_zoom_in)
+        val btnZoomOut = c.getString(R.string.web_btn_zoom_out)
+        val btnEvUp = c.getString(R.string.web_btn_ev_up)
+        val btnEvDown = c.getString(R.string.web_btn_ev_down)
         return """
             <!doctype html>
             <html><head><meta charset="utf-8"><title>${i.viewerTitle}</title>
@@ -735,10 +739,10 @@ class WebControlServer(
                 <button data-cmd="torch">${i.btnTorch}</button>
                 <button data-cmd="mirror">${i.btnMirror}</button>
                 <button data-cmd="af">${i.btnContinuousAf}</button>
-                <button data-cmd="zoom_in">Zoom +</button>
-                <button data-cmd="zoom_out">Zoom −</button>
-                <button data-cmd="ev_up">EV +</button>
-                <button data-cmd="ev_down">EV −</button>
+                <button data-cmd="zoom_in">$btnZoomIn</button>
+                <button data-cmd="zoom_out">$btnZoomOut</button>
+                <button data-cmd="ev_up">$btnEvUp</button>
+                <button data-cmd="ev_down">$btnEvDown</button>
                 <button data-cmd="snapshot">${i.btnSnapshot}</button>
               </div>
               <script>
@@ -948,6 +952,21 @@ class WebControlServer(
         val version = appVersion().ifEmpty { "" }
         val i = buildI18n()
         val helpJson = helpMapJson()
+        // Pull a few status/quick-control strings the data class doesn't carry — only used here.
+        val cfg = android.content.res.Configuration(context.resources.configuration).apply {
+            setLocale(java.util.Locale.getDefault())
+        }
+        val c = context.createConfigurationContext(cfg)
+        val statProtocol = c.getString(R.string.stat_protocol)
+        val statClients = c.getString(R.string.stat_clients)
+        val statZoomEv = c.getString(R.string.web_stat_zoom_ev)
+        val statBitrate = c.getString(R.string.stat_bitrate)
+        val statDropped = c.getString(R.string.stat_dropped)
+        val statRtt = c.getString(R.string.stat_rtt)
+        val btnZoomIn = c.getString(R.string.web_btn_zoom_in)
+        val btnZoomOut = c.getString(R.string.web_btn_zoom_out)
+        val btnEvUp = c.getString(R.string.web_btn_ev_up)
+        val btnEvDown = c.getString(R.string.web_btn_ev_down)
         return """
             <!doctype html>
             <html><head><title>${i.title}</title>
@@ -1276,15 +1295,15 @@ class WebControlServer(
                   <section class="card hidden" id="live-card">
                     <h2>${i.statusH}</h2>
                     <div class="stats-grid">
-                      <div class="stat"><div class="label">Protocol</div><div class="value" id="s-proto">—</div></div>
+                      <div class="stat"><div class="label">$statProtocol</div><div class="value" id="s-proto">—</div></div>
                       <div class="stat"><div class="label">${i.lblLens}</div><div class="value" id="s-lens">—</div></div>
                       <div class="stat"><div class="label">${i.lblFps}</div><div class="value" id="s-fps">—</div></div>
-                      <div class="stat"><div class="label">Clients</div><div class="value" id="s-clients">0</div></div>
+                      <div class="stat"><div class="label">$statClients</div><div class="value" id="s-clients">0</div></div>
                       <div class="stat"><div class="label">${i.lblResolution}</div><div class="value" id="s-res">—</div></div>
-                      <div class="stat"><div class="label">Zoom · EV</div><div class="value" id="s-zoomev">—</div></div>
-                      <div class="stat"><div class="label">Bitrate</div><div class="value" id="s-bitrate">—</div></div>
-                      <div class="stat"><div class="label">Dropped</div><div class="value" id="s-dropped">0</div></div>
-                      <div class="stat"><div class="label">RTT</div><div class="value" id="s-rtt">—</div></div>
+                      <div class="stat"><div class="label">$statZoomEv</div><div class="value" id="s-zoomev">—</div></div>
+                      <div class="stat"><div class="label">$statBitrate</div><div class="value" id="s-bitrate">—</div></div>
+                      <div class="stat"><div class="label">$statDropped</div><div class="value" id="s-dropped">0</div></div>
+                      <div class="stat"><div class="label">$statRtt</div><div class="value" id="s-rtt">—</div></div>
                       <div class="stat full" id="audio-stat">
                         <div class="label">${i.statAudioPeak} <span id="s-peak" style="float:right;color:var(--text-mute)">—</span></div>
                         <div class="vu"><div class="fill" id="vu-fill" style="width:0%"></div></div>
@@ -1305,10 +1324,10 @@ class WebControlServer(
                       <button class="btn" data-act="af">${i.btnContinuousAf}</button>
                     </div>
                     <div class="row" style="margin-top:var(--gap-2)">
-                      <button class="btn" data-act="zoom" data-arg="dir=in">Zoom +</button>
-                      <button class="btn" data-act="zoom" data-arg="dir=out">Zoom −</button>
-                      <button class="btn" data-act="ev"   data-arg="dir=up">EV +</button>
-                      <button class="btn" data-act="ev"   data-arg="dir=down">EV −</button>
+                      <button class="btn" data-act="zoom" data-arg="dir=in">$btnZoomIn</button>
+                      <button class="btn" data-act="zoom" data-arg="dir=out">$btnZoomOut</button>
+                      <button class="btn" data-act="ev"   data-arg="dir=up">$btnEvUp</button>
+                      <button class="btn" data-act="ev"   data-arg="dir=down">$btnEvDown</button>
                     </div>
                     <div class="row" style="margin-top:var(--gap-2)">
                       <button class="btn" data-act="snapshot" id="snapshot-btn" style="flex:1">${i.btnSnapshot}</button>

@@ -264,14 +264,14 @@ private fun BlankPreviewPlaceholder() {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(
-            text = "Battery-saver mode",
+            text = stringResource(R.string.preview_battery_saver_title),
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
             color = Color.White,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.size(4.dp))
         Text(
-            text = "Preview hidden; the stream is still live.",
+            text = stringResource(R.string.preview_battery_saver_body),
             style = MaterialTheme.typography.bodySmall,
             color = Color.White.copy(alpha = 0.7f),
             textAlign = TextAlign.Center,

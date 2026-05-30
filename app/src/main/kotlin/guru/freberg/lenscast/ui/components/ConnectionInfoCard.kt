@@ -277,7 +277,7 @@ private fun UrlRow(
             // (the click feeds the copy path) but most users won't think to try it.
             Icon(
                 imageVector = Icons.Outlined.QrCode2,
-                contentDescription = "Show as QR",
+                contentDescription = stringResource(R.string.cd_show_qr),
                 modifier = Modifier
                     .size(20.dp)
                     .clickable { showQr = true },
@@ -285,10 +285,10 @@ private fun UrlRow(
             )
             Spacer(Modifier.size(10.dp))
             AnimatedVisibility(visible = !justCopied) {
-                Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(18.dp))
+                Icon(Icons.Outlined.ContentCopy, contentDescription = stringResource(R.string.action_copy), modifier = Modifier.size(18.dp))
             }
             AnimatedVisibility(visible = justCopied) {
-                Icon(Icons.Outlined.Done, contentDescription = "Copied", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                Icon(Icons.Outlined.Done, contentDescription = stringResource(R.string.action_copied), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
             }
         }
     }

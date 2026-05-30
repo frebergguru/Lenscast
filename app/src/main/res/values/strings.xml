@@ -85,6 +85,8 @@
     <string name="settings_fps">Target FPS</string>
     <string name="settings_quality">JPEG quality</string>
     <string name="settings_quality_summary">%1$d%%</string>
+    <string name="settings_fps_mjpeg_cap_hint">MJPEG: capped at the device\'s standard preview fps (typically 30). Switch to RTSP for 60+ fps.</string>
+    <string name="settings_bitrate_auto">Auto</string>
     <string name="settings_camera">Camera</string>
     <string name="settings_camera_back">Back</string>
     <string name="settings_camera_front">Front</string>
@@ -122,6 +124,8 @@
 
     <string name="preview_rtsp_streaming_title">Streaming live</string>
     <string name="preview_rtsp_streaming_description">Camera feed is being sent to your receivers. Turn on the MJPEG sidecar to preview it here.</string>
+    <string name="preview_battery_saver_title">Battery-saver mode</string>
+    <string name="preview_battery_saver_body">Preview hidden; the stream is still live.</string>
 
     <string name="settings_image_section">Image</string>
     <string name="settings_mirror">Mirror horizontally</string>
@@ -290,6 +294,7 @@
     <string name="web_status_h">Status</string>
     <string name="web_stat_audio_peak">Audio peak</string>
     <string name="web_stat_connected_clients">Connected clients</string>
+    <string name="web_stat_zoom_ev">Zoom · EV</string>
     <string name="web_quick_h">Quick controls</string>
     <string name="web_btn_switch_camera">Switch camera</string>
     <string name="web_btn_torch">Torch</string>
@@ -298,6 +303,10 @@
     <string name="web_btn_snapshot">Snapshot</string>
     <string name="web_btn_stop_streaming">Stop streaming</string>
     <string name="web_btn_speedtest">Run LAN speed test</string>
+    <string name="web_btn_zoom_in">Zoom +</string>
+    <string name="web_btn_zoom_out">Zoom −</string>
+    <string name="web_btn_ev_up">EV +</string>
+    <string name="web_btn_ev_down">EV −</string>
     <string name="web_lbl_jpeg_quality">JPEG quality</string>
     <string name="web_hint_mjpeg_only">MJPEG only</string>
     <string name="web_settings_h">Settings</string>
@@ -490,6 +499,7 @@
     <!-- Settings sheet — accessibility labels + intent chooser title. -->
     <string name="cd_collapse">Collapse</string>
     <string name="cd_expand">Expand</string>
+    <string name="cd_show_qr">Show as QR code</string>
     <string name="share_diagnostics_chooser">Share diagnostics</string>
 
     <!-- Snapshot button content description (with the long-press hint). -->

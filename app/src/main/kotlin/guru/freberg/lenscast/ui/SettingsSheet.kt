@@ -220,7 +220,7 @@ fun SettingsSheet(
             )
             if (settings.protocol == Protocol.MJPEG) {
                 Text(
-                    text = "MJPEG: capped at the device's standard preview fps (typically 30). Switch to RTSP for 60+ fps.",
+                    text = stringResource(R.string.settings_fps_mjpeg_cap_hint),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
@@ -668,7 +668,7 @@ fun SettingsSheet(
                     steps = 19,
                 )
                 Text(
-                    text = if (br.toInt() == 0) "Auto" else "${br.toInt()} kbps",
+                    text = if (br.toInt() == 0) stringResource(R.string.settings_bitrate_auto) else "${br.toInt()} kbps",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

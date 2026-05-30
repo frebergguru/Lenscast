@@ -85,6 +85,8 @@
     <string name="settings_fps">FPS-mål</string>
     <string name="settings_quality">JPEG-kvalitet</string>
     <string name="settings_quality_summary">%1$d%%</string>
+    <string name="settings_fps_mjpeg_cap_hint">MJPEG: begrenset til enhetens standard forhåndsvisnings-fps (vanligvis 30). Bytt til RTSP for 60+ fps.</string>
+    <string name="settings_bitrate_auto">Auto</string>
     <string name="settings_camera">Kamera</string>
     <string name="settings_camera_back">Bak</string>
     <string name="settings_camera_front">Front</string>
@@ -122,6 +124,8 @@
 
     <string name="preview_rtsp_streaming_title">Strømmer direkte</string>
     <string name="preview_rtsp_streaming_description">Kamerasignalet sendes til mottakerne dine. Slå på MJPEG-sidekanalen for å forhåndsvise det her.</string>
+    <string name="preview_battery_saver_title">Batterisparingsmodus</string>
+    <string name="preview_battery_saver_body">Forhåndsvisning skjult; strømmen er fortsatt aktiv.</string>
 
     <string name="settings_image_section">Bilde</string>
     <string name="settings_mirror">Speil horisontalt</string>
@@ -288,6 +292,7 @@
     <string name="web_status_h">Status</string>
     <string name="web_stat_audio_peak">Lydtopp</string>
     <string name="web_stat_connected_clients">Tilkoblede klienter</string>
+    <string name="web_stat_zoom_ev">Zoom · EV</string>
     <string name="web_quick_h">Hurtigkontroller</string>
     <string name="web_btn_switch_camera">Bytt kamera</string>
     <string name="web_btn_torch">Lommelykt</string>
@@ -296,6 +301,10 @@
     <string name="web_btn_snapshot">Stillbilde</string>
     <string name="web_btn_stop_streaming">Stopp strømming</string>
     <string name="web_btn_speedtest">Kjør LAN-hastighetstest</string>
+    <string name="web_btn_zoom_in">Zoom +</string>
+    <string name="web_btn_zoom_out">Zoom −</string>
+    <string name="web_btn_ev_up">EV +</string>
+    <string name="web_btn_ev_down">EV −</string>
     <string name="web_lbl_jpeg_quality">JPEG-kvalitet</string>
     <string name="web_hint_mjpeg_only">Kun MJPEG</string>
     <string name="web_settings_h">Innstillinger</string>
@@ -480,6 +489,7 @@
 
     <string name="cd_collapse">Skjul</string>
     <string name="cd_expand">Vis</string>
+    <string name="cd_show_qr">Vis som QR-kode</string>
     <string name="share_diagnostics_chooser">Del diagnostikk</string>
 
     <string name="cd_snapshot">Ta stillbilde (hold for serie)</string>
