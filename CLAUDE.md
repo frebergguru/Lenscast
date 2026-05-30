@@ -188,6 +188,7 @@ adb shell am force-stop guru.freberg.lenscast
 - [Docs/USB.md](Docs/USB.md) — streaming over USB via `adb forward` (no Wi-Fi)
 - [Docs/Webcam.md](Docs/Webcam.md) — Lenscast as a regular system webcam (Linux helper + OBS Virtual Camera)
 - [Docs/API.md](Docs/API.md) — the JSON REST API (port 8088) for building control apps/plugins
+- [Docs/FEATURES.md](Docs/FEATURES.md) — full list of shipped features, grouped by area
 - [Docs/Architecture.md](Docs/Architecture.md) — full design rationale
 - [Docs/Roadmap.md](Docs/Roadmap.md) — what's planned and how to add it
 - `pc/` — Linux v4l2loopback helper (`lenscast-virtualcam`); not part of the APK build

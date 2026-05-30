@@ -91,6 +91,11 @@ class StreamingService : LifecycleService() {
     /** True while we hold a SPECIAL_USE foreground notification for the web panel. */
     @Volatile private var persistWebForeground: Boolean = false
     private var wakeLock: PowerManager.WakeLock? = null
+    // Separate from [wakeLock] (which is streaming-only): these keep the web-control / REST-API
+    // servers reachable while the screen is off in the persistent/background mode. See
+    // [acquireControlLocks].
+    private var controlWakeLock: PowerManager.WakeLock? = null
+    private var controlWifiLock: android.net.wifi.WifiManager.WifiLock? = null
     private var pendingPreviewProvider: androidx.camera.core.Preview.SurfaceProvider? = null
     // (RTSP path runs without an on-device preview; see startRtsp for the reasoning.)
     /** Tracks the camera config we last bound with, so we know when to rebind. */
@@ -171,12 +176,17 @@ class StreamingService : LifecycleService() {
                 .distinctUntilChanged()
                 .collect { configureCallMonitor(it) }
         }
-        // Persistent web foreground — promote when the user opts in, demote when off.
-        // Only acts while no stream is running (the streaming path manages its own
-        // foreground notification with the camera type).
+        // Persistent foreground — promote when a background-reachable control surface is on,
+        // demote when off. Triggers on either the web panel's "keep reachable" toggle or the
+        // REST API being enabled: both run inside this service and need it kept alive (plus the
+        // CPU/Wi-Fi locks in showWebControlForeground) to answer with the screen off. Only acts
+        // while no stream is running — the streaming path manages its own foreground + wakelock.
         lifecycleScope.launch {
             repo.flow
-                .map { it.persistentWebControl && it.webControlEnabled }
+                .map {
+                    (it.persistentWebControl && it.webControlEnabled) ||
+                        (it.apiEnabled && it.apiToken.isNotBlank())
+                }
                 .distinctUntilChanged()
                 .collect { wantPersistent ->
                     if (_status.value.state == State.STREAMING ||
@@ -214,6 +224,9 @@ class StreamingService : LifecycleService() {
                 startForeground(NOTIF_ID, notif)
             }
             persistWebForeground = true
+            // Keep CPU + Wi-Fi awake so the servers actually answer with the screen off — the
+            // foreground notification by itself doesn't do this.
+            acquireControlLocks()
         } catch (t: Throwable) {
             Log.w(TAG, "showWebControlForeground failed: ${t.message}")
         }
@@ -222,6 +235,7 @@ class StreamingService : LifecycleService() {
     private fun hideWebControlForeground() {
         if (!persistWebForeground) return
         persistWebForeground = false
+        releaseControlLocks()
         if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) {
             // Streaming path is still running — leave foreground; it owns the notif now.
             return
@@ -470,43 +484,62 @@ class StreamingService : LifecycleService() {
      * Bridge handed to [MjpegServer] for the browser control page. Keeps the server
      * decoupled from the service's full API surface — only the four buttons reach back.
      */
+    /**
+     * Apply a Settings [transform] with read-after-write consistency. The in-memory status is
+     * updated *synchronously* so a control read taken immediately after a mutating call —
+     * routine over the REST API, e.g. save-preset then apply-preset, or PATCH then GET —
+     * already reflects the change instead of racing the async DataStore write. Persistence and
+     * any camera [sideEffects] still run on the service scope; the `repo.flow` collector
+     * reconciles the persisted (coerced) value afterwards. [transform] must be pure: it runs
+     * twice (once here on the live settings, once inside the DataStore edit), so it can't carry
+     * side effects of its own.
+     */
+    private fun applyAndPersist(
+        transform: (Settings) -> Settings,
+        sideEffects: suspend (Settings) -> Unit = {},
+    ) {
+        _status.value = _status.value.copy(settings = transform(_status.value.settings))
+        val repo = SettingsRepository(this)
+        lifecycleScope.launch {
+            repo.update(transform)
+            val s = repo.flow.first()
+            sideEffects(s)
+            _status.value = _status.value.copy(settings = s)
+        }
+    }
+
     private val mjpegControl: MjpegControl = object : MjpegControl {
         override fun lensIsBack(): Boolean =
             _status.value.settings.lens == guru.freberg.lenscast.prefs.Lens.BACK
         override fun torchIsOn(): Boolean = cameraController?.torchOn == true
         override fun toggleTorch() { setTorch(!torchIsOn()) }
         override fun switchLens() {
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                repo.update {
-                    val newLens = if (it.lens == guru.freberg.lenscast.prefs.Lens.BACK)
-                        guru.freberg.lenscast.prefs.Lens.FRONT
-                    else guru.freberg.lenscast.prefs.Lens.BACK
-                    it.copy(lens = newLens)
-                }
-                val s = repo.flow.first()
+            applyAndPersist({
+                val newLens = if (it.lens == guru.freberg.lenscast.prefs.Lens.BACK)
+                    guru.freberg.lenscast.prefs.Lens.FRONT
+                else guru.freberg.lenscast.prefs.Lens.BACK
+                it.copy(lens = newLens)
+            }) { s ->
                 // While WebRTC is live it owns Camera2 via its own capturer — a CameraX rebind
                 // here would fight it. Drive the capturer's seamless switch instead. (The DataChannel
                 // path bypasses this method; this covers the HTTP /control/lens fallback.)
                 if (_status.value.state == State.STREAMING && s.protocol == Protocol.WEBRTC) {
                     webRtcManager?.switchLens(s.lens)
-                    _status.value = _status.value.copy(settings = s)
-                    return@launch
+                } else {
+                    // Rebind to the new lens with the current settings, including newLens.
+                    bindCameraIfNeeded(
+                        s.lens, s.resolution, s.fps.value, s.jpegQuality,
+                        mirror = s.mirror,
+                        whiteBalance = s.whiteBalance,
+                        antiBanding = s.antiBanding,
+                        continuousAf = s.continuousAf,
+                        exposureEv = s.exposureEv,
+                        effect = s.effect,
+                        sceneMode = s.sceneMode,
+                        manualFocus = s.manualFocus,
+                        manualFocusCentidiopters = s.manualFocusCentidiopters,
+                    )
                 }
-                // Rebind to the new lens with the current settings, including newLens.
-                bindCameraIfNeeded(
-                    s.lens, s.resolution, s.fps.value, s.jpegQuality,
-                    mirror = s.mirror,
-                    whiteBalance = s.whiteBalance,
-                    antiBanding = s.antiBanding,
-                    continuousAf = s.continuousAf,
-                    exposureEv = s.exposureEv,
-                    effect = s.effect,
-                    sceneMode = s.sceneMode,
-                    manualFocus = s.manualFocus,
-                    manualFocusCentidiopters = s.manualFocusCentidiopters,
-                )
-                _status.value = _status.value.copy(settings = s)
             }
         }
         override fun snapshot(): Boolean = saveSnapshot() != null
@@ -519,52 +552,27 @@ class StreamingService : LifecycleService() {
             setZoomRatio(current * factor)
         }
         override fun nudgeExposure(delta: Int) {
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                var newEv = 0
-                repo.update {
-                    newEv = it.exposureEv + delta
-                    it.copy(exposureEv = newEv)
-                }
-                setExposureEv(newEv)
-                val s = repo.flow.first()
+            applyAndPersist({ it.copy(exposureEv = it.exposureEv + delta) }) { s ->
+                setExposureEv(s.exposureEv)
                 applyImageControlsToActiveStream(s)
-                _status.value = _status.value.copy(settings = s)
             }
         }
         override fun toggleMirror() {
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                var nextMirror = false
-                repo.update {
-                    nextMirror = !it.mirror
-                    it.copy(mirror = nextMirror)
-                }
-                cameraController?.mirror = nextMirror
-                val s = repo.flow.first()
+            applyAndPersist({ it.copy(mirror = !it.mirror) }) { s ->
+                cameraController?.mirror = s.mirror
                 applyImageControlsToActiveStream(s)
-                _status.value = _status.value.copy(settings = s)
             }
         }
         override fun toggleContinuousAf() {
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                repo.update { it.copy(continuousAf = !it.continuousAf) }
-                val s = repo.flow.first()
-                // Continuous-AF swaps the AF_MODE. rebindCameraFor rebinds CameraX on the MJPEG
-                // path and pushes it to the live Camera2 request on the H.264 path (which must
-                // NOT take a CameraX rebind — that would fight the encoder's Surface).
-                rebindCameraFor(s)
-                _status.value = _status.value.copy(settings = s)
-            }
+            // Continuous-AF swaps the AF_MODE. rebindCameraFor rebinds CameraX on the MJPEG
+            // path and pushes it to the live Camera2 request on the H.264 path (which must
+            // NOT take a CameraX rebind — that would fight the encoder's Surface).
+            applyAndPersist({ it.copy(continuousAf = !it.continuousAf) }) { s -> rebindCameraFor(s) }
         }
         override fun setJpegQuality(value: Int) {
             val clamped = value.coerceIn(10, 95)
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                repo.update { it.copy(jpegQuality = clamped) }
-                cameraController?.jpegQuality = clamped
-                _status.value = _status.value.copy(settings = repo.flow.first())
+            applyAndPersist({ it.copy(jpegQuality = clamped) }) { s ->
+                cameraController?.jpegQuality = s.jpegQuality
             }
         }
         override fun jpegQuality(): Int = _status.value.settings.jpegQuality
@@ -572,43 +580,31 @@ class StreamingService : LifecycleService() {
         override fun setResolutionLabel(label: String): Boolean {
             val target = guru.freberg.lenscast.prefs.Resolution.entries.firstOrNull { it.label == label }
                 ?: return false
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                repo.update { current ->
-                    val supportedRes = CameraCapabilities.supportedResolutions(
-                        this@StreamingService, current.lens,
-                    )
-                    val newRes = if (target in supportedRes) target
-                                 else CameraCapabilities.nextBestResolution(supportedRes, target)
-                    val supportedFps = CameraCapabilities.supportedFps(
-                        this@StreamingService, current.lens, newRes, current.protocol,
-                    )
-                    val newFps = CameraCapabilities.nextBestFps(supportedFps, current.fps)
-                    current.copy(resolution = newRes, fps = newFps)
-                }
-                val s = repo.flow.first()
-                rebindCameraFor(s)
-                _status.value = _status.value.copy(settings = s)
-            }
+            applyAndPersist({ current ->
+                val supportedRes = CameraCapabilities.supportedResolutions(
+                    this@StreamingService, current.lens,
+                )
+                val newRes = if (target in supportedRes) target
+                             else CameraCapabilities.nextBestResolution(supportedRes, target)
+                val supportedFps = CameraCapabilities.supportedFps(
+                    this@StreamingService, current.lens, newRes, current.protocol,
+                )
+                val newFps = CameraCapabilities.nextBestFps(supportedFps, current.fps)
+                current.copy(resolution = newRes, fps = newFps)
+            }) { s -> rebindCameraFor(s) }
             return true
         }
 
         override fun setFpsValue(value: Int): Boolean {
             val target = guru.freberg.lenscast.prefs.Fps.entries.firstOrNull { it.value == value } ?: return false
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                repo.update { current ->
-                    val supportedFps = CameraCapabilities.supportedFps(
-                        this@StreamingService, current.lens, current.resolution, current.protocol,
-                    )
-                    val newFps = if (target.value in supportedFps) target
-                                 else CameraCapabilities.nextBestFps(supportedFps, target)
-                    current.copy(fps = newFps)
-                }
-                val s = repo.flow.first()
-                rebindCameraFor(s)
-                _status.value = _status.value.copy(settings = s)
-            }
+            applyAndPersist({ current ->
+                val supportedFps = CameraCapabilities.supportedFps(
+                    this@StreamingService, current.lens, current.resolution, current.protocol,
+                )
+                val newFps = if (target.value in supportedFps) target
+                             else CameraCapabilities.nextBestFps(supportedFps, target)
+                current.copy(fps = newFps)
+            }) { s -> rebindCameraFor(s) }
             return true
         }
 
@@ -623,22 +619,17 @@ class StreamingService : LifecycleService() {
             }
             // Can't swap protocols mid-stream — the encoders and server differ.
             if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                repo.update { current ->
-                    if (current.protocol == target) return@update current
-                    // FPS ranges differ across protocols (RTSP unlocks 60/120/240 via
-                    // high-speed sessions, MJPEG caps at 30). Clamp to a value the new
-                    // (lens × resolution × protocol) triple actually supports.
-                    val supportedFps = CameraCapabilities.supportedFps(
-                        this@StreamingService, current.lens, current.resolution, target,
-                    )
-                    val newFps = CameraCapabilities.nextBestFps(supportedFps, current.fps)
-                    current.copy(protocol = target, fps = newFps)
-                }
-                val s = repo.flow.first()
-                _status.value = _status.value.copy(settings = s)
-            }
+            applyAndPersist(proto@{ current ->
+                if (current.protocol == target) return@proto current
+                // FPS ranges differ across protocols (RTSP unlocks 60/120/240 via
+                // high-speed sessions, MJPEG caps at 30). Clamp to a value the new
+                // (lens × resolution × protocol) triple actually supports.
+                val supportedFps = CameraCapabilities.supportedFps(
+                    this@StreamingService, current.lens, current.resolution, target,
+                )
+                val newFps = CameraCapabilities.nextBestFps(supportedFps, current.fps)
+                current.copy(protocol = target, fps = newFps)
+            })
             return true
         }
 
@@ -646,16 +637,12 @@ class StreamingService : LifecycleService() {
             val streaming = _status.value.state == State.STREAMING || _status.value.state == State.STARTING
             // Some keys require special-case handling (recompute FPS, rebind, etc.); fall
             // through to a plain Settings.copy for the rest.
-            val repo = SettingsRepository(this@StreamingService)
             val (updater, requiresRebind) = updaterFor(key, value, streaming) ?: return false
-            lifecycleScope.launch {
-                repo.update(updater)
-                val s = repo.flow.first()
+            applyAndPersist(updater) { s ->
                 if (requiresRebind) rebindCameraFor(s)
                 // Live tweakables (mirror, EV, JPEG quality, audio gain) also need a side
                 // effect on the running controller — apply them here.
                 applyLiveTweakables(key, s)
-                _status.value = _status.value.copy(settings = s)
             }
             return true
         }
@@ -928,11 +915,9 @@ class StreamingService : LifecycleService() {
             if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
             // Pass current settings so a redacted import keeps the existing credentials.
             val parsed = SettingsCodec.fromJson(body, _status.value.settings) ?: return false
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                repo.replace(parsed)
-                _status.value = _status.value.copy(settings = repo.flow.first())
-            }
+            // Transform ignores the input — a full replace — but routing through applyAndPersist
+            // keeps the synchronous-status-update / async-persist behaviour consistent.
+            applyAndPersist({ parsed })
             return true
         }
 
@@ -952,46 +937,32 @@ class StreamingService : LifecycleService() {
             val trimmed = name.trim().take(40)
             if (trimmed.isEmpty()) return false
             if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                repo.update { s ->
-                    val preset = guru.freberg.lenscast.prefs.Preset(
-                        name = trimmed, protocol = s.protocol, resolution = s.resolution,
-                        fps = s.fps, lens = s.lens,
-                    )
-                    // Replace a same-named preset rather than duplicating it.
-                    s.copy(presets = s.presets.filterNot { it.name == trimmed } + preset)
-                }
-                _status.value = _status.value.copy(settings = repo.flow.first())
-            }
+            applyAndPersist({ s ->
+                val preset = guru.freberg.lenscast.prefs.Preset(
+                    name = trimmed, protocol = s.protocol, resolution = s.resolution,
+                    fps = s.fps, lens = s.lens,
+                )
+                // Replace a same-named preset rather than duplicating it.
+                s.copy(presets = s.presets.filterNot { it.name == trimmed } + preset)
+            })
             return true
         }
 
         override fun applyPreset(name: String): Boolean {
             if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) return false
             val preset = _status.value.settings.presets.firstOrNull { it.name == name } ?: return false
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                repo.update {
-                    it.copy(
-                        protocol = preset.protocol, resolution = preset.resolution,
-                        fps = preset.fps, lens = preset.lens,
-                    )
-                }
-                val s = repo.flow.first()
-                rebindCameraFor(s)
-                _status.value = _status.value.copy(settings = s)
-            }
+            applyAndPersist({
+                it.copy(
+                    protocol = preset.protocol, resolution = preset.resolution,
+                    fps = preset.fps, lens = preset.lens,
+                )
+            }) { s -> rebindCameraFor(s) }
             return true
         }
 
         override fun deletePreset(name: String): Boolean {
             if (_status.value.settings.presets.none { it.name == name }) return false
-            val repo = SettingsRepository(this@StreamingService)
-            lifecycleScope.launch {
-                repo.update { s -> s.copy(presets = s.presets.filterNot { it.name == name }) }
-                _status.value = _status.value.copy(settings = repo.flow.first())
-            }
+            applyAndPersist({ s -> s.copy(presets = s.presets.filterNot { it.name == name }) })
             return true
         }
 
@@ -2046,6 +2017,7 @@ class StreamingService : LifecycleService() {
         webControlServer = null
         try { apiServer?.stop() } catch (_: Throwable) {}
         apiServer = null
+        releaseControlLocks()
         try { cameraController?.shutdown() } catch (_: Throwable) {}
         cameraController = null
         super.onDestroy()
@@ -2120,6 +2092,44 @@ class StreamingService : LifecycleService() {
     private fun releaseWakeLock() {
         try { wakeLock?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
         wakeLock = null
+    }
+
+    /**
+     * Locks that keep the web-control / REST-API servers reachable when the screen is off.
+     * The persistent foreground notification alone only stops the OS from *killing* the
+     * service — with the screen off the CPU suspends and Wi-Fi parks into power-save, so the
+     * socket accept loop never runs and incoming connections time out. (This is the
+     * long-standing "panel unreachable with the screen locked" problem.) A partial wake lock
+     * keeps the CPU servicing sockets; a high-perf Wi-Fi lock keeps the radio from dropping
+     * the connection. Held only while the persistent/background-reachable mode is active
+     * (persistent web panel or the REST API), so there's no idle battery cost otherwise.
+     * Both are non-reference-counted and idempotent — safe to call repeatedly.
+     */
+    private fun acquireControlLocks() {
+        if (controlWakeLock?.isHeld != true) {
+            val pm = getSystemService(POWER_SERVICE) as? PowerManager
+            controlWakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Lenscast:control")?.apply {
+                setReferenceCounted(false)
+                acquire(8 * 60 * 60 * 1000L) // 8 hour safety cap, re-acquired on each promote
+            }
+        }
+        if (controlWifiLock?.isHeld != true) {
+            val wm = applicationContext.getSystemService(WIFI_SERVICE) as? android.net.wifi.WifiManager
+            @Suppress("DEPRECATION") // FULL_HIGH_PERF is the right mode for a long-lived LAN server
+            controlWifiLock = wm?.createWifiLock(
+                android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Lenscast:control",
+            )?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }
+    }
+
+    private fun releaseControlLocks() {
+        try { controlWakeLock?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
+        controlWakeLock = null
+        try { controlWifiLock?.takeIf { it.isHeld }?.release() } catch (_: Throwable) {}
+        controlWifiLock = null
     }
 
     companion object {
