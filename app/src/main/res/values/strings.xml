@@ -582,4 +582,13 @@
     <string name="settings_web_control_hint">Open <code>http://&lt;phone-ip&gt;:%1$d/</code> on any LAN device to start/stop and tune the stream.</string>
     <string name="settings_persist_web">Keep web panel reachable in background</string>
     <string name="settings_persist_web_hint">Adds a persistent low-priority notification so the panel keeps working when you switch to another app. Without this, the OS can kill the server within seconds.</string>
+    <string name="settings_group_api">REST API</string>
+    <string name="settings_api_section">REST API</string>
+    <string name="settings_api_explainer">A JSON HTTP API on its own port for building your own control app or plugin. It mirrors the web panel\'s actions and obeys the same locks (e.g. transport settings can\'t change mid-stream). See Docs/API.md.</string>
+    <string name="settings_api_enabled">Enable the REST API</string>
+    <string name="settings_api_port">API port</string>
+    <string name="settings_api_token">API token (send as Bearer)</string>
+    <string name="settings_api_copy">Copy token</string>
+    <string name="settings_api_regenerate">Regenerate</string>
+    <string name="settings_api_token_hint">Send this as <code>Authorization: Bearer &lt;token&gt;</code> on every request. It is stored encrypted and never sent back over the network. Regenerating it immediately invalidates the old one. Turn on HTTPS to protect it in transit.</string>
 </resources>

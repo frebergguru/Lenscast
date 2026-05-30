@@ -91,6 +91,13 @@ Build environment quirks (full detail in [Docs/Build.md](Docs/Build.md)):
 - **`streaming/webrtc/WebRtcManager`** drives the WebRTC/WHEP egress (also Camera2-owning).
 - **`WebControlServer`** is an independent HTTP control panel on its own port (default
   8080) — start/stop and full settings parity from a browser; runs whenever the app is up.
+- **`RestApiServer`** is the machine-facing JSON REST API on its own port (default 8088,
+  user-toggleable) for third-party control apps/plugins — start/stop, camera quick-controls,
+  and the full settings surface as JSON with real status codes. **Bearer-token** auth
+  (`Settings.apiToken`, CSPRNG-generated via `net/ApiToken`, sealed at rest by `SecretCipher`,
+  never echoed over the wire); **fail-closed** (binds only when enabled *and* a token exists).
+  Routes every action through the same `MjpegControl` bridge as the panel, so it inherits all
+  the blocking gates for free. See [Docs/API.md](Docs/API.md).
 - **`GlRotator`** (in `streaming/`) is the shared EGL/GL rotation stage for the RTSP/SRT
   H.264 paths. `RecordingMuxer` is the optional MP4 sink; `upload/SftpUploader` ships
   snapshots/recordings; `net/TlsManager` backs the HTTPS/RTSPS toggle.
@@ -180,6 +187,7 @@ adb shell am force-stop guru.freberg.lenscast
 - [Docs/OBS-Integration.md](Docs/OBS-Integration.md) — OBS source config + troubleshooting
 - [Docs/USB.md](Docs/USB.md) — streaming over USB via `adb forward` (no Wi-Fi)
 - [Docs/Webcam.md](Docs/Webcam.md) — Lenscast as a regular system webcam (Linux helper + OBS Virtual Camera)
+- [Docs/API.md](Docs/API.md) — the JSON REST API (port 8088) for building control apps/plugins
 - [Docs/Architecture.md](Docs/Architecture.md) — full design rationale
 - [Docs/Roadmap.md](Docs/Roadmap.md) — what's planned and how to add it
 - `pc/` — Linux v4l2loopback helper (`lenscast-virtualcam`); not part of the APK build

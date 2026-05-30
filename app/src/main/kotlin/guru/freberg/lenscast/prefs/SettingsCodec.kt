@@ -14,8 +14,9 @@ import org.json.JSONObject
  */
 object SettingsCodec {
     // v2 added the watermark / SFTP / SRT / language / sidecar fields; v3 added the RIST
-    // block. Reads remain backward-compatible: missing keys fall back to [Settings] defaults.
-    private const val VERSION = 3
+    // block; v4 added the REST API (apiEnabled / apiPort / apiToken). Reads remain
+    // backward-compatible: missing keys fall back to [Settings] defaults.
+    private const val VERSION = 4
 
     /**
      * Serialise [Settings] to JSON. When [includeSecrets] is false the credential fields
@@ -77,6 +78,11 @@ object SettingsCodec {
             put("httpsEnabled", s.httpsEnabled)
             put("callBehavior", s.callBehavior.name)
             put("persistentWebControl", s.persistentWebControl)
+            put("apiEnabled", s.apiEnabled)
+            put("apiPort", s.apiPort)
+            // Token is a credential — same redaction rule as the passwords/passphrases above:
+            // kept in an on-device backup, omitted from the network /export.
+            if (includeSecrets) put("apiToken", s.apiToken)
             put("watermarkText", s.watermarkText)
             put("sftpEnabled", s.sftpEnabled)
             put("sftpHost", s.sftpHost)
@@ -156,6 +162,9 @@ object SettingsCodec {
             httpsEnabled = o.optBoolean("httpsEnabled", d.httpsEnabled),
             callBehavior = enumByName(o, "callBehavior", d.callBehavior),
             persistentWebControl = o.optBoolean("persistentWebControl", d.persistentWebControl),
+            apiEnabled = o.optBoolean("apiEnabled", d.apiEnabled),
+            apiPort = o.optInt("apiPort", d.apiPort).coerceIn(1024, 65535),
+            apiToken = o.optString("apiToken", sec.apiToken),
             watermarkText = o.optString("watermarkText", d.watermarkText).take(120),
             sftpEnabled = o.optBoolean("sftpEnabled", d.sftpEnabled),
             sftpHost = o.optString("sftpHost", d.sftpHost).trim().take(255),

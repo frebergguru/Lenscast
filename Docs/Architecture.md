@@ -37,6 +37,7 @@ app/src/main/kotlin/guru/freberg/lenscast/
 │   ├── RtspManager.kt        # Lifecycle wrapper over the RTSP server
 │   ├── RecordingMuxer.kt     # Optional MP4 sink fed by the H.264/AAC encoders
 │   ├── WebControlServer.kt   # Independent HTTP control panel on its own port
+│   ├── RestApiServer.kt      # Machine JSON REST API on its own port (Bearer-token, see Docs/API.md)
 │   ├── rtsp/                 # Hand-rolled RTSP: server, Camera2 driver,
 │   │                         # H.264 + AAC encoders, RTP packetizers, SDP
 │   ├── srt/                  # SRT: SrtManager (in-place reconfigure on rotation),
@@ -125,6 +126,15 @@ NanoHTTPD would be 200 KB of dependency for what we'd write anyway. Hand-rolling
 faster and simpler to debug. Slow clients are dropped via a 5-second `soTimeout`. The
 WebRTC/WHEP handshakes hand off to `streaming/webrtc/WebRtcManager`; the independent web
 control panel is a separate server (`WebControlServer`) on its own port.
+
+The **REST API** (`RestApiServer`, default port 8088) is a third such server for control
+apps/plugins — JSON in/out, real status codes, Bearer-token auth. Critically it does *not*
+re-implement any control logic: it delegates every action to the same `MjpegControl` bridge
+the web panel uses, so all the mid-stream gates live in one place
+(`StreamingService.updaterFor` + the start/protocol/import guards) and the API inherits them.
+The token is CSPRNG-generated (`net/ApiToken`), sealed at rest like the other secrets
+(`SecretCipher`), and the server is fail-closed — it only binds when enabled *and* a token is
+set. See [API.md](API.md).
 
 ### 5. YUV → JPEG conversion path
 

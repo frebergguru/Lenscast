@@ -876,6 +876,61 @@ fun SettingsSheet(
 
             } // ← close Web control panel card
 
+            SettingsGroup(title = stringResource(R.string.settings_group_api)) {
+                SectionLabel(stringResource(R.string.settings_api_section))
+                Text(
+                    text = stringResource(R.string.settings_api_explainer),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                ToggleRow(
+                    title = stringResource(R.string.settings_api_enabled),
+                    checked = settings.apiEnabled,
+                    onCheckedChange = { onChange(settings.copy(apiEnabled = it)) },
+                )
+                if (settings.apiEnabled) {
+                    PortField(
+                        label = stringResource(R.string.settings_api_port),
+                        port = settings.apiPort,
+                        enabled = true,
+                        onPortChange = { onChange(settings.copy(apiPort = it)) },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    // The token is shown read-only here and nowhere else over the network —
+                    // this on-device sheet is the only place it's revealed. Repository persist
+                    // mints one automatically when the API is first enabled, so this is
+                    // populated by the time the toggle flips on.
+                    OutlinedTextField(
+                        value = settings.apiToken,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text(stringResource(R.string.settings_api_token)) },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        ),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+                    Row(modifier = Modifier.padding(top = 8.dp)) {
+                        OutlinedButton(onClick = {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(settings.apiToken))
+                        }) { Text(stringResource(R.string.settings_api_copy)) }
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedButton(onClick = {
+                            onChange(settings.copy(apiToken = guru.freberg.lenscast.net.ApiToken.generate()))
+                        }) { Text(stringResource(R.string.settings_api_regenerate)) }
+                    }
+                    Text(
+                        text = stringResource(R.string.settings_api_token_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+            }
+
             SettingsGroup(title = stringResource(R.string.settings_group_presets)) {
                 PresetsSection(settings, streaming, onChange)
             }

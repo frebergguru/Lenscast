@@ -135,7 +135,7 @@ if you're a human reader.
 ## Status
 
 This is a working hobby project. Tested on the developer's own Android phone, used as a
-free DroidCam replacement. MJPEG works in any orientation; RTSP and SRT are
+free phone-as-network-camera. MJPEG works in any orientation; RTSP and SRT are
 orientation-correct at ≤30 fps via an EGL/GL rotation stage (SRT also rotates mid-stream).
 The one landscape-only case left is high-speed RTSP (60/120/240 fps) — see
 [Docs/Roadmap.md](Docs/Roadmap.md).

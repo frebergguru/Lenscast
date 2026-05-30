@@ -156,6 +156,24 @@ data class Settings(
      */
     val persistentWebControl: Boolean = false,
     /**
+     * Machine REST API (see Docs/API.md) — an independent JSON-over-HTTP control surface on
+     * its own port, meant for third-party control apps / plugins that drive Lenscast without
+     * the browser panel. It shares the web panel's control bridge, so every blocking gate
+     * (stream-locked settings, RIST listener⇒Main coercion, start/import guards) applies
+     * identically. **Fail-closed:** the server only binds when [apiEnabled] is true *and*
+     * [apiToken] is non-blank.
+     */
+    val apiEnabled: Boolean = false,
+    val apiPort: Int = 8088,
+    /**
+     * Bearer token guarding the REST API. Sealed at rest with the same AndroidKeyStore
+     * AES-GCM key as the other credentials ([SecretCipher]), so it can't be lifted from a
+     * DataStore dump. Auto-generated with a CSPRNG the first time the API is enabled (see
+     * [SettingsRepository.update]) and rotatable from Settings. It is never echoed back over
+     * the network — `/status` and `/export` only report whether one is set, never its value.
+     */
+    val apiToken: String = "",
+    /**
      * Camera2 manual exposure. When true, AE goes OFF and [iso] / [shutterUs] take over.
      * Devices without the MANUAL_SENSOR capability silently ignore these — the UI hides
      * the controls in that case. EV-compensation is meaningless with AE off and the

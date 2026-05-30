@@ -1,14 +1,13 @@
-# TODO — Droidcam Pro feature gap
+# TODO — feature backlog
 
-Features that Droidcam / Droidcam Pro (Dev47Apps) ships and Lenscast does not. Grouped
-by area. Items already tracked in [Docs/Roadmap.md](Docs/Roadmap.md) are linked rather
-than re-described — they belong on this list for completeness but the design notes live
-in the roadmap.
+Candidate features Lenscast does not ship yet, grouped by area. Items already tracked in
+[Roadmap.md](Roadmap.md) are linked rather than re-described — they belong on
+this list for completeness but the design notes live in the roadmap.
 
 ## Manual camera controls
 
-Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
-`Camera2 CaptureRequest` covers most of them.
+Per-stream camera controls. CameraX `CameraControl` / `Camera2 CaptureRequest` covers most
+of them.
 
 - [x] **Exposure compensation slider** — `CameraControl.setExposureCompensationIndex`,
       clamped to `CameraInfo.exposureState.exposureCompensationRange`. Settings sheet,
@@ -51,7 +50,7 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
 ## Connectivity & transports
 
 - [x] **USB transport over ADB forward** — documented in
-      [Docs/USB.md](Docs/USB.md) (one-shot `adb forward` for both ports,
+      [USB.md](USB.md) (one-shot `adb forward` for both ports,
       OBS/VLC URL forms, custom-port mapping, comparison vs Wi-Fi). The Linux
       helper auto-mode is still open.
 - [x] **Stream password / basic auth** — HTTP Basic auth on the MJPEG endpoints
@@ -490,14 +489,13 @@ Droidcam Pro exposes these on a per-stream basis. CameraX `CameraControl` /
 ## Out of scope / not planned
 
 - **Native UVC gadget from inside Lenscast** — covered and rejected in
-  [Roadmap → Planned](Docs/Roadmap.md#native-uvc-gadget-from-inside-lenscast--not-feasible-from-a-third-party-app).
+  [Roadmap → Planned](Roadmap.md#native-uvc-gadget-from-inside-lenscast--not-feasible-from-a-third-party-app).
 - **Native Windows DirectShow / MediaFoundation virtual camera and macOS
   Camera Extension.** Technical work is moderate but the EV code-signing
   (~$300/yr), Apple Developer Program ($99/yr) and ongoing
   notarization / WHQL maintenance overhead aren't a fit for a hobby
   project. OBS Virtual Camera already covers both platforms by
   consuming the MJPEG URL — that's the recommended path.
-  Droidcam doesn't actually do this either; the gap is the same on both sides.
 - **>30 fps MJPEG** — architectural cap in
-  [Roadmap → Known architectural cap](Docs/Roadmap.md#known-architectural-cap-mjpeg--30-fps).
+  [Roadmap → Known architectural cap](Roadmap.md#known-architectural-cap-mjpeg--30-fps).
   Use the RTSP transport for high frame rates.

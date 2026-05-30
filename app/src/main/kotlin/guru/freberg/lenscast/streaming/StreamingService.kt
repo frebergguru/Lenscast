@@ -84,6 +84,8 @@ class StreamingService : LifecycleService() {
     private var nsd: NsdAdvertiser? = null
     private var webControlServer: WebControlServer? = null
     private var webControlSettings: Triple<Boolean, Int, Boolean>? = null
+    private var apiServer: RestApiServer? = null
+    private var apiServerSettings: Triple<Boolean, Int, Boolean>? = null
     private var telephonyMonitor: TelephonyMonitor? = null
     @Volatile private var currentCallBehavior: CallBehavior = CallBehavior.IGNORE
     /** True while we hold a SPECIAL_USE foreground notification for the web panel. */
@@ -136,6 +138,18 @@ class StreamingService : LifecycleService() {
                 .distinctUntilChanged()
                 .collect { (enabled, port, https) ->
                     reconfigureWebControl(enabled, port, https)
+                }
+        }
+        // Same pattern for the REST API server (Docs/API.md). Keyed on the *effective* enabled
+        // state — apiEnabled AND a token present — so the fail-closed server never binds without
+        // a credential. Token rotation that keeps a token in place doesn't rebind (the server
+        // reads it live); only on/off, port, or https changes do.
+        lifecycleScope.launch {
+            repo.flow
+                .map { Triple(it.apiEnabled && it.apiToken.isNotBlank(), it.apiPort, it.httpsEnabled) }
+                .distinctUntilChanged()
+                .collect { (enabled, port, https) ->
+                    reconfigureRestApi(enabled, port, https)
                 }
         }
         // Keep _status.value.settings in lockstep with whatever's persisted in
@@ -308,6 +322,27 @@ class StreamingService : LifecycleService() {
             }
         }
         webControlSettings = Triple(enabled, port, httpsEnabled)
+    }
+
+    private fun reconfigureRestApi(enabled: Boolean, port: Int, httpsEnabled: Boolean) {
+        val previous = apiServerSettings
+        if (previous == Triple(enabled, port, httpsEnabled) && apiServer != null) return
+        try { apiServer?.stop() } catch (_: Throwable) {}
+        apiServer = null
+        if (enabled) {
+            val srv = RestApiServer(
+                port = port,
+                control = mjpegControl,
+                // Read live so a token rotation takes effect without a server rebind, exactly
+                // like the web panel reads the stream password live.
+                bearerToken = { _status.value.settings.apiToken },
+                sslContext = if (httpsEnabled) TlsManager.forContext(this).sslContext() else null,
+            )
+            try { srv.start(); apiServer = srv } catch (t: Throwable) {
+                Log.w(TAG, "RestApiServer start failed on port $port: ${t.message}")
+            }
+        }
+        apiServerSettings = Triple(enabled, port, httpsEnabled)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -709,6 +744,18 @@ class StreamingService : LifecycleService() {
                     Pair({ it.copy(callBehavior = cb) }, false)
                 }
                 "persistentWebControl" -> Pair({ it.copy(persistentWebControl = b) }, false)
+                // REST API knobs — editable any time (the reconfigure observer rebinds the
+                // server), mirroring webControlPort. The repo enforces the "enabled ⇒ token"
+                // invariant on persist, so enabling here provisions a token automatically.
+                "apiEnabled" -> Pair({ it.copy(apiEnabled = b) }, false)
+                "apiPort" -> {
+                    val p = value.toIntOrNull()?.takeIf { it in 1024..65535 } ?: return null
+                    Pair({ it.copy(apiPort = p) }, false)
+                }
+                // Rotate or clear the bearer token. Clearing while the API stays enabled just
+                // makes the repo mint a fresh one on persist (can't strand an open-but-tokenless
+                // server); to truly turn the API off, set apiEnabled=false.
+                "apiToken" -> Pair({ it.copy(apiToken = value.trim().take(128)) }, false)
                 "manualExposure" -> Pair({ it.copy(manualExposure = b) }, true)
                 "iso" -> {
                     val n = value.toIntOrNull() ?: return null
@@ -1009,6 +1056,10 @@ class StreamingService : LifecycleService() {
                 """"mjpegServing":${mjpegServer != null},""" +
                 """"streamUsername":"${jsonEscape(s.streamUsername)}",""" +
                 """"persistentWebControl":${s.persistentWebControl},""" +
+                // REST API: report enablement + port + whether a token exists, never the token
+                // itself — same no-secret-over-the-wire rule as the SRT/RIST passphrases below.
+                """"apiEnabled":${s.apiEnabled},"apiPort":${s.apiPort},""" +
+                """"apiTokenSet":${s.apiToken.isNotEmpty()},""" +
                 """"supportsManualSensor":${CameraCapabilities.supportsManualSensor(this@StreamingService, s.lens)},""" +
                 """"isoRange":${CameraCapabilities.isoRange(this@StreamingService, s.lens)?.let { "[${it.lower},${it.upper}]" } ?: "null"},""" +
                 """"shutterRangeUs":${CameraCapabilities.exposureTimeRangeNs(this@StreamingService, s.lens)?.let { "[${it.lower / 1000L},${it.upper / 1000L}]" } ?: "null"},""" +
@@ -1993,6 +2044,8 @@ class StreamingService : LifecycleService() {
         telephonyMonitor = null
         try { webControlServer?.stop() } catch (_: Throwable) {}
         webControlServer = null
+        try { apiServer?.stop() } catch (_: Throwable) {}
+        apiServer = null
         try { cameraController?.shutdown() } catch (_: Throwable) {}
         cameraController = null
         super.onDestroy()

@@ -62,7 +62,7 @@ Snapshot endpoint: `/shot.jpg` returns a single JPEG.
 
 ## Port
 
-Defaults: **4747** for MJPEG (same as DroidCam, for muscle-memory) and **5540** for RTSP.
+Defaults: **4747** for MJPEG and **5540** for RTSP.
 Both are editable in the Settings sheet under *Server port* — pick anything from 1024 to
 65535 if a default collides with another service on the LAN. The field is locked while
 streaming; tap Stop first, then change the port, then tap Start.

@@ -60,6 +60,16 @@ class SettingsRepository(private val context: Context) {
             prefs[K_WC_ENABLED] = next.webControlEnabled
             prefs[K_WC_PORT] = next.webControlPort.coerceIn(1024, 65535)
             prefs[K_WC_PERSIST] = next.persistentWebControl
+            prefs[K_API_ENABLED] = next.apiEnabled
+            prefs[K_API_PORT] = next.apiPort.coerceIn(1024, 65535)
+            // Invariant enforced at the single write choke-point: enabling the API always
+            // leaves a token behind, no matter which entry point flipped the flag (Settings
+            // UI, REST PATCH, or a settings import). Without this a UI toggle — which replaces
+            // the whole Settings blob and can't run the CSPRNG itself — would persist
+            // `enabled=true, token=""`, and the fail-closed server would never bind.
+            val apiToken = if (next.apiEnabled && next.apiToken.isBlank())
+                guru.freberg.lenscast.net.ApiToken.generate() else next.apiToken
+            prefs[K_API_TOKEN] = SecretCipher.seal(apiToken)
             prefs[K_MANUAL_EXP] = next.manualExposure
             prefs[K_ISO] = next.iso
             prefs[K_SHUTTER] = next.shutterUs
@@ -129,6 +139,9 @@ class SettingsRepository(private val context: Context) {
         webControlEnabled = p[K_WC_ENABLED] ?: true,
         webControlPort = (p[K_WC_PORT] ?: 8080).coerceIn(1024, 65535),
         persistentWebControl = p[K_WC_PERSIST] ?: false,
+        apiEnabled = p[K_API_ENABLED] ?: false,
+        apiPort = (p[K_API_PORT] ?: 8088).coerceIn(1024, 65535),
+        apiToken = SecretCipher.open(p[K_API_TOKEN] ?: ""),
         manualExposure = p[K_MANUAL_EXP] ?: false,
         iso = p[K_ISO] ?: 100,
         shutterUs = p[K_SHUTTER] ?: 16_666L,
@@ -220,6 +233,9 @@ class SettingsRepository(private val context: Context) {
         val K_WC_ENABLED = booleanPreferencesKey("web_control_enabled")
         val K_WC_PORT = intPreferencesKey("web_control_port")
         val K_WC_PERSIST = booleanPreferencesKey("web_control_persist")
+        val K_API_ENABLED = booleanPreferencesKey("api_enabled")
+        val K_API_PORT = intPreferencesKey("api_port")
+        val K_API_TOKEN = stringPreferencesKey("api_token")
         val K_MANUAL_EXP = booleanPreferencesKey("manual_exposure")
         val K_ISO = intPreferencesKey("iso")
         val K_SHUTTER = longPreferencesKey("shutter_us")
