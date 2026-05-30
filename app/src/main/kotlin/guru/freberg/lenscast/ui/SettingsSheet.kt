@@ -494,22 +494,27 @@ fun SettingsSheet(
             SettingsGroup(title = stringResource(R.string.settings_group_stream_output_audio)) {
             // Server port — editable per active protocol. Disabled while streaming since the
             // server is already bound; user has to Stop first.
-            SectionLabel(stringResource(R.string.settings_port_section))
-            val portLabel = stringResource(
-                if (settings.protocol == Protocol.MJPEG) R.string.settings_mjpeg_port
-                else R.string.settings_rtsp_port
-            )
-            PortField(
-                label = portLabel,
-                port = if (settings.protocol == Protocol.MJPEG) settings.mjpegPort else settings.rtspPort,
-                enabled = !streaming,
-                onPortChange = { newPort ->
-                    onChange(
-                        if (settings.protocol == Protocol.MJPEG) settings.copy(mjpegPort = newPort)
-                        else settings.copy(rtspPort = newPort)
-                    )
-                },
-            )
+            // Only MJPEG and RTSP use this shared port field. SRT and RIST expose their own port
+            // in their dedicated sections, and WebRTC rides the web-control port — rendering this
+            // field for them would edit rtspPort, which has no effect on the active protocol.
+            if (settings.protocol == Protocol.MJPEG || settings.protocol == Protocol.RTSP) {
+                SectionLabel(stringResource(R.string.settings_port_section))
+                val portLabel = stringResource(
+                    if (settings.protocol == Protocol.MJPEG) R.string.settings_mjpeg_port
+                    else R.string.settings_rtsp_port
+                )
+                PortField(
+                    label = portLabel,
+                    port = if (settings.protocol == Protocol.MJPEG) settings.mjpegPort else settings.rtspPort,
+                    enabled = !streaming,
+                    onPortChange = { newPort ->
+                        onChange(
+                            if (settings.protocol == Protocol.MJPEG) settings.copy(mjpegPort = newPort)
+                            else settings.copy(rtspPort = newPort)
+                        )
+                    },
+                )
+            }
 
             Spacer(Modifier.height(16.dp))
 

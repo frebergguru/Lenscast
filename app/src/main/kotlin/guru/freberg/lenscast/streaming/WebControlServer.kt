@@ -617,7 +617,11 @@ class WebControlServer(
      * always sends an `Origin` that won't match, so it's rejected.
      */
     private fun isSameOrigin(origin: String?, host: String?): Boolean {
-        if (origin.isNullOrEmpty() || origin == "null") return true
+        // A missing Origin means a non-browser client (curl, a native app) — allowed. But an
+        // explicit `Origin: null` is an opaque origin (sandboxed iframe, file:// page); treating
+        // it as same-origin would let such a page drive the control surface, defeating the CSRF
+        // guard. Fall through so it's compared against the host and rejected.
+        if (origin.isNullOrEmpty()) return true
         // Strip scheme; compare host:port authority against the Host header.
         val originAuthority = origin.substringAfter("://", origin)
         return host != null && originAuthority == host

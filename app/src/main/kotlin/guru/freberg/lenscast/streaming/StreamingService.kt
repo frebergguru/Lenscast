@@ -1992,7 +1992,12 @@ class StreamingService : LifecycleService() {
             // After streaming, decide where the service goes next: persistent web control
             // foreground (if the user opted in) or out of foreground entirely.
             val s = _status.value.settings
-            val wantPersistent = s.persistentWebControl && s.webControlEnabled
+            // Mirror the persistence condition in onCreate's settings observer: the REST API
+            // also keeps the service in the foreground (with the CPU/Wi-Fi locks) so it stays
+            // reachable with the screen off. Checking only web-control here would drop the
+            // foreground + locks when a stream stops in an API-only persistent setup.
+            val wantPersistent = (s.persistentWebControl && s.webControlEnabled) ||
+                (s.apiEnabled && s.apiToken.isNotBlank())
             if (wantPersistent) {
                 // Reuse the foreground state by swapping the notification to the web one.
                 persistWebForeground = false  // will be re-set inside showWebControlForeground

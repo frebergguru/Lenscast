@@ -73,6 +73,9 @@ class WebRtcManager(
     @Volatile private var audioTrack: AudioTrack? = null
     @Volatile private var audioDeviceModule: JavaAudioDeviceModule? = null
     @Volatile private var capturer: CameraVideoCapturer? = null
+    // Owned by us, NOT by Camera2Capturer — the capturer's dispose() does not release it, so it
+    // must be disposed in stop() or each session leaks a HandlerThread + GL texture.
+    @Volatile private var surfaceTextureHelper: SurfaceTextureHelper? = null
     @Volatile private var eglBase: EglBase? = null
     /** Lens the capturer is currently bound to — tracked so [switchLens] can no-op a same-lens
      *  request and so a switch knows which Camera2 device to target next. */
@@ -122,6 +125,7 @@ class WebRtcManager(
             val src = f.createVideoSource(false)
             videoSource = src
             val sth = SurfaceTextureHelper.create("LenscastWebRtcCapture", egl.eglBaseContext)
+            surfaceTextureHelper = sth
             cap.initialize(sth, context, src.capturerObserver)
             cap.startCapture(width, height, fps)
 
@@ -163,6 +167,9 @@ class WebRtcManager(
         try { capturer?.stopCapture() } catch (_: Throwable) {}
         try { capturer?.dispose() } catch (_: Throwable) {}
         capturer = null
+        // Dispose after the capturer (which uses it) to avoid leaking its HandlerThread + texture.
+        try { surfaceTextureHelper?.dispose() } catch (_: Throwable) {}
+        surfaceTextureHelper = null
         try { videoTrack?.dispose() } catch (_: Throwable) {}
         videoTrack = null
         try { videoSource?.dispose() } catch (_: Throwable) {}

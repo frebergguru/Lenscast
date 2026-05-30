@@ -110,8 +110,10 @@ class RistPublisher(
     // 16-bit RTP sequence space (carried in the RTP header; NACKs reference this).
     private var sequence: Int = 0
     // 32-bit GRE sequence (Main Profile only): monotonic across every GRE packet, and the
-    // high 4 bytes of the AES-CTR IV. Wraps naturally.
-    private var greSeq: Int = 0
+    // high 4 bytes of the AES-CTR IV. Wraps naturally. Atomic because buildGre() runs from both
+    // the data pump and the RTCP feedback coroutine; a lost increment there would reuse a GRE
+    // sequence — and, when encrypted, reuse an AES-CTR IV (keystream reuse leaks plaintext).
+    private val greSeq = java.util.concurrent.atomic.AtomicInteger(0)
     // Stream clock origin for the 90 kHz RTP timestamp.
     private var clockStartNs: Long = 0L
     // 'LS' << 16 | port, with the low bit forced to 0: TR-06-1 §5.3.3 reserves the SSRC LSB as
@@ -120,8 +122,13 @@ class RistPublisher(
 
     // Retransmit ring keyed by RTP sequence. slot = seq & MASK; [retransSeq] confirms the slot
     // still holds the requested sequence (later packets overwrite older ones once it wraps).
-    private val retransBuf = arrayOfNulls<ByteArray>(RETRANS_RING)
-    private val retransSeq = IntArray(RETRANS_RING) { -1 }
+    // Atomic arrays: emitRtp() (pump coroutine) writes these slots while resend() (feedback
+    // coroutine) reads them. Plain arrays give no cross-thread happens-before, so resend() could
+    // see a fresh sequence tag against a stale/torn buffer reference and retransmit wrong data.
+    private val retransBuf = java.util.concurrent.atomic.AtomicReferenceArray<ByteArray?>(RETRANS_RING)
+    private val retransSeq = java.util.concurrent.atomic.AtomicIntegerArray(RETRANS_RING).apply {
+        for (i in 0 until RETRANS_RING) set(i, -1)
+    }
 
     fun state(): State = currentState
     fun bytesSent(): Long = bytesSent
@@ -275,8 +282,11 @@ class RistPublisher(
         sequence = (sequence + 1) and 0xFFFF
         val rtp = buildRtpPacket(seq, tsPayload, payloadLen)
         val slot = seq and RETRANS_MASK
-        retransBuf[slot] = rtp
-        retransSeq[slot] = seq
+        // Publish the buffer before the sequence tag: resend() checks the tag first, so a reader
+        // that sees this sequence is guaranteed (via the atomic-array volatile semantics) to also
+        // see the matching buffer reference.
+        retransBuf.set(slot, rtp)
+        retransSeq.set(slot, seq)
         sendRtp(rtp, payloadLen)
     }
 
@@ -333,8 +343,7 @@ class RistPublisher(
     // flags1: bit4 (0x10)=sequence present, bit5 (0x20)=key/nonce present.
     // flags2: (version<<3)=0x10 for v2; bit6 (0x40) set additionally for AES-256.
     private fun buildGre(payload: ByteArray, isRtcp: Boolean): ByteArray {
-        val seq = greSeq
-        greSeq++
+        val seq = greSeq.getAndIncrement()
         // Cleartext region: VSF proto (4 zero bytes for RIST/reduced) + reduced header + payload.
         val clear = ByteArray(8 + payload.size)
         // VSF proto type=0x0000, subtype=0x0000 → clear[0..3] already zero.
@@ -523,8 +532,8 @@ class RistPublisher(
 
     private fun resend(seq: Int) {
         val slot = seq and RETRANS_MASK
-        if (retransSeq[slot] != seq) return // evicted by ring wrap — too old to recover
-        val rtp = retransBuf[slot] ?: return
+        if (retransSeq.get(slot) != seq) return // evicted by ring wrap — too old to recover
+        val rtp = retransBuf.get(slot) ?: return
         val sock = dataSocket ?: return
         val peer = peerDataAddr ?: return
         // TR-06-1 §5.3.3: a retransmitted packet is a copy of the original with the same

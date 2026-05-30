@@ -87,13 +87,17 @@ class SettingsRepository(private val context: Context) {
             prefs[K_MJPEG_SIDECAR] = next.mjpegSidecar
             prefs[K_SRT_MODE] = next.srtMode.ordinal
             prefs[K_SRT_HOST] = next.srtHost.trim().take(255)
-            prefs[K_SRT_PORT] = next.srtPort.coerceIn(1, 65535)
+            prefs[K_SRT_PORT] = next.srtPort.coerceIn(1024, 65535)
             prefs[K_SRT_PASS] = SecretCipher.seal(next.srtPassphrase.take(79))
             prefs[K_SRT_LATENCY] = next.srtLatencyMs.coerceIn(20, 8000)
             prefs[K_SRT_STREAMID] = next.srtStreamId.trim().take(512)
-            prefs[K_RIST_MODE] = next.ristMode.ordinal
+            // RIST Listener only interoperates under Main profile (librist's caller-receiver
+            // can't parent a Simple-profile flow). Force Caller under Simple at this single write
+            // choke-point so the invariant holds for every entry point — UI, REST API, web panel,
+            // and whole-blob settings imports, which bypass the per-key updateSetting coercion.
+            prefs[K_RIST_MODE] = (if (next.ristProfile == RistProfile.SIMPLE) RistMode.CALLER else next.ristMode).ordinal
             prefs[K_RIST_HOST] = next.ristHost.trim().take(255)
-            prefs[K_RIST_PORT] = next.ristPort.coerceIn(1, 65534)
+            prefs[K_RIST_PORT] = next.ristPort.coerceIn(1024, 65534)
             prefs[K_RIST_PROFILE] = next.ristProfile.ordinal
             prefs[K_RIST_PASS] = SecretCipher.seal(next.ristEncryptionPassphrase.take(79))
             prefs[K_RIST_BUFFER] = next.ristBufferMs.coerceIn(20, 8000)
@@ -159,13 +163,20 @@ class SettingsRepository(private val context: Context) {
         mjpegSidecar = p[K_MJPEG_SIDECAR] ?: true,
         srtMode = SrtMode.entries.getOrNull(p[K_SRT_MODE] ?: SrtMode.LISTENER.ordinal) ?: SrtMode.LISTENER,
         srtHost = (p[K_SRT_HOST] ?: "").trim(),
-        srtPort = (p[K_SRT_PORT] ?: 9710).coerceIn(1, 65535),
+        srtPort = (p[K_SRT_PORT] ?: 9710).coerceIn(1024, 65535),
         srtPassphrase = SecretCipher.open(p[K_SRT_PASS] ?: ""),
         srtLatencyMs = (p[K_SRT_LATENCY] ?: 200).coerceIn(20, 8000),
         srtStreamId = (p[K_SRT_STREAMID] ?: "").trim(),
-        ristMode = RistMode.entries.getOrNull(p[K_RIST_MODE] ?: RistMode.LISTENER.ordinal) ?: RistMode.LISTENER,
+        // Mirror the write-side invariant (and correct the Simple-profile default, which is
+        // Listener): a Simple profile always reads back as Caller, so a stale or imported
+        // Simple+Listener pair can never reach the stream layer or the UI.
+        ristMode = run {
+            val raw = RistMode.entries.getOrNull(p[K_RIST_MODE] ?: RistMode.LISTENER.ordinal) ?: RistMode.LISTENER
+            if ((RistProfile.entries.getOrNull(p[K_RIST_PROFILE] ?: 0) ?: RistProfile.SIMPLE) == RistProfile.SIMPLE)
+                RistMode.CALLER else raw
+        },
         ristHost = (p[K_RIST_HOST] ?: "").trim(),
-        ristPort = (p[K_RIST_PORT] ?: 5004).coerceIn(1, 65534),
+        ristPort = (p[K_RIST_PORT] ?: 5004).coerceIn(1024, 65534),
         ristProfile = RistProfile.entries.getOrNull(p[K_RIST_PROFILE] ?: 0) ?: RistProfile.SIMPLE,
         ristEncryptionPassphrase = SecretCipher.open(p[K_RIST_PASS] ?: ""),
         ristBufferMs = (p[K_RIST_BUFFER] ?: 200).coerceIn(20, 8000),

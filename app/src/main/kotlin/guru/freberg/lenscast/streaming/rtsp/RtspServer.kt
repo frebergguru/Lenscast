@@ -305,6 +305,11 @@ class RtspSession(
     }
 
     fun onClosed() {
+        // Capture the sink before nulling it — the teardown notification below needs it. A client
+        // that drops its TCP connection (the common case) never sends an explicit TEARDOWN, so
+        // this path is the only place onClientTeardown fires for it; reading `sink` after nulling
+        // it would silently leak the sink in RtspManager.activeSinks for the whole session.
+        val s = sink
         sink = null
         rtcpThread?.interrupt()
         rtcpThread = null
@@ -314,12 +319,10 @@ class RtspSession(
         (audioTransport as? StreamTransport.Udp)?.let { it.rtpSocket.close(); it.rtcpSocket.close() }
         videoTransport = null
         audioTransport = null
-        val s = sink
         if (state == State.PLAYING && s != null) {
             state = State.TEARDOWN
             provider.onClientTeardown(s)
         }
-        sink = null
     }
 
     private data class Request(
