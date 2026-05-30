@@ -403,6 +403,7 @@ class StreamingService : LifecycleService() {
                 }
                 _status.value = _status.value.copy(state = State.STREAMING, errorMessage = null)
                 _restarting.value = false
+                armFrameWatchdog(settings)
             } catch (t: Throwable) {
                 Log.e(TAG, "Start failed", t)
                 _restarting.value = false
@@ -1600,6 +1601,17 @@ class StreamingService : LifecycleService() {
     @Volatile private var currentRotation: Int = android.view.Surface.ROTATION_0
     /** Debounce job for "rotate phone → reconfigure SRT" — see [setDeviceRotation]. */
     private var rotationRestartJob: kotlinx.coroutines.Job? = null
+    /**
+     * Frame-staleness watchdog — see [armFrameWatchdog]. The OS can yank the camera out from
+     * under a backgrounded app at any time (aggressive OEM power/camera policy, a transient HAL
+     * error, a screen-off race). When it does, the analyzer/encoder simply stops producing
+     * frames: the service still reports STREAMING but `framesProducedNow()` flatlines and the
+     * feed freezes with no recovery. This watchdog detects the flatline and restarts the
+     * pipeline. Protocol-agnostic (MJPEG/RTSP/SRT/RIST all feed `framesProducedNow`).
+     */
+    private var frameWatchdogJob: kotlinx.coroutines.Job? = null
+    private var watchdogRecoveryCount: Int = 0
+    private var lastWatchdogRecoveryAt: Long = 0L
     /** Throttle for the "RTSP orientation locked" Toast — see [setDeviceRotation]. */
     @Volatile private var lastRtspLockMsgMs: Long = 0L
     /**
@@ -1939,6 +1951,62 @@ class StreamingService : LifecycleService() {
         return handled
     }
 
+    /**
+     * Watch [framesProducedNow] while streaming; if it flatlines the camera was torn down out
+     * from under us (OEM camera/power policy, a HAL hiccup, a screen-off race), so restart the
+     * pipeline to recover. WebRTC is excluded — it owns Camera2 through its own capturer and
+     * doesn't feed `framesProducedNow`, so its count is constant and would false-trigger.
+     */
+    private fun armFrameWatchdog(settings: Settings) {
+        frameWatchdogJob?.cancel()
+        if (settings.protocol == Protocol.WEBRTC) return
+        frameWatchdogJob = lifecycleScope.launch {
+            var lastCount = framesProducedNow()
+            var lastProgressAt = android.os.SystemClock.elapsedRealtime()
+            // delay() throws on cancellation, so a plain loop exits cleanly when the job is cut.
+            while (true) {
+                kotlinx.coroutines.delay(WATCHDOG_POLL_MS)
+                // Only judge a steady-state stream. Re-baseline through start/restart windows so a
+                // fresh encoder's counter reset (RTSP/SRT/RIST start from 0) or the brief
+                // STREAMING→IDLE flip during a restart never reads as a stall.
+                if (_status.value.state != State.STREAMING || _restarting.value) {
+                    lastCount = framesProducedNow()
+                    lastProgressAt = android.os.SystemClock.elapsedRealtime()
+                    continue
+                }
+                val now = android.os.SystemClock.elapsedRealtime()
+                val count = framesProducedNow()
+                if (count != lastCount) { // pipeline is alive
+                    lastCount = count
+                    lastProgressAt = now
+                    if (now - lastWatchdogRecoveryAt > WATCHDOG_HEALTHY_RESET_MS)
+                        watchdogRecoveryCount = 0
+                    continue
+                }
+                if (now - lastProgressAt < WATCHDOG_STALL_MS) continue // not stalled yet
+
+                if (watchdogRecoveryCount >= WATCHDOG_MAX_RECOVERIES) {
+                    // Repeated restarts haven't helped (camera likely held by another app, or
+                    // permanently denied) — stop hot-looping and surface the failure instead.
+                    Log.e(TAG, "Frame watchdog: still stalled after $watchdogRecoveryCount " +
+                        "restarts; giving up")
+                    stopStreaming() // ends with state=IDLE, clears errorMessage…
+                    _status.value = _status.value.copy(
+                        state = State.ERROR,
+                        errorMessage = "Camera stopped producing frames and could not be recovered.",
+                    ) // …so re-publish ERROR afterwards, like the start-failure path
+                    return@launch
+                }
+                watchdogRecoveryCount++
+                lastWatchdogRecoveryAt = now
+                Log.w(TAG, "Frame watchdog: no new frames for ${now - lastProgressAt}ms " +
+                    "(${settings.protocol}); restarting pipeline (attempt $watchdogRecoveryCount)")
+                restartStreaming(_status.value.settings)
+                return@launch // this job ends here; startStreaming arms a fresh watchdog
+            }
+        }
+    }
+
     fun restartStreaming(newSettings: Settings) {
         _restarting.value = true
         if (_status.value.state == State.STREAMING || _status.value.state == State.STARTING) {
@@ -1950,6 +2018,8 @@ class StreamingService : LifecycleService() {
     fun stopStreaming() {
         rotationRestartJob?.cancel()
         rotationRestartJob = null
+        frameWatchdogJob?.cancel()
+        frameWatchdogJob = null
         try { mjpegServer?.stop() } catch (_: Throwable) {}
         mjpegServer = null
         tearDownSidecar()
@@ -2137,6 +2207,11 @@ class StreamingService : LifecycleService() {
     companion object {
         private const val TAG = "StreamingService"
         private const val NOTIF_ID = 0xCA1
+        // Frame-staleness watchdog tuning — see [armFrameWatchdog].
+        private const val WATCHDOG_POLL_MS = 2000L
+        private const val WATCHDOG_STALL_MS = 6000L      // flat frame count this long = a stall
+        private const val WATCHDOG_HEALTHY_RESET_MS = 30_000L // healthy this long clears the counter
+        private const val WATCHDOG_MAX_RECOVERIES = 4    // consecutive restarts before giving up
         const val ACTION_STOP = "guru.freberg.lenscast.action.STOP"
         const val ACTION_START_TILE = "guru.freberg.lenscast.action.START_TILE"
         /**
