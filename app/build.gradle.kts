@@ -12,8 +12,8 @@ android {
         applicationId = "guru.freberg.lenscast"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.1.1"
+        versionCode = 6
+        versionName = "1.1.2"
 
         // Locales bundled into the APK. Order doesn't matter; "en" must stay because it's
         // our default. "nb" exposes the Norwegian Bokmål translation (res/values-nb). Add

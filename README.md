@@ -110,6 +110,11 @@ Full setup, USB tethering, and troubleshooting are in
   reconnect, HTTPS support, and a `--doctor` mode that sanity-checks the system
 - **DeviceAsWebcam** deep-link on Android 14+ devices that ship the system service
 
+**OBS**
+
+- Native **OBS Studio plugin** (`obs/lenscast-control`) — a control dock (start/stop, camera
+  quick-controls), one-click **Add/refresh source** for every protocol, and bindable hotkeys
+
 **UI**
 
 - Material 3 Compose UI with dynamic colour on Android 12+

@@ -193,6 +193,9 @@ adb shell am force-stop guru.freberg.lenscast
 - [Docs/Architecture.md](Docs/Architecture.md) — full design rationale
 - [Docs/Roadmap.md](Docs/Roadmap.md) — what's planned and how to add it
 - `pc/` — Linux v4l2loopback helper (`lenscast-virtualcam`); not part of the APK build
+- [obs/lenscast-control/](obs/lenscast-control/) — native OBS Studio plugin (libobs/Qt6):
+  control dock + auto Media/Browser Source + hotkeys, driving the REST API; not part of the
+  APK build
 - [tools/](tools/) — dev/CI utilities; `lenscast-rtsp-probe` is a pure-Python RTSP 1.0/2.0
   conformance test client (the only way to exercise the 2.0 path, since VLC/OBS/ffmpeg are
   all 1.0)
