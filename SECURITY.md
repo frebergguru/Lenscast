@@ -10,8 +10,8 @@ for the current version. The in-app Settings sheet also shows the running versio
 
 | Version  | Supported          |
 |----------|--------------------|
-| 1.0.2    | :white_check_mark: |
-| < 1.0.2  | :x:                |
+| 1.1.0    | :white_check_mark: |
+| < 1.1.0  | :x:                |
 
 ## Reporting a vulnerability
 
